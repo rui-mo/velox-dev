@@ -126,6 +126,48 @@ void skipParquetSchemaNode(
   }
 }
 
+// Returns whether 'repeatedGroup', the repeated group child of the
+// LIST-annotated 'list', is the list element itself rather than the middle
+// level of a three-level LIST. Follows the LIST backward-compatibility rules in
+// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists.
+// Uses the physical names and field count so that column pruning and lowercase
+// names do not change the result.
+bool isLegacyListElementGroup(
+    const thrift::SchemaElement& list,
+    const thrift::SchemaElement& repeatedGroup) {
+  return *repeatedGroup.num_children() > 1 ||
+      *repeatedGroup.name() == "array" ||
+      *repeatedGroup.name() == *list.name() + "_tuple";
+}
+
+// A repeated group may be the row element itself or an intermediate LIST
+// wrapper. Pass the requested row type only when the group is the element.
+bool shouldUnwrapArrayOfRow(
+    const TypePtr& requestedType,
+    const thrift::SchemaElement& parent,
+    const thrift::SchemaElement& child,
+    bool parentIsRepeated) {
+  if (parentIsRepeated || !requestedType || !requestedType->isArray() ||
+      !requestedType->asArray().elementType()->isRow()) {
+    return false;
+  }
+  if (!child.repetition_type() ||
+      apache::thrift::can_throw(*child.repetition_type()) !=
+          thrift::FieldRepetitionType::REPEATED ||
+      !child.num_children() ||
+      (child.logicalType() &&
+       child.logicalType()->getType() == thrift::LogicalType::Type::LIST)) {
+    return false;
+  }
+
+  const bool parentIsList =
+      (parent.logicalType() &&
+       parent.logicalType()->getType() == thrift::LogicalType::Type::LIST) ||
+      (parent.converted_type() &&
+       *parent.converted_type() == thrift::ConvertedType::LIST);
+  return parentIsList && isLegacyListElementGroup(parent, child);
+}
+
 // An unannotated array in Parquet is a repeated field that is not explicitly
 // marked as a LIST logical type. If current schema element is a repeated field
 // and the requested type is an array, we treat the current schema element as an
@@ -584,10 +626,6 @@ std::unique_ptr<ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
   }
 
   const auto mappingMode = options_.columnMappingMode();
-  auto physicalName = *schemaElement.name();
-  if (isFileColumnNamesReadAsLowerCase()) {
-    physicalName = functions::stringImpl::utf8StrToLowerCopy(physicalName);
-  }
   auto name = schemaElementNameOrFieldId(schemaElement, mappingMode);
   if (isFileColumnNamesReadAsLowerCase()) {
     name = functions::stringImpl::utf8StrToLowerCopy(name);
@@ -622,12 +660,14 @@ std::unique_ptr<ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
         requestedRowType =
             std::dynamic_pointer_cast<const velox::RowType>(requestedType);
       } else if (
-          requestedType->isArray() && isRepeated &&
+          requestedType->isArray() &&
           requestedType->asArray().elementType()->isRow()) {
-        // Handle the case of unannotated array of structs (repeated group
-        // without LIST annotation).
-        requestedRowType = std::dynamic_pointer_cast<const velox::RowType>(
-            requestedType->asArray().elementType());
+        if (isRepeated) {
+          // Handle the case of unannotated array of structs (repeated group
+          // without LIST annotation).
+          requestedRowType = std::dynamic_pointer_cast<const velox::RowType>(
+              requestedType->asArray().elementType());
+        }
       }
     }
 
@@ -655,6 +695,25 @@ std::unique_ptr<ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
       TypePtr childRequestedType = nullptr;
       const ParquetFieldId* childRequestedFieldIds = nullptr;
       bool followChild = true;
+
+      if (shouldUnwrapArrayOfRow(
+              requestedType, schemaElement, schema[schemaIdx], isRepeated)) {
+        childRequestedType = requestedType->asArray().elementType();
+        // The repeated group is the element itself, so it takes the element
+        // field IDs and name like the element node of a three-level LIST.
+        if (mappingMode == dwio::common::ColumnMappingMode::kParquetFieldId &&
+            requestedFieldIds != nullptr &&
+            !requestedFieldIds->children.empty()) {
+          childRequestedFieldIds = &requestedFieldIds->children[0];
+          columnNames.push_back("element");
+        } else if (
+            mappingMode == dwio::common::ColumnMappingMode::kPosition &&
+            !isParquetReservedKeyword(childName, curSchemaIdx, schemaIdx)) {
+          // Positional mapping has no requested name for the element, and the
+          // element pushes its own name only if it is a reserved keyword.
+          columnNames.push_back(childName);
+        }
+      }
 
       if (requestedRowType) {
         if (mappingMode == dwio::common::ColumnMappingMode::kName) {
@@ -881,14 +940,10 @@ std::unique_ptr<ParquetTypeWithId> ReaderBase::getParquetColumnInfo(
               thrift::FieldRepetitionType::REPEATED) {
         auto convertedType = schema[parentSchemaIdx].converted_type();
         if (convertedType && *convertedType == thrift::ConvertedType::LIST) {
-          // TODO: the group names need to be checked. According to spec,
-          // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
-          // the name of the schema element being 'array' is
-          // also an indication of this is a list type
           // child of LIST
           VELOX_CHECK_GE(children.size(), 1);
-          if (children.size() == 1 && physicalName != "array" &&
-              physicalName != *schema[parentSchemaIdx].name() + "_tuple") {
+          if (!isLegacyListElementGroup(
+                  schema[parentSchemaIdx], schemaElement)) {
             auto type =
                 TypeFactory<TypeKind::ARRAY>::create(children[0]->type());
             return std::make_unique<ParquetTypeWithId>(
