@@ -82,8 +82,9 @@ void SelectiveTimestampColumnReader::read(
   VELOX_CHECK(
       !scanSpec_->valueHook(),
       "Selective reader for TIMESTAMP doesn't support aggregation pushdown yet");
-  if (!resultNulls_ || !resultNulls_->unique() ||
-      resultNulls_->capacity() * 8 < rows.size()) {
+  if (!scanSpec_->keepValues() && scanSpec_->filter() &&
+      (!resultNulls_ || !resultNulls_->unique() ||
+       resultNulls_->capacity() * 8 < rows.size())) {
     // Make sure a dedicated resultNulls_ is allocated with enough capacity as
     // RleDecoder always assumes it is available.
     resultNulls_ = AlignedBuffer::allocate<bool>(rows.size(), pool_);
@@ -173,25 +174,29 @@ void SelectiveTimestampColumnReader::readHelper(
   values_ = tsValues;
   rawValues_ = values_->asMutable<char>();
 
-  // Treat the filter as kAlwaysTrue if any of the following conditions are met:
-  // 1) No filter found;
-  // 2) Filter is kIsNotNull but rawNulls==NULL (no elements is null).
-  switch (
-      !filter || (filter->kind() == common::FilterKind::kIsNotNull && !rawNulls)
-          ? common::FilterKind::kAlwaysTrue
-          : filter->kind()) {
+  if (!filter) {
+    // No filter and "hasDeletion" is false so input rows will be reused.
+    return;
+  }
+
+  switch (filter->kind()) {
     case common::FilterKind::kAlwaysTrue:
-      // Simply add all rows to output.
-      for (vector_size_t i = 0; i < numValues_; i++) {
-        addOutputRow(rows[i]);
-      }
+      processFilter(filter, rows, rawNulls);
       break;
     case common::FilterKind::kIsNull:
       processNulls(true, rows, rawNulls);
       break;
-    case common::FilterKind::kIsNotNull:
-      processNulls(false, rows, rawNulls);
+    case common::FilterKind::kIsNotNull: {
+      if (rawNulls) {
+        processNulls(false, rows, rawNulls);
+      } else {
+        // Simply add all rows to output.
+        for (vector_size_t i = 0; i < numValues_; i++) {
+          addOutputRow(rows[i]);
+        }
+      }
       break;
+    }
     case common::FilterKind::kTimestampRange:
     case common::FilterKind::kMultiRange:
       processFilter(filter, rows, rawNulls);

@@ -69,7 +69,8 @@ class SelectiveDecimalColumnReader : public SelectiveColumnReader {
       const RowSet& rows,
       const uint64_t* rawNulls);
 
-  // Dispatch to the respective filter processing based on the filter type.
+  // Dispatches by filter kind and handles kAlwaysTrue as a pass-through
+  // filter while preserving null semantics.
   void process(
       const common::Filter* filter,
       const RowSet& rows,

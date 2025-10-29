@@ -227,6 +227,9 @@ void SelectiveDecimalColumnReader<DataT>::process(
   }
 
   switch (filter->kind()) {
+    case common::FilterKind::kAlwaysTrue:
+      processFilter(filter, rows, rawNulls);
+      break;
     case common::FilterKind::kIsNull:
       processNulls(true, rows, rawNulls);
       break;

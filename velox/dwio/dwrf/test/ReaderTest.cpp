@@ -2816,6 +2816,32 @@ TEST_F(TestReader, readStructWithWholeBatchFiltered) {
   }
 }
 
+TEST_F(TestReader, alwaysTrueFilterForTimestampAndDecimal) {
+  auto row = makeRowVector({
+      makeNullableFlatVector<Timestamp>(
+          {Timestamp(1, 0), std::nullopt, Timestamp(3, 123), Timestamp(4, 0)}),
+      makeNullableFlatVector<int64_t>(
+          {100, std::nullopt, -250, 0}, DECIMAL(10, 2)),
+  });
+
+  auto [writer, reader] =
+      createWriterReader({row}, pool(), dataIoStats_, metadataIoStats_);
+
+  auto schema = asRowType(row->type());
+  auto spec = std::make_shared<common::ScanSpec>("<root>");
+  spec->addAllChildFields(*schema);
+  spec->childByName("c0")->setFilter(std::make_shared<common::AlwaysTrue>());
+  spec->childByName("c1")->setFilter(std::make_shared<common::AlwaysTrue>());
+
+  RowReaderOptions rowReaderOpts;
+  rowReaderOpts.setScanSpec(spec);
+  auto rowReader = reader->createRowReader(rowReaderOpts);
+
+  VectorPtr batch = BaseVector::create(schema, 0, pool());
+  ASSERT_EQ(rowReader->next(10, batch), row->size());
+  assertEqualVectors(row, batch);
+}
+
 TEST_F(TestReader, readStringDictionaryAsFlat) {
   std::vector<std::string> dictionary;
   for (int i = 0; i < 26; ++i) {
