@@ -144,7 +144,7 @@ inline bool isTimeZoneOffset(std::string_view str) {
 inline bool isUtcEquivalentName(std::string_view zone) {
   static folly::F14FastSet<std::string> utcSet = {
       "utc", "uct", "gmt", "gmt0", "greenwich", "universal", "zulu", "z"};
-  return utcSet.find(zone) != utcSet.end();
+  return utcSet.find(std::string(zone)) != utcSet.end();
 }
 
 // This function tries to apply two normalization rules to time zone offsets:
