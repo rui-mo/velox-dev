@@ -152,6 +152,10 @@ class TimestampNTZTypeFactory : public CustomTypeFactory {
 
     dictionary.values = std::move(values);
   }
+
+  const char* getArrowFormatString() const override {
+    return "ts_ntz";
+  }
 };
 
 } // namespace

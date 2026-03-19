@@ -1232,6 +1232,15 @@ void applyParquetDictionaryRead(
   }
 }
 
+const char* getCustomArrowFormatString(const std::string& name) {
+  auto factory = getTypeFactory(name);
+  if (factory) {
+    return factory->getArrowFormatString();
+  }
+
+  return nullptr;
+};
+
 CustomTypeFactory::~CustomTypeFactory() = default;
 
 std::unique_ptr<dwio::common::SelectiveColumnReader>
