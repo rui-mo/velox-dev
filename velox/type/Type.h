@@ -2417,6 +2417,12 @@ class CustomTypeFactory {
   virtual AbstractInputGeneratorPtr getInputGenerator(
       const InputGeneratorConfig& config) const = 0;
 
+  /// Returns the Arrow format string used in Velox-Arrow conversion for this
+  /// custom type.
+  virtual const char* getArrowFormatString(bool forParquetWriter) const {
+    return nullptr;
+  };
+
   /// Returns a Parquet column reader for this custom type if it has a custom
   /// implementation. Returns nullptr otherwise.
   virtual std::unique_ptr<dwio::common::SelectiveColumnReader>
@@ -2556,7 +2562,9 @@ AbstractInputGeneratorPtr getCustomTypeInputGenerator(
 
 /// Returns the Arrow format string used in Velox-Arrow converrsion for the
 /// custom type with the specified name.
-const char* getCustomArrowFormatString(const std::string& name);
+const char* getCustomArrowFormatString(
+    const std::string& name,
+    bool forParquetWriter);
 
 // Allows us to transparently use folly::toAppend(), folly::join(), etc.
 template <class TString>

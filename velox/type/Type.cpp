@@ -1206,6 +1206,17 @@ exec::CastOperatorPtr getCustomTypeCastOperator(const std::string& name) {
   return nullptr;
 }
 
+const char* getCustomArrowFormatString(
+    const std::string& name,
+    bool forParquetWriter) {
+  auto factory = getTypeFactory(name);
+  if (factory) {
+    return factory->getArrowFormatString(forParquetWriter);
+  }
+
+  return nullptr;
+};
+
 std::unique_ptr<dwio::common::SelectiveColumnReader> getParquetColumnReader(
     const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,

@@ -69,7 +69,7 @@ class FancyIntTypeFactory : public CustomTypeFactory {
     VELOX_UNSUPPORTED();
   }
 
-  const char* getArrowFormatString() const override {
+  const char* getArrowFormatString(bool forParquetWriter) const override {
     return "fi";
   }
 };

@@ -47,6 +47,7 @@ struct ArrowOptions {
   /// reader/writer code is adapted to support Decimal64. CUDF I/O sets this to
   /// true as it uses NanoArrow 0.7.0 which already supports Decimal64.
   bool useDecimalTypeWidth = false;
+  bool forParquetWriter = false;
 };
 
 namespace facebook::velox {

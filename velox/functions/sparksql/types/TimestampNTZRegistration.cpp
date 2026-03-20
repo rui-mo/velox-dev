@@ -102,6 +102,13 @@ class TimestampNTZTypeFactory : public CustomTypeFactory {
         config.seed_, TIMESTAMP_NTZ(), config.nullRatio_);
   }
 
+  const char* getArrowFormatString(bool forParquetWriter) const override {
+    if (forParquetWriter) {
+      return "tsu:";
+    }
+    return "ts_ntz";
+  }
+
   std::unique_ptr<dwio::common::SelectiveColumnReader> getParquetColumnReader(
       const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,

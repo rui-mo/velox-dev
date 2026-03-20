@@ -219,7 +219,10 @@ class Writer : public dwio::common::Writer {
 
   const RowTypePtr schema_;
 
-  ArrowOptions options_{.flattenDictionary = true, .flattenConstant = true};
+  ArrowOptions options_{
+      .flattenDictionary = true,
+      .flattenConstant = true,
+      .forParquetWriter = true};
 
   // Whether to write Int96 timestamps in Arrow Parquet write.
   bool writeInt96AsTimestamp_;

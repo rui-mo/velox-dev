@@ -263,7 +263,7 @@ const char* exportArrowFormatStr(
     const ArrowOptions& options,
     std::string& formatBuffer) {
   if (const char* arrowFormatString =
-          getCustomArrowFormatString(type->name())) {
+          getCustomArrowFormatString(type->name(), options.forParquetWriter)) {
     return arrowFormatString;
   }
 
@@ -1361,7 +1361,8 @@ TypePtr importFromArrowImpl(
     const ArrowSchema& arrowSchema) {
   VELOX_CHECK_NOT_NULL(format);
   for (const auto& name : getCustomTypeNames()) {
-    const char* arrowFormatString = getCustomArrowFormatString(name);
+    const char* arrowFormatString =
+        getCustomArrowFormatString(name, /*forParquetWriter=*/false);
     if (arrowFormatString && strcmp(format, arrowFormatString) == 0) {
       return getCustomType(name, {});
     }
