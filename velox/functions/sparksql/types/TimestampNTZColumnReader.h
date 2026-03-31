@@ -68,16 +68,20 @@ class TimestampNTZColumnReader : public parquet::IntegerColumnReader {
   }
 
   void getValues(const RowSet& rows, VectorPtr* result) override {
-    getIntValues(rows, BIGINT(), result);
+    getFlatValues<int64_t, int64_t>(rows, result, BIGINT());
 
-    VectorPtr resultVector = *result;
-    auto rawValues =
-        resultVector->asUnchecked<FlatVector<int64_t>>()->mutableRawValues();
-    for (auto i = 0; i < numValues_; ++i) {
-      if (resultVector->isNullAt(i)) {
-        continue;
+    if (filePrecision_ == TimestampPrecision::kMilliseconds) {
+      if (allNull_) {
+        return;
       }
-      if (filePrecision_ == TimestampPrecision::kMilliseconds) {
+
+      VectorPtr resultVector = *result;
+      auto rawValues =
+          resultVector->asUnchecked<FlatVector<int64_t>>()->mutableRawValues();
+      for (auto i = 0; i < numValues_; ++i) {
+        if (resultVector->isNullAt(i)) {
+          continue;
+        }
         rawValues[i] = rawValues[i] * 1'000;
       }
     }
@@ -89,7 +93,7 @@ class TimestampNTZColumnReader : public parquet::IntegerColumnReader {
       const uint64_t* /*incomingNulls*/) override {
     // The 'fileType_' is 'TIMESTAMP' and needs to be read as 'BIGINT' and
     // converted to 'TIMESTAMP_NTZ'.
-    VELOX_WIDTH_DISPATCH(sizeof(int64_t), prepareRead, offset, rows, nullptr);
+    prepareRead<int64_t>(offset, rows, nullptr);
     readCommon<parquet::IntegerColumnReader, true>(rows);
     readOffset_ += rows.back() + 1;
   }
