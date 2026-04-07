@@ -69,13 +69,6 @@ int main(int argc, char** argv) {
   auto realInput = vectorMaker.flatVector<float>(
       vectorSize, [](auto j) { return j * 9.9999; }, nullptr);
 
-  auto hugeintInputNullable = vectorMaker.flatVector<int128_t>(
-      vectorSize,
-      [](auto j) { return j * 999 + 1; },
-      [](auto j) { return j % 5 == 0; });
-  auto hugeintInput = vectorMaker.flatVector<int128_t>(
-      vectorSize, [](auto j) { return j * 999 + 1; }, nullptr);
-
   benchmarkBuilder
       .addBenchmarkSet(
           "numeric_upcast",
@@ -91,8 +84,6 @@ int main(int argc, char** argv) {
                   "bigint_column",
                   "real_column_nullable",
                   "real_column",
-                  "hugeint_column_nullable",
-                  "hugeint_column",
               },
               {
                   tinyIntInputNullable,
@@ -105,8 +96,6 @@ int main(int argc, char** argv) {
                   bigintInput,
                   realInputNullable,
                   realInput,
-                  hugeintInputNullable,
-                  hugeintInput,
               }))
       // Cast from tinyint.
       .addExpression(
@@ -136,12 +125,6 @@ int main(int argc, char** argv) {
           "cast(tinyint_column_nullable as double)")
       .addExpression("cast_tinyint_as_double", "cast(tinyint_column as double)")
 
-      .addExpression(
-          "cast_tinyint_nullable_as_hugeint",
-          "cast(tinyint_column_nullable as hugeint)")
-      .addExpression(
-          "cast_tinyint_as_hugeint", "cast(tinyint_column as hugeint)")
-
       // Cast from smallint.
       .addExpression(
           "cast_smallint_nullable_as_integer",
@@ -166,12 +149,6 @@ int main(int argc, char** argv) {
       .addExpression(
           "cast_smallint_as_double", "cast(smallint_column as double)")
 
-      .addExpression(
-          "cast_smallint_nullable_as_hugeint",
-          "cast(smallint_column_nullable as hugeint)")
-      .addExpression(
-          "cast_smallint_as_hugeint", "cast(smallint_column as hugeint)")
-
       // Cast from integer.
       .addExpression(
           "cast_integer_nullable_as_bigint",
@@ -188,12 +165,6 @@ int main(int argc, char** argv) {
           "cast(integer_column_nullable as double)")
       .addExpression("cast_integer_as_double", "cast(integer_column as double)")
 
-      .addExpression(
-          "cast_integer_nullable_as_hugeint",
-          "cast(integer_column_nullable as hugeint)")
-      .addExpression(
-          "cast_integer_as_hugeint", "cast(integer_column as hugeint) ")
-
       // Cast from bigint.
       .addExpression(
           "cast_bigint_nullable_as_real",
@@ -204,22 +175,6 @@ int main(int argc, char** argv) {
           "cast_bigint_nullable_as_double",
           "cast(bigint_column_nullable as double)")
       .addExpression("cast_bigint_as_double", "cast(bigint_column as double)")
-
-      .addExpression(
-          "cast_bigint_nullable_as_hugeint",
-          "cast(bigint_column_nullable as hugeint)")
-      .addExpression("cast_bigint_as_hugeint", "cast(bigint_column as hugeint)")
-
-      // Cast from hugeint.
-      .addExpression(
-          "cast_hugeint_nullable_as_real",
-          "cast(hugeint_column_nullable as real)")
-      .addExpression("cast_hugeint_as_real", "cast(hugeint_column as real)")
-
-      .addExpression(
-          "cast_hugeint_nullable_as_double",
-          "cast(hugeint_column_nullable as double)")
-      .addExpression("cast_hugeint_as_double", "cast(hugeint_column as double)")
 
       // Cast from real.
       .addExpression(
