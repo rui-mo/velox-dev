@@ -396,7 +396,13 @@ void AggregationFuzzer::go() {
       std::vector<TypePtr> argTypes = signature.args;
       std::vector<std::string> argNames = makeNames(argTypes.size());
       auto call = makeFunctionCall(
-          signature.name, argNames, sortedInputs, distinctInputs);
+          signature.name,
+          argNames,
+          sortedInputs,
+          distinctInputs,
+          false,
+          signature.args,
+          signature.constantArgs);
 
       // 20% of times use mask.
       std::vector<std::string> masks;

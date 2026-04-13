@@ -320,7 +320,9 @@ std::string makeFunctionCall(
     const std::vector<std::string>& argNames,
     bool sortedInputs = false,
     bool distinctInputs = false,
-    bool ignoreNulls = false);
+    bool ignoreNulls = false,
+    const std::vector<TypePtr>& argTypes = {},
+    const std::vector<bool>& constantArgs = {});
 
 // Returns a list of column names from c0 to cn.
 std::vector<std::string> makeNames(size_t n);

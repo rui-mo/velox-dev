@@ -16,6 +16,7 @@
 #include "velox/exec/fuzzer/AggregationFuzzerBase.h"
 
 #include <boost/random/uniform_int_distribution.hpp>
+#include <folly/String.h>
 #include "velox/common/base/Fs.h"
 #include "velox/common/base/VeloxException.h"
 #include "velox/common/testutil/TempDirectoryPath.h"
@@ -83,9 +84,44 @@ DEFINE_bool(
     "up after failures. Therefore, results are not compared when this is "
     "enabled. Note that this option only works in debug builds.");
 
+DEFINE_bool(
+    enable_constant_argument_literals,
+    false,
+    "When enabled, aggregate fuzzer renders constant-argument positions as "
+    "SQL literals instead of column references.");
+
+DEFINE_string(
+    constant_argument_literal_functions,
+    "",
+    "Comma-separated list of aggregate functions to apply constant-argument "
+    "literal rendering. Empty means all functions.");
+
 namespace facebook::velox::exec::test {
 
 using namespace facebook::velox::common::testutil;
+
+namespace {
+
+bool shouldUseConstantArgumentLiteral(std::string_view functionName) {
+  if (!FLAGS_enable_constant_argument_literals) {
+    return false;
+  }
+
+  if (FLAGS_constant_argument_literal_functions.empty()) {
+    return true;
+  }
+
+  std::vector<std::string_view> functionNames;
+  folly::split(',', FLAGS_constant_argument_literal_functions, functionNames);
+  for (const auto& candidate : functionNames) {
+    if (folly::trimWhitespace(candidate) == functionName) {
+      return true;
+    }
+  }
+  return false;
+}
+
+} // namespace
 
 int32_t AggregationFuzzerBase::randInt(int32_t min, int32_t max) {
   return boost::random::uniform_int_distribution<int32_t>(min, max)(rng_);
@@ -142,7 +178,7 @@ bool AggregationFuzzerBase::addSignature(
         .args = {},
         .returnType =
             SignatureBinder::tryResolveType(signature->returnType(), {}, {}),
-        .constantArgs = {}};
+        .constantArgs = signature->constantArguments()};
     VELOX_CHECK_NOT_NULL(callable.returnType);
 
     // Process each argument and figure out its type.
@@ -204,6 +240,15 @@ AggregationFuzzerBase::pickSignature() {
         referenceQueryRunner_->supportedScalarTypes());
     VELOX_CHECK(typeFuzzer.fuzzArgumentTypes(FLAGS_max_num_varargs));
     signature.args = typeFuzzer.argumentTypes();
+
+    signature.constantArgs = signatureTemplate.signature->constantArguments();
+    if (!signature.constantArgs.empty()) {
+      const auto repeat = signature.args.size() - signature.constantArgs.size();
+      const auto lastConstant = signature.constantArgs.back();
+      for (auto i = 0; i < repeat; ++i) {
+        signature.constantArgs.push_back(lastConstant);
+      }
+    }
   }
 
   return {signature, signatureStats_[idx]};
@@ -709,11 +754,44 @@ std::string makeFunctionCall(
     const std::vector<std::string>& argNames,
     bool sortedInputs,
     bool distinctInputs,
-    bool ignoreNulls) {
+    bool ignoreNulls,
+    const std::vector<TypePtr>& argTypes,
+    const std::vector<bool>& constantArgs) {
+  const bool useConstantLiterals = shouldUseConstantArgumentLiteral(name);
+  auto constantSqlForType =
+      [](const TypePtr& type) -> std::optional<std::string> {
+    if (type->isDouble() || type->isReal()) {
+      return "0.5";
+    }
+    if (type->isInteger()) {
+      return "10000";
+    }
+    if (type->isBigint()) {
+      return "cast(10000 as bigint)";
+    }
+    if (type->isArray() && type->asArray().elementType()->isDouble()) {
+      return "ARRAY[0.1, 0.5, 0.9]";
+    }
+    return std::nullopt;
+  };
+
+  std::vector<std::string> renderedArgs;
+  renderedArgs.reserve(argNames.size());
+  for (auto i = 0; i < argNames.size(); ++i) {
+    if (useConstantLiterals && i < constantArgs.size() && constantArgs[i] &&
+        i < argTypes.size()) {
+      if (auto literal = constantSqlForType(argTypes[i])) {
+        renderedArgs.push_back(*literal);
+        continue;
+      }
+    }
+    renderedArgs.push_back(argNames[i]);
+  }
+
   std::ostringstream call;
   call << name << "(";
 
-  const auto args = folly::join(", ", argNames);
+  const auto args = folly::join(", ", renderedArgs);
   if (sortedInputs) {
     call << args << " ORDER BY " << args;
   } else if (distinctInputs) {
