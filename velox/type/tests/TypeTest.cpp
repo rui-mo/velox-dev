@@ -110,6 +110,14 @@ TEST(TypeTest, timestamp) {
   ASSERT_EQ(approximateTypeEncodingwidth(t0), 1);
 
   testTypeSerde(t0);
+
+  EXPECT_TRUE(TIMESTAMP()->equivalent(*createType(TypeKind::TIMESTAMP, {})));
+  auto deserialized0 =
+      velox::ISerializable::deserialize<Type>(TIMESTAMP()->serialize());
+  auto deserialized = velox::ISerializable::deserialize<Type>(
+      folly::dynamic::object("name", "Type")("type", "TIMESTAMP"));
+  ASSERT_EQ(deserialized0->toString(), deserialized->toString());
+  ASSERT_EQ(*deserialized0, *deserialized);
 }
 
 TEST(TypeTest, timestampToString) {
@@ -155,6 +163,25 @@ TEST(TypeTest, timestampComparison) {
   EXPECT_GE(t1, t1Copy);
   EXPECT_GE(t1, t1lessNanos);
   EXPECT_GE(t1, t1lessSeconds);
+}
+
+TEST(TypeTest, timestampUtc) {
+  const auto t = TIMESTAMP_UTC();
+  ASSERT_EQ(t->toString(), "TIMESTAMP UTC");
+  ASSERT_EQ(t->size(), 0);
+  VELOX_ASSERT_THROW(t->childAt(0), "scalar type has no children");
+  ASSERT_EQ(t->kind(), TypeKind::TIMESTAMP);
+  EXPECT_STREQ(t->kindName(), "TIMESTAMP");
+  ASSERT_EQ(t->begin(), t->end());
+  ASSERT_EQ(approximateTypeEncodingwidth(t), 1);
+
+  testTypeSerde(t);
+
+  EXPECT_TRUE(t->isTimestamp());
+  EXPECT_TRUE(t->equivalent(*TIMESTAMP_UTC()));
+  EXPECT_TRUE(TIMESTAMP_UTC()->equivalent(*TimestampUtcType::get()));
+  EXPECT_FALSE(t->equivalent(*TIMESTAMP()));
+  EXPECT_FALSE(TIMESTAMP()->equivalent(*t));
 }
 
 TEST(TypeTest, date) {
