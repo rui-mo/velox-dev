@@ -141,6 +141,11 @@ class ReaderBase {
       std::unique_ptr<dwio::common::BufferedInput>,
       const dwio::common::ReaderOptions& options);
 
+  ReaderBase(
+      std::unique_ptr<dwio::common::BufferedInput>,
+      const dwio::common::ReaderOptions& options,
+      std::shared_ptr<ParquetReaderFactory> factory);
+
   virtual ~ReaderBase() = default;
 
   memory::MemoryPool& getMemoryPool() const {
@@ -245,6 +250,9 @@ class ReaderBase {
 
   std::optional<SemanticVersion> version_;
 
+  // Factory for customizable components.
+  std::shared_ptr<ParquetReaderFactory> factory_;
+
   // Map from row group index to pre-created loading BufferedInput.
   std::unordered_map<uint32_t, std::shared_ptr<dwio::common::BufferedInput>>
       inputs_;
@@ -258,7 +266,29 @@ ReaderBase::ReaderBase(
       filePreloadThreshold_{options.filePreloadThreshold()},
       options_{options},
       input_{std::move(input)},
-      fileLength_{input_->getReadFile()->size()} {
+      fileLength_{input_->getReadFile()->size()},
+      factory_{ParquetReaderFactory::createDefault()} {
+  VELOX_CHECK_GT(fileLength_, 0, "Parquet file is empty");
+  VELOX_CHECK_GE(fileLength_, 12, "Parquet file is too small");
+
+  loadFileMetaData();
+  initializeSchema();
+  initializeVersion();
+}
+
+ReaderBase::ReaderBase(
+    std::unique_ptr<dwio::common::BufferedInput> input,
+    const dwio::common::ReaderOptions& options,
+    std::shared_ptr<ParquetReaderFactory> factory)
+    : pool_{options.memoryPool()},
+      footerSpeculativeIoSize_{options.footerSpeculativeIoSize()},
+      filePreloadThreshold_{options.filePreloadThreshold()},
+      options_{options},
+      input_{std::move(input)},
+      fileLength_{input_->getReadFile()->size()},
+      factory_{
+          factory ? std::move(factory)
+                  : ParquetReaderFactory::createDefault()} {
   VELOX_CHECK_GT(fileLength_, 0, "Parquet file is empty");
   VELOX_CHECK_GE(fileLength_, 12, "Parquet file is too small");
 
@@ -1541,6 +1571,16 @@ ParquetReader::ParquetReader(
     std::unique_ptr<dwio::common::BufferedInput> input,
     const dwio::common::ReaderOptions& options)
     : readerBase_(std::make_shared<ReaderBase>(std::move(input), options)) {}
+
+ParquetReader::ParquetReader(
+    std::unique_ptr<dwio::common::BufferedInput> input,
+    const dwio::common::ReaderOptions& options,
+    std::shared_ptr<ParquetReaderFactory> factory)
+    : readerBase_(
+          std::make_shared<ReaderBase>(
+              std::move(input),
+              options,
+              std::move(factory))) {}
 
 std::optional<uint64_t> ParquetReader::numberOfRows() const {
   return readerBase_->thriftFileMetaData().num_rows;

@@ -19,11 +19,13 @@
 #include "velox/dwio/common/Reader.h"
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/dwio/parquet/reader/Metadata.h"
+#include "velox/dwio/parquet/reader/ParquetReaderFactory.h"
 
 namespace facebook::velox::dwio::common {
 
 class SelectiveColumnReader;
 class BufferedInput;
+class InputStreamProvider;
 
 } // namespace facebook::velox::dwio::common
 
@@ -34,6 +36,7 @@ enum class ParquetMetricsType { HEADER, FILE_METADATA, FILE, BLOCK, TEST };
 class StructColumnReader;
 
 class ReaderBase;
+class ParquetReaderFactory;
 
 /// Implements the RowReader interface for Parquet.
 class ParquetRowReader : public dwio::common::RowReader {
@@ -82,9 +85,17 @@ class ParquetRowReader : public dwio::common::RowReader {
 /// Implements the reader interface for Parquet.
 class ParquetReader : public dwio::common::Reader {
  public:
+  /// Creates a ParquetReader with default factory components.
   ParquetReader(
       std::unique_ptr<dwio::common::BufferedInput>,
       const dwio::common::ReaderOptions& options);
+
+  /// Creates a ParquetReader with custom factory components.
+  /// Enables downstream projects to inject custom IO and buffering strategies.
+  ParquetReader(
+      std::unique_ptr<dwio::common::BufferedInput>,
+      const dwio::common::ReaderOptions& options,
+      std::shared_ptr<ParquetReaderFactory> factory);
 
   ~ParquetReader() override = default;
 
@@ -107,18 +118,10 @@ class ParquetReader : public dwio::common::Reader {
   std::shared_ptr<ReaderBase> readerBase_;
 };
 
-class ParquetReaderFactory : public dwio::common::ReaderFactory {
- public:
-  ParquetReaderFactory() : ReaderFactory(dwio::common::FileFormat::PARQUET) {}
-
-  std::unique_ptr<dwio::common::Reader> createReader(
-      std::unique_ptr<dwio::common::BufferedInput> input,
-      const dwio::common::ReaderOptions& options) override {
-    return std::make_unique<ParquetReader>(std::move(input), options);
-  }
-};
-
 void registerParquetReaderFactory();
+
+void registerParquetReaderFactory(
+    std::shared_ptr<dwio::common::InputStreamProvider> inputStreamProvider);
 
 void unregisterParquetReaderFactory();
 

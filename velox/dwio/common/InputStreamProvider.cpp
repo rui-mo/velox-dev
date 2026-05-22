@@ -14,21 +14,20 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include <memory>
+#include "velox/dwio/common/InputStreamProvider.h"
+#include "velox/common/file/FileSystems.h"
 
 namespace facebook::velox::dwio::common {
-class InputStreamProvider;
+
+std::shared_ptr<ReadFile> DefaultInputStreamProvider::createReadFile(
+    const std::string& path) {
+  return filesystems::getFileSystem(path, nullptr)->openFileForRead(path);
+}
+
+std::shared_ptr<InputStreamProvider> InputStreamProvider::createDefault() {
+  return std::make_shared<DefaultInputStreamProvider>();
+}
+
 } // namespace facebook::velox::dwio::common
 
-namespace facebook::velox::parquet {
-
-void registerParquetReaderFactory();
-
-void registerParquetReaderFactory(
-    std::shared_ptr<dwio::common::InputStreamProvider> inputStreamProvider);
-
-void unregisterParquetReaderFactory();
-
-} // namespace facebook::velox::parquet
+// Made with Bob

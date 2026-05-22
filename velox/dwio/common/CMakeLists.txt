@@ -42,6 +42,7 @@ velox_add_library(
   FlatMapHelper.cpp
   OnDemandUnitLoader.cpp
   InputStream.cpp
+  InputStreamProvider.cpp
   IntDecoder.cpp
   MetadataFilter.cpp
   Options.cpp
@@ -95,6 +96,7 @@ velox_add_library(
   FlushPolicy.h
   FormatData.h
   InputStream.h
+  InputStreamProvider.h
   IntCodecCommon.h
   IntDecoder.h
   MeasureTime.h

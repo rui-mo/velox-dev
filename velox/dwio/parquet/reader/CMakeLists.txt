@@ -17,6 +17,7 @@ velox_add_library(
   Metadata.cpp
   NestedStructureDecoder.cpp
   ParquetReader.cpp
+  ParquetReaderFactory.cpp
   ParquetTypeWithId.cpp
   PageReader.cpp
   ParquetColumnReader.cpp
@@ -39,6 +40,7 @@ velox_add_library(
   ParquetColumnReader.h
   ParquetData.h
   ParquetReader.h
+  ParquetReaderFactory.h
   ParquetStatsContext.h
   ParquetTypeWithId.h
   RepeatedColumnReader.h

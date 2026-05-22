@@ -22,7 +22,15 @@ namespace facebook::velox::parquet {
 
 void registerParquetReaderFactory() {
 #ifdef VELOX_ENABLE_PARQUET
-  dwio::common::registerReaderFactory(std::make_shared<ParquetReaderFactory>());
+  dwio::common::registerReaderFactory(ParquetReaderFactory::createDefault());
+#endif
+}
+
+void registerParquetReaderFactory(
+    std::shared_ptr<dwio::common::InputStreamProvider> inputStreamProvider) {
+#ifdef VELOX_ENABLE_PARQUET
+  dwio::common::registerReaderFactory(
+      ParquetReaderFactory::create(inputStreamProvider));
 #endif
 }
 
