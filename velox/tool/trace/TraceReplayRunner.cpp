@@ -251,13 +251,13 @@ void printSummary(
 TraceReplayRunner::TraceReplayRunner()
     : cpuExecutor_(
           std::make_unique<folly::CPUThreadPoolExecutor>(
-              folly::available_concurrency() *
+              folly::hardware_concurrency() *
                   FLAGS_driver_cpu_executor_hw_multiplier,
               std::make_shared<folly::NamedThreadFactory>(
                   "TraceReplayCpuConnector"))),
       ioExecutor_(
           std::make_unique<folly::IOThreadPoolExecutor>(
-              folly::available_concurrency() *
+              folly::hardware_concurrency() *
                   FLAGS_hive_connector_executor_hw_multiplier,
               std::make_shared<folly::NamedThreadFactory>(
                   "TraceReplayIoConnector"))) {}

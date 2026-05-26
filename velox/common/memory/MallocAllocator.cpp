@@ -35,7 +35,7 @@ MallocAllocator::MallocAllocator(const Options& options)
             decrementUsageWithReservationFunc(counter, decrement, lock);
             return true;
           }),
-      reservations_(folly::available_concurrency()) {}
+      reservations_(folly::hardware_concurrency()) {}
 
 MallocAllocator::~MallocAllocator() {
   // TODO: Remove the check when memory leak issue is resolved.

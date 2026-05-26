@@ -440,7 +440,7 @@ class OutputBufferManagerTest : public testing::Test {
   const std::string serdeKind_;
   std::shared_ptr<folly::Executor> executor_{
       std::make_shared<folly::CPUThreadPoolExecutor>(
-          folly::available_concurrency())};
+          folly::hardware_concurrency())};
   std::shared_ptr<facebook::velox::memory::MemoryPool> pool_;
   std::shared_ptr<OutputBufferManager> bufferManager_;
   RowTypePtr rowType_;
