@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <optional>
 #include <string_view>
 
 #include "velox/exec/HashBuild.h"
@@ -34,6 +35,20 @@ class HashProbe : public Operator {
   /// Number of rows bypassed via dynamic filter replacement.
   static constexpr std::string_view kReplacedWithDynamicFilterRows =
       "replacedWithDynamicFilterRows";
+
+  enum class NullAwareJoinFilterComparison {
+    kEqual,
+    kNotEqual,
+    kLessThan,
+    kGreaterThan,
+  };
+
+  struct NullAwareJoinFilterFastPath {
+    column_index_t probeChannel;
+    column_index_t tableChannel;
+    TypePtr type;
+    NullAwareJoinFilterComparison comparison;
+  };
 
   HashProbe(
       int32_t operatorId,
@@ -225,6 +240,13 @@ class HashProbe : public Operator {
   // that pass the filter in 'filterPassedRows'. Used in null-aware join
   // processing.
   void applyFilterOnTableRowsForNullAwareJoin(
+      SelectivityVector& rows,
+      SelectivityVector& filterPassedRows,
+      std::function<int32_t(char**, int32_t)> iterator);
+
+  // Applies a specialized O(build + probe) path for simple null-propagating
+  // probe/build field comparisons. Returns false if the filter is unsupported.
+  bool tryApplyFilterOnTableRowsForNullAwareJoinFastPath(
       SelectivityVector& rows,
       SelectivityVector& filterPassedRows,
       std::function<int32_t(char**, int32_t)> iterator);
@@ -502,6 +524,8 @@ class HashProbe : public Operator {
   // Maps from column index in hash table to channel in 'filterInputType_'.
   std::vector<IdentityProjection> filterTableProjections_;
 
+  std::optional<NullAwareJoinFilterFastPath> nullAwareJoinFilterFastPath_;
+
   // The following six fields are used in null-aware anti join filter
   // processing.
 
@@ -520,6 +544,7 @@ class HashProbe : public Operator {
   // Used to store the filter result for null-key joined rows.
   std::vector<VectorPtr> filterTableResult_;
   DecodedVector decodedFilterTableResult_;
+  DecodedVector decodedFastFilterProbeInput_;
 
   // Row number in 'input_' for each output row.
   BufferPtr outputRowMapping_;

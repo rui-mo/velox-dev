@@ -16,9 +16,11 @@
 
 #include "velox/exec/HashProbe.h"
 #include <folly/ScopeGuard.h>
+#include <unordered_set>
 #include "velox/common/base/Counters.h"
 #include "velox/common/base/StatsReporter.h"
 #include "velox/common/testutil/TestValue.h"
+#include "velox/core/Expressions.h"
 #include "velox/exec/OperatorType.h"
 #include "velox/exec/OperatorUtils.h"
 #include "velox/exec/Task.h"
@@ -33,6 +35,136 @@ namespace {
 
 // Batch size used when iterating the row container.
 constexpr int kBatchSize = 1024;
+
+bool isIntegerComparisonType(const TypePtr& type) {
+  switch (type->kind()) {
+    case TypeKind::TINYINT:
+    case TypeKind::SMALLINT:
+    case TypeKind::INTEGER:
+    case TypeKind::BIGINT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+std::optional<int64_t> integerValueAt(
+    const DecodedVector& decoded,
+    vector_size_t index,
+    TypeKind kind) {
+  if (decoded.isNullAt(index)) {
+    return std::nullopt;
+  }
+
+  switch (kind) {
+    case TypeKind::TINYINT:
+      return decoded.valueAt<int8_t>(index);
+    case TypeKind::SMALLINT:
+      return decoded.valueAt<int16_t>(index);
+    case TypeKind::INTEGER:
+      return decoded.valueAt<int32_t>(index);
+    case TypeKind::BIGINT:
+      return decoded.valueAt<int64_t>(index);
+    default:
+      return std::nullopt;
+  }
+}
+
+std::optional<HashProbe::NullAwareJoinFilterComparison> comparisonFromName(
+    const std::string& name) {
+  if (name == "eq") {
+    return HashProbe::NullAwareJoinFilterComparison::kEqual;
+  }
+  if (name == "neq") {
+    return HashProbe::NullAwareJoinFilterComparison::kNotEqual;
+  }
+  if (name == "lt") {
+    return HashProbe::NullAwareJoinFilterComparison::kLessThan;
+  }
+  if (name == "gt") {
+    return HashProbe::NullAwareJoinFilterComparison::kGreaterThan;
+  }
+  return std::nullopt;
+}
+
+HashProbe::NullAwareJoinFilterComparison invertComparison(
+    HashProbe::NullAwareJoinFilterComparison comparison) {
+  switch (comparison) {
+    case HashProbe::NullAwareJoinFilterComparison::kLessThan:
+      return HashProbe::NullAwareJoinFilterComparison::kGreaterThan;
+    case HashProbe::NullAwareJoinFilterComparison::kGreaterThan:
+      return HashProbe::NullAwareJoinFilterComparison::kLessThan;
+    case HashProbe::NullAwareJoinFilterComparison::kEqual:
+    case HashProbe::NullAwareJoinFilterComparison::kNotEqual:
+      return comparison;
+  }
+  VELOX_UNREACHABLE();
+}
+
+std::optional<HashProbe::NullAwareJoinFilterFastPath>
+createNullAwareJoinFilterFastPath(
+    const core::TypedExprPtr& filter,
+    const RowTypePtr& probeType,
+    const RowTypePtr& tableType) {
+  auto call = std::dynamic_pointer_cast<const core::CallTypedExpr>(filter);
+  if (call == nullptr || call->inputs().size() != 2) {
+    return std::nullopt;
+  }
+
+  auto comparison = comparisonFromName(call->name());
+  if (!comparison.has_value()) {
+    return std::nullopt;
+  }
+
+  auto leftField = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+      call->inputs()[0]);
+  auto rightField = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+      call->inputs()[1]);
+  if (leftField == nullptr || rightField == nullptr ||
+      !leftField->isInputColumn() || !rightField->isInputColumn()) {
+    return std::nullopt;
+  }
+
+  struct FieldSide {
+    std::optional<column_index_t> probeChannel;
+    std::optional<column_index_t> tableChannel;
+  };
+  auto classify = [&](const core::FieldAccessTypedExpr& field) {
+    FieldSide side;
+    if (auto channel = probeType->getChildIdxIfExists(field.name())) {
+      side.probeChannel = *channel;
+    } else if (auto channel = tableType->getChildIdxIfExists(field.name())) {
+      side.tableChannel = *channel;
+    }
+    return side;
+  };
+
+  const auto left = classify(*leftField);
+  const auto right = classify(*rightField);
+  std::optional<column_index_t> probeChannel;
+  std::optional<column_index_t> tableChannel;
+  auto normalizedComparison = *comparison;
+  if (left.probeChannel.has_value() && right.tableChannel.has_value()) {
+    probeChannel = left.probeChannel;
+    tableChannel = right.tableChannel;
+  } else if (left.tableChannel.has_value() && right.probeChannel.has_value()) {
+    probeChannel = right.probeChannel;
+    tableChannel = left.tableChannel;
+    normalizedComparison = invertComparison(normalizedComparison);
+  } else {
+    return std::nullopt;
+  }
+
+  const auto& probeColumnType = probeType->childAt(*probeChannel);
+  const auto& tableColumnType = tableType->childAt(*tableChannel);
+  if (*probeColumnType != *tableColumnType ||
+      !isIntegerComparisonType(probeColumnType)) {
+    return std::nullopt;
+  }
+
+  return HashProbe::NullAwareJoinFilterFastPath{
+      *probeChannel, *tableChannel, probeColumnType, normalizedComparison};
+}
 } // namespace
 
 // static
@@ -232,6 +364,8 @@ void HashProbe::initializeFilter(
   }
 
   filterInputType_ = ROW(std::move(names), std::move(types));
+  nullAwareJoinFilterFastPath_ =
+      createNullAwareJoinFilterFastPath(filter, probeType, tableType);
 }
 
 void HashProbe::maybeSetupInputSpiller(
@@ -1486,6 +1620,11 @@ void HashProbe::applyFilterOnTableRowsForNullAwareJoin(
     return;
   }
   VELOX_CHECK(table_->rows(), "Should not move rows in hash joins");
+  if (tryApplyFilterOnTableRowsForNullAwareJoinFastPath(
+          rows, filterPassedRows, iterator)) {
+    return;
+  }
+
   char* data[kBatchSize];
 
   while (auto numBuildRows = iterator(data, kBatchSize)) {
@@ -1536,6 +1675,118 @@ void HashProbe::applyFilterOnTableRowsForNullAwareJoin(
       }
     });
   }
+}
+
+bool HashProbe::tryApplyFilterOnTableRowsForNullAwareJoinFastPath(
+    SelectivityVector& rows,
+    SelectivityVector& filterPassedRows,
+    std::function<int32_t(char**, int32_t)> iterator) {
+  if (!nullAwareJoinFilterFastPath_.has_value()) {
+    return false;
+  }
+
+  rows.deselect(filterPassedRows);
+  if (!rows.hasSelections()) {
+    return true;
+  }
+
+  const auto& fastPath = *nullAwareJoinFilterFastPath_;
+  auto* rowContainer = table_->rows();
+  const auto buildColumn = rowContainer->columnAt(fastPath.tableChannel);
+
+  char* data[kBatchSize];
+  char* minBuildRow = nullptr;
+  char* maxBuildRow = nullptr;
+  std::unordered_set<int64_t> buildValues;
+  VectorPtr buildVector = BaseVector::create(fastPath.type, kBatchSize, pool());
+  DecodedVector decodedBuildVector;
+
+  const auto collectIntegerValues =
+      fastPath.comparison == NullAwareJoinFilterComparison::kEqual ||
+      fastPath.comparison == NullAwareJoinFilterComparison::kNotEqual;
+
+  while (auto numBuildRows = iterator(data, kBatchSize)) {
+    if (collectIntegerValues) {
+      buildVector->resize(numBuildRows);
+      table_->extractColumn(
+          folly::Range<char* const*>(data, numBuildRows),
+          fastPath.tableChannel,
+          buildVector);
+
+      SelectivityVector buildRows(numBuildRows);
+      decodedBuildVector.decode(*buildVector, buildRows);
+      for (vector_size_t i = 0; i < numBuildRows; ++i) {
+        auto value =
+            integerValueAt(decodedBuildVector, i, fastPath.type->kind());
+        if (value.has_value()) {
+          buildValues.insert(*value);
+        }
+      }
+      continue;
+    }
+
+    for (vector_size_t i = 0; i < numBuildRows; ++i) {
+      auto* buildRow = data[i];
+      if (RowContainer::isNullAt(
+              buildRow, buildColumn.nullByte(), buildColumn.nullMask())) {
+        continue;
+      }
+      if (minBuildRow == nullptr ||
+          rowContainer->compare(buildRow, minBuildRow, fastPath.tableChannel) <
+              0) {
+        minBuildRow = buildRow;
+      }
+      if (maxBuildRow == nullptr ||
+          rowContainer->compare(buildRow, maxBuildRow, fastPath.tableChannel) >
+              0) {
+        maxBuildRow = buildRow;
+      }
+    }
+  }
+
+  auto probeVector = input_->childAt(fastPath.probeChannel)->loadedVector();
+  decodedFastFilterProbeInput_.decode(*probeVector, rows);
+
+  rows.applyToSelected([&](vector_size_t row) {
+    if (decodedFastFilterProbeInput_.isNullAt(row)) {
+      return;
+    }
+
+    bool passed = false;
+    switch (fastPath.comparison) {
+      case NullAwareJoinFilterComparison::kLessThan:
+        passed = maxBuildRow != nullptr &&
+            rowContainer->compare(
+                maxBuildRow, buildColumn, decodedFastFilterProbeInput_, row) >
+                0;
+        break;
+      case NullAwareJoinFilterComparison::kGreaterThan:
+        passed = minBuildRow != nullptr &&
+            rowContainer->compare(
+                minBuildRow, buildColumn, decodedFastFilterProbeInput_, row) <
+                0;
+        break;
+      case NullAwareJoinFilterComparison::kEqual: {
+        auto value = integerValueAt(
+            decodedFastFilterProbeInput_, row, fastPath.type->kind());
+        passed = value.has_value() && buildValues.count(*value) > 0;
+        break;
+      }
+      case NullAwareJoinFilterComparison::kNotEqual: {
+        auto value = integerValueAt(
+            decodedFastFilterProbeInput_, row, fastPath.type->kind());
+        passed = value.has_value() && !buildValues.empty() &&
+            (buildValues.size() > 1 || buildValues.count(*value) == 0);
+        break;
+      }
+    }
+
+    if (passed) {
+      filterPassedRows.setValid(row, true);
+    }
+  });
+
+  return true;
 }
 
 SelectivityVector HashProbe::evalFilterForNullAwareJoin(

@@ -1759,6 +1759,47 @@ TEST_P(MultiThreadedHashJoinTest, nullAwareAntiJoinWithFilterAllNullProbeKeys) {
       .run();
 }
 
+TEST_P(MultiThreadedHashJoinTest, nullAwareAntiJoinWithSimpleComparisonFilter) {
+  auto probeVectors = makeBatches(1, [&](int32_t /*unused*/) {
+    return makeRowVector(
+        {"t0", "t1"},
+        {
+            makeNullableFlatVector<int32_t>(
+                {std::nullopt, std::nullopt, std::nullopt, 1, 2, 3}),
+            makeNullableFlatVector<int32_t>({1, 5, std::nullopt, 10, 20, 30}),
+        });
+  });
+  auto buildVectors = makeBatches(1, [&](int32_t /*unused*/) {
+    return makeRowVector(
+        {"u0", "u1"},
+        {
+            makeNullableFlatVector<int32_t>({1, std::nullopt, 3, 4}),
+            makeNullableFlatVector<int32_t>({5, std::nullopt, 9, 30}),
+        });
+  });
+
+  for (const auto& filter : {"t1 = u1", "t1 <> u1", "t1 < u1", "u1 > t1"}) {
+    SCOPED_TRACE(filter);
+    const auto referenceSql = fmt::format(
+        "SELECT t.* FROM t WHERE t0 NOT IN (SELECT u0 FROM u WHERE {})",
+        filter);
+
+    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+        .numDrivers(numDrivers_)
+        .probeKeys({"t0"})
+        .probeVectors(std::vector<RowVectorPtr>(probeVectors))
+        .buildKeys({"u0"})
+        .buildVectors(std::vector<RowVectorPtr>(buildVectors))
+        .joinType(core::JoinType::kAnti)
+        .nullAware(true)
+        .joinFilter(filter)
+        .joinOutputLayout({"t0", "t1"})
+        .referenceQuery(referenceSql)
+        .checkSpillStats(false)
+        .run();
+  }
+}
+
 TEST_P(MultiThreadedHashJoinTest, nullAwareAntiJoinWithFilterEmptyBatch) {
   auto probeVectors = makeBatches(1, [&](int32_t /*unused*/) {
     return makeRowVector(
