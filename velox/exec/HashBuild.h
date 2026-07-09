@@ -358,6 +358,10 @@ class HashBuild final : public Operator {
   // Temporary space for hash numbers.
   raw_vector<uint64_t> hashes_;
 
+  // Temporary space for batch loading build rows into the RowContainer.
+  std::vector<char*> newRows_;
+  std::vector<vector_size_t> newRowInputRows_;
+
   // Set of active rows during addInput().
   SelectivityVector activeRows_;
 

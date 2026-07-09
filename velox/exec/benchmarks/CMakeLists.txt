@@ -77,6 +77,15 @@ target_link_libraries(
   Folly::follybenchmark
 )
 
+add_executable(velox_row_container_batch_append_benchmark RowContainerBatchAppendBenchmark.cpp)
+
+target_link_libraries(
+  velox_row_container_batch_append_benchmark
+  velox_exec
+  velox_vector_test_lib
+  Folly::follybenchmark
+)
+
 add_executable(velox_hash_join_build_benchmark HashJoinBuildBenchmark.cpp)
 
 target_link_libraries(

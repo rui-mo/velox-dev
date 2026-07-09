@@ -573,27 +573,44 @@ void HashBuild::addInput(RowVectorPtr input) {
         input->childAt(spillProbedFlagChannel_)->asFlatVector<bool>();
   }
 
-  activeRows_.applyToSelected([&](auto rowIndex) {
-    char* newRow = rows->newRow();
-    if (nextOffset) {
+  const auto numNewRows = activeRows_.countSelected();
+  newRows_.resize(numNewRows);
+  newRowInputRows_.resize(numNewRows);
+  vector_size_t newRowIndex = 0;
+  activeRows_.applyToSelected(
+      [&](auto rowIndex) { newRowInputRows_[newRowIndex++] = rowIndex; });
+
+  rows->newRows(folly::Range(newRows_.data(), newRows_.size()));
+
+  if (nextOffset) {
+    for (auto* newRow : newRows_) {
       *reinterpret_cast<char**>(newRow + nextOffset) = nullptr;
     }
-    // Store the columns for each row in sequence. At probe time
-    // strings of the row will probably be in consecutive places, so
-    // reading one will prime the cache for the next.
-    for (auto i = 0; i < hashers.size(); ++i) {
-      rows->store(hashers[i]->decodedVector(), rowIndex, newRow, i);
-    }
-    for (auto i = 0; i < dependentChannels_.size(); ++i) {
-      rows->store(*decoders_[i], rowIndex, newRow, i + hashers.size());
-    }
-    if (spillProbedFlagVector != nullptr) {
+  }
+
+  const folly::Range<char**> newRows(newRows_.data(), newRows_.size());
+  const folly::Range<const vector_size_t*> inputRows(
+      newRowInputRows_.data(), newRowInputRows_.size());
+  // Store the columns in sequence. At probe time strings of the row will
+  // probably be in consecutive places, so reading one will prime the cache for
+  // the next.
+  for (auto i = 0; i < hashers.size(); ++i) {
+    rows->store(hashers[i]->decodedVector(), newRows, inputRows, i);
+  }
+  for (auto i = 0; i < dependentChannels_.size(); ++i) {
+    rows->store(*decoders_[i], newRows, inputRows, i + hashers.size());
+  }
+
+  if (spillProbedFlagVector != nullptr) {
+    for (auto i = 0; i < newRows_.size(); ++i) {
+      const auto rowIndex = newRowInputRows_[i];
+      auto* newRow = newRows_[i];
       VELOX_CHECK(!spillProbedFlagVector->isNullAt(rowIndex));
       if (spillProbedFlagVector->valueAt(rowIndex)) {
         rows->setProbedFlag(&newRow, 1);
       }
     }
-  });
+  }
 }
 
 void HashBuild::ensureInputFits(RowVectorPtr& input) {

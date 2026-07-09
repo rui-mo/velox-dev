@@ -2330,6 +2330,36 @@ TEST_P(RowContainerTest, store) {
       rowContainer->extractColumn(rows.data(), kNumRows, i, vector);
       assertEqualVectors(rowVector->childAt(i), vector);
     }
+
+    const vector_size_t selectedCount = kNumRows / 2;
+    std::vector<char*> selectedRows(selectedCount);
+    rowContainer->newRows(
+        folly::Range(selectedRows.data(), selectedRows.size()));
+
+    BufferPtr indices =
+        AlignedBuffer::allocate<vector_size_t>(selectedCount, pool());
+    auto rawIndices = indices->asMutable<vector_size_t>();
+    for (auto i = 0; i < selectedCount; ++i) {
+      rawIndices[i] = i * 2 + 1;
+    }
+
+    for (int i = 0; i < rowContainer->columnTypes().size(); ++i) {
+      DecodedVector decoded(*rowVector->childAt(i), allRows);
+      rowContainer->store(
+          decoded,
+          folly::Range(selectedRows.data(), selectedRows.size()),
+          folly::Range<const vector_size_t*>(rawIndices, selectedCount),
+          i);
+
+      auto vector = BaseVector::create(
+          rowVector->childAt(i)->type(), selectedCount, pool());
+      rowContainer->extractColumn(
+          selectedRows.data(), selectedCount, i, vector);
+      BufferPtr nulls = nullptr;
+      auto expected = BaseVector::wrapInDictionary(
+          nulls, indices, selectedCount, rowVector->childAt(i));
+      assertEqualVectors(expected, vector);
+    }
   }
 }
 

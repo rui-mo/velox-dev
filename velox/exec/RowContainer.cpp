@@ -295,6 +295,48 @@ char* RowContainer::newRow() {
   return initializeRow(row, false /* reuse */);
 }
 
+void RowContainer::newRows(folly::Range<char**> rows) {
+  VELOX_DCHECK(mutable_, "Can't add row into an immutable row container");
+
+  if (normalizedKeySize_ != 0) {
+    for (auto& row : rows) {
+      row = newRow();
+    }
+    return;
+  }
+
+  int32_t rowIndex = 0;
+  for (; firstFreeRow_ != nullptr && rowIndex < rows.size(); ++rowIndex) {
+    ++numRows_;
+    auto* row = firstFreeRow_;
+    VELOX_CHECK(bits::isBitSet(row, freeFlagOffset_));
+    firstFreeRow_ = nextFree(row);
+    --numFreeRows_;
+    rows[rowIndex] = initializeRow(row, false /* reuse */);
+  }
+
+  const auto numRowsToAllocate = rows.size() - rowIndex;
+  if (numRowsToAllocate == 0) {
+    return;
+  }
+
+  numRows_ += numRowsToAllocate;
+  const auto rowSize = fixedRowSize_ + normalizedKeySize_;
+  auto* row = rows_.allocateFixed(rowSize * numRowsToAllocate, alignment_);
+  for (; rowIndex < rows.size(); ++rowIndex, row += rowSize) {
+    auto* initializedRow = row + normalizedKeySize_;
+    if (normalizedKeySize_) {
+      ++numRowsWithNormalizedKey_;
+    }
+
+    if (useListRowIndex_) {
+      rowPointers_.push_back(initializedRow);
+    }
+
+    rows[rowIndex] = initializeRow(initializedRow, false /* reuse */);
+  }
+}
+
 void RowContainer::setAllNull(char* row) {
   VELOX_CHECK(!bits::isBitSet(row, freeFlagOffset_));
   removeOrUpdateRowColumnStats(row, /*setToNull=*/true);
@@ -557,6 +599,17 @@ void RowContainer::store(
     folly::Range<char**> rows,
     int32_t column) {
   VELOX_CHECK_GE(decoded.size(), rows.size());
+  const folly::Range<const vector_size_t*> rowNumbers;
+  store(decoded, rows, rowNumbers, column);
+}
+
+void RowContainer::store(
+    const DecodedVector& decoded,
+    folly::Range<char**> rows,
+    folly::Range<const vector_size_t*> rowNumbers,
+    int32_t column) {
+  VELOX_CHECK(rowNumbers.empty() || rowNumbers.size() == rows.size());
+  VELOX_CHECK_GE(decoded.size(), rows.size());
   const bool isKey = column < keyTypes_.size();
   if ((isKey && !nullableKeys_) || !decoded.mayHaveNulls()) {
     VELOX_DYNAMIC_TYPE_DISPATCH(
@@ -564,6 +617,7 @@ void RowContainer::store(
         typeKinds_[column],
         decoded,
         rows,
+        rowNumbers,
         isKey,
         offsets_[column],
         column);
@@ -574,6 +628,7 @@ void RowContainer::store(
         typeKinds_[column],
         decoded,
         rows,
+        rowNumbers,
         isKey,
         rowColumn.offset(),
         rowColumn.nullByte(),

@@ -187,6 +187,21 @@ class RowColumn {
       ++nonNullCount_;
     }
 
+    void addCellSize(int32_t bytes, uint32_t count) {
+      if (count == 0) {
+        return;
+      }
+      if (UNLIKELY(nonNullCount_ == 0)) {
+        minBytes_ = bytes;
+        maxBytes_ = bytes;
+      } else {
+        minBytes_ = std::min(minBytes_, bytes);
+        maxBytes_ = std::max(maxBytes_, bytes);
+      }
+      sumBytes_ += static_cast<uint64_t>(bytes) * count;
+      nonNullCount_ += count;
+    }
+
     void addNullCell() {
       ++nullCount_;
     }
@@ -343,6 +358,10 @@ class RowContainer {
   /// Allocates a new row and initializes possible aggregates to null.
   char* newRow();
 
+  /// Allocates 'rows.size()' new rows and initializes possible aggregates to
+  /// null.
+  void newRows(folly::Range<char**> rows);
+
   uint32_t rowSize(const char* row) const {
     return fixedRowSize_ +
         (rowSizeOffset_
@@ -400,6 +419,14 @@ class RowContainer {
   void store(
       const DecodedVector& decoded,
       folly::Range<char**> rows,
+      int32_t columnIndex);
+
+  /// Stores values from 'decoded' indexed by 'rowNumbers' into the
+  /// 'columnIndex' column of 'rows'. 'rowNumbers' must have one entry per row.
+  void store(
+      const DecodedVector& decoded,
+      folly::Range<char**> rows,
+      folly::Range<const vector_size_t*> rowNumbers,
       int32_t columnIndex);
 
   HashStringAllocator& stringAllocator() {
@@ -1140,15 +1167,24 @@ class RowContainer {
   inline void storeWithNullsBatch(
       const DecodedVector& decoded,
       folly::Range<char**> rows,
+      folly::Range<const vector_size_t*> rowNumbers,
       bool isKey,
       int32_t offset,
       int32_t nullByte,
       uint8_t nullMask,
       int32_t column) {
     for (int32_t i = 0; i < rows.size(); ++i) {
+      const auto rowIndex = rowNumbers.empty() ? i : rowNumbers[i];
       storeWithNulls<Kind>(
-          decoded, i, isKey, rows[i], offset, nullByte, nullMask, column);
-      updateColumnStats(decoded, i, rows[i], column);
+          decoded,
+          rowIndex,
+          isKey,
+          rows[i],
+          offset,
+          nullByte,
+          nullMask,
+          column);
+      updateColumnStats(decoded, rowIndex, rows[i], column);
     }
   }
 
@@ -1156,12 +1192,74 @@ class RowContainer {
   inline void storeNoNullsBatch(
       const DecodedVector& decoded,
       folly::Range<char**> rows,
+      folly::Range<const vector_size_t*> rowNumbers,
       bool isKey,
       int32_t offset,
       int32_t column) {
+    if (storeFixedWidthNoNullsBatch<Kind>(
+            decoded, rows, rowNumbers, offset, column)) {
+      return;
+    }
     for (int32_t i = 0; i < rows.size(); ++i) {
-      storeNoNulls<Kind>(decoded, i, isKey, rows[i], offset);
-      updateColumnStats(decoded, i, rows[i], column);
+      const auto rowIndex = rowNumbers.empty() ? i : rowNumbers[i];
+      storeNoNulls<Kind>(decoded, rowIndex, isKey, rows[i], offset);
+      updateColumnStats(decoded, rowIndex, rows[i], column);
+    }
+  }
+
+  template <TypeKind Kind>
+  inline bool storeFixedWidthNoNullsBatch(
+      const DecodedVector& decoded,
+      folly::Range<char**> rows,
+      folly::Range<const vector_size_t*> rowNumbers,
+      int32_t offset,
+      int32_t column) {
+    using T = typename TypeTraits<Kind>::NativeType;
+    if constexpr (
+        !std::is_trivially_copyable_v<T> || std::is_same_v<T, StringView> ||
+        Kind == TypeKind::HUGEINT || Kind == TypeKind::ROW ||
+        Kind == TypeKind::ARRAY || Kind == TypeKind::MAP) {
+      return false;
+    } else {
+      if (decoded.mayHaveNulls()) {
+        return false;
+      }
+
+      auto* values = decoded.data<T>();
+      if (decoded.isConstantMapping()) {
+        const auto value = decoded.valueAt<T>(0);
+        for (auto* row : rows) {
+          *reinterpret_cast<T*>(row + offset) = value;
+        }
+      } else if (decoded.isIdentityMapping()) {
+        if (rowNumbers.empty()) {
+          for (int32_t i = 0; i < rows.size(); ++i) {
+            *reinterpret_cast<T*>(rows[i] + offset) = values[i];
+          }
+        } else {
+          for (int32_t i = 0; i < rows.size(); ++i) {
+            *reinterpret_cast<T*>(rows[i] + offset) = values[rowNumbers[i]];
+          }
+        }
+      } else {
+        const auto* indices = decoded.indices();
+        if (rowNumbers.empty()) {
+          for (int32_t i = 0; i < rows.size(); ++i) {
+            *reinterpret_cast<T*>(rows[i] + offset) = values[indices[i]];
+          }
+        } else {
+          for (int32_t i = 0; i < rows.size(); ++i) {
+            const auto rowIndex = rowNumbers[i];
+            *reinterpret_cast<T*>(rows[i] + offset) = values[indices[rowIndex]];
+          }
+        }
+      }
+
+      if (!rowColumnsStats_.empty()) {
+        rowColumnsStats_[column].addCellSize(
+            fixedSizeAt(column), static_cast<uint32_t>(rows.size()));
+      }
+      return true;
     }
   }
 
