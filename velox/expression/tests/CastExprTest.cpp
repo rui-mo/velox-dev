@@ -1259,6 +1259,17 @@ TEST_F(CastExprTest, primitiveValidCornerCases) {
   }
 }
 
+TEST_F(CastExprTest, fixedWidthVectorizedBoolNumeric) {
+  testCast<bool, int64_t>(
+      "bigint", {true, false, std::nullopt}, {1, 0, std::nullopt});
+  testCast<int64_t, bool>(
+      "boolean", {0, 1, -7, std::nullopt}, {false, true, true, std::nullopt});
+  testCast<double, bool>(
+      "boolean",
+      {0.0, 0.25, -1.5, std::numeric_limits<double>::quiet_NaN()},
+      {false, true, true, true});
+}
+
 TEST_F(CastExprTest, truncateVsRound) {
   // Testing round cast from double to int.
   testCast<double, int>(
@@ -1893,6 +1904,35 @@ TEST_F(CastExprTest, decimalToDecimal) {
       "Cannot cast DECIMAL '-99999999999999999999999999999999999999' to DECIMAL(38, 1)");
 }
 
+TEST_F(CastExprTest, decimalMetadataOnlyCast) {
+  auto shortInput = makeNullableFlatVector<int64_t>(
+      {12'345, -67, std::nullopt}, DECIMAL(5, 2));
+  auto shortResult = evaluateCast(
+      shortInput->type(), DECIMAL(10, 2), makeRowVector({shortInput}));
+  auto shortExpected = makeNullableFlatVector<int64_t>(
+      {12'345, -67, std::nullopt}, DECIMAL(10, 2));
+  assertEqualVectors(shortExpected, shortResult);
+  EXPECT_EQ(
+      shortInput->asFlatVector<int64_t>()->values().get(),
+      shortResult->asFlatVector<int64_t>()->values().get());
+
+  auto longInput = makeFlatVector<int128_t>(
+      {HugeInt::build(1, 2), HugeInt::build(-1, 3)}, DECIMAL(20, 4));
+  auto longResult = evaluateCast(
+      longInput->type(), DECIMAL(30, 4), makeRowVector({longInput}));
+  auto longExpected = makeFlatVector<int128_t>(
+      {HugeInt::build(1, 2), HugeInt::build(-1, 3)}, DECIMAL(30, 4));
+  assertEqualVectors(longExpected, longResult);
+  EXPECT_EQ(
+      longInput->asFlatVector<int128_t>()->values().get(),
+      longResult->asFlatVector<int128_t>()->values().get());
+
+  VELOX_ASSERT_THROW(
+      evaluateCast(
+          shortInput->type(), DECIMAL(4, 2), makeRowVector({shortInput})),
+      "Cannot cast DECIMAL '123.45' to DECIMAL(4, 2)");
+}
+
 TEST_F(CastExprTest, integerToBinary) {
   testInvalidCast<int8_t>(
       "varbinary", {12}, "Cannot cast TINYINT to VARBINARY.");
@@ -1902,6 +1942,37 @@ TEST_F(CastExprTest, integerToBinary) {
       "varbinary", {12}, "Cannot cast INTEGER to VARBINARY.");
   testInvalidCast<int64_t>(
       "varbinary", {12}, "Cannot cast BIGINT to VARBINARY.");
+}
+
+TEST_F(CastExprTest, varcharVarbinaryMetadataOnlyCast) {
+  auto varcharInput = makeNullableFlatVector<StringView>(
+      {"long-string-value-0", "another-long-string-value-1", std::nullopt},
+      VARCHAR());
+  auto varbinaryResult = evaluateCast(
+      varcharInput->type(), VARBINARY(), makeRowVector({varcharInput}));
+  auto varbinaryExpected = makeNullableFlatVector<StringView>(
+      {"long-string-value-0", "another-long-string-value-1", std::nullopt},
+      VARBINARY());
+  assertEqualVectors(varbinaryExpected, varbinaryResult);
+
+  auto varcharInputFlat = varcharInput->asFlatVector<StringView>();
+  auto varbinaryResultFlat = varbinaryResult->asFlatVector<StringView>();
+  EXPECT_EQ(
+      varcharInputFlat->values().get(), varbinaryResultFlat->values().get());
+  ASSERT_EQ(
+      varcharInputFlat->stringBuffers().size(),
+      varbinaryResultFlat->stringBuffers().size());
+  ASSERT_FALSE(varcharInputFlat->stringBuffers().empty());
+  EXPECT_EQ(
+      varcharInputFlat->stringBuffers()[0].get(),
+      varbinaryResultFlat->stringBuffers()[0].get());
+
+  auto varcharResult = evaluateCast(
+      varbinaryResult->type(), VARCHAR(), makeRowVector({varbinaryResult}));
+  assertEqualVectors(varcharInput, varcharResult);
+  EXPECT_EQ(
+      varbinaryResultFlat->values().get(),
+      varcharResult->asFlatVector<StringView>()->values().get());
 }
 
 TEST_F(CastExprTest, integerToDecimal) {
@@ -3191,6 +3262,9 @@ TEST_F(CastExprTest, timeToBigintCast) {
     auto expected = makeFlatVector<int64_t>({0, 3661000, 43200000, 86399999});
 
     assertEqualVectors(expected, result);
+    EXPECT_EQ(
+        timeVector->asFlatVector<int64_t>()->values().get(),
+        result->values().get());
   }
 
   {

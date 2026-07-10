@@ -323,6 +323,23 @@ class CastExpr : public SpecialForm {
       const BaseVector& input,
       VectorPtr& result);
 
+  template <TypeKind ToKind, TypeKind FromKind>
+  void applyFixedWidthCast(
+      const SelectivityVector& rows,
+      const TypePtr& toType,
+      exec::EvalCtx& context,
+      const BaseVector& input,
+      VectorPtr& result);
+
+  template <TypeKind ToKind>
+  void applyFixedWidthVectorized(
+      const TypePtr& fromType,
+      const TypePtr& toType,
+      const SelectivityVector& rows,
+      exec::EvalCtx& context,
+      const BaseVector& input,
+      VectorPtr& result);
+
   bool isTryCast() const {
     return isTryCast_;
   }

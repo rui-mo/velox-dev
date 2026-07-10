@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include <cmath>
+
 #include "velox/common/base/CountBits.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
@@ -700,6 +702,117 @@ void CastExpr::applyNumericUpcast(
   }
   VELOX_UNSUPPORTED(
       "Cannot upcast from {} to {}", input.type(), toType->toString());
+}
+
+template <TypeKind ToKind, TypeKind FromKind>
+void CastExpr::applyFixedWidthCast(
+    const SelectivityVector& rows,
+    const TypePtr& toType,
+    exec::EvalCtx& context,
+    const BaseVector& input,
+    VectorPtr& result) {
+  constexpr auto isNumericTypeKind = [](TypeKind kind) constexpr {
+    return kind == TypeKind::TINYINT || kind == TypeKind::SMALLINT ||
+        kind == TypeKind::INTEGER || kind == TypeKind::BIGINT ||
+        kind == TypeKind::REAL || kind == TypeKind::DOUBLE;
+  };
+
+  if constexpr (
+      (isNumericTypeKind(ToKind) || ToKind == TypeKind::BOOLEAN) &&
+      (isNumericTypeKind(FromKind) || FromKind == TypeKind::BOOLEAN)) {
+    using ToNativeType = typename TypeTraits<ToKind>::NativeType;
+    using FromNativeType = typename TypeTraits<FromKind>::NativeType;
+
+    if (input.isConstantEncoding()) {
+      auto constantInput = input.as<ConstantVector<FromNativeType>>();
+      if (constantInput->isNullAt(0)) {
+        result =
+            BaseVector::createNullConstant(toType, rows.end(), context.pool());
+        return;
+      }
+
+      auto inputValue = constantInput->valueAt(0);
+      auto constantValue = static_cast<ToNativeType>(inputValue != 0);
+      if constexpr (
+          ToKind == TypeKind::BOOLEAN &&
+          (FromKind == TypeKind::REAL || FromKind == TypeKind::DOUBLE)) {
+        if (hooks_->getPolicy() == SparkCastPolicy && std::isnan(inputValue)) {
+          constantValue = false;
+        }
+      }
+      if constexpr (ToKind != TypeKind::BOOLEAN) {
+        constantValue = static_cast<ToNativeType>(inputValue);
+      }
+
+      result = std::make_shared<ConstantVector<ToNativeType>>(
+          context.pool(),
+          rows.end(),
+          /*isNull=*/false,
+          toType,
+          std::move(constantValue));
+      return;
+    }
+
+    if (input.isFlatEncoding()) {
+      const auto simpleInput = input.asFlatVector<FromNativeType>();
+      auto flatResult = result->asFlatVector<ToNativeType>();
+
+      if constexpr (ToKind == TypeKind::BOOLEAN) {
+        auto* rawResult = flatResult->template mutableRawValues<uint64_t>();
+        rows.applyToSelected([&](auto row) {
+          auto value = simpleInput->valueAt(row);
+          if constexpr (
+              FromKind == TypeKind::REAL || FromKind == TypeKind::DOUBLE) {
+            if (hooks_->getPolicy() == SparkCastPolicy && std::isnan(value)) {
+              bits::setBit(rawResult, row, false);
+              return;
+            }
+          }
+          bits::setBit(rawResult, row, value != 0);
+        });
+      } else if constexpr (FromKind == TypeKind::BOOLEAN) {
+        ToNativeType* out =
+            flatResult->template mutableRawValues<ToNativeType>();
+        rows.applyToSelected([&](auto row) {
+          out[row] = static_cast<ToNativeType>(simpleInput->valueAt(row));
+        });
+      } else {
+        const FromNativeType* in =
+            simpleInput->template rawValues<FromNativeType>();
+        ToNativeType* out =
+            flatResult->template mutableRawValues<ToNativeType>();
+        rows.applyToSelected(
+            [&](auto row) { out[row] = static_cast<ToNativeType>(in[row]); });
+      }
+      return;
+    }
+  }
+
+  VELOX_UNSUPPORTED(
+      "Cannot use fixed-width vectorized cast from {} to {}",
+      input.type(),
+      toType->toString());
+}
+
+template <TypeKind ToKind>
+void CastExpr::applyFixedWidthVectorized(
+    const TypePtr& fromType,
+    const TypePtr& toType,
+    const SelectivityVector& rows,
+    exec::EvalCtx& context,
+    const BaseVector& input,
+    VectorPtr& result) {
+  context.ensureWritable(rows, toType, result);
+
+  VELOX_DYNAMIC_SCALAR_TEMPLATE_TYPE_DISPATCH(
+      applyFixedWidthCast,
+      ToKind,
+      fromType->kind(),
+      rows,
+      toType,
+      context,
+      input,
+      result);
 }
 
 template <TypeKind ToKind>

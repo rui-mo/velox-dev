@@ -1719,11 +1719,18 @@ TEST_F(SparkCastExprTestAnsiOn, dateToTimestampTimezoneGap) {
 // local timestamp is preserved as a UTC epoch in TIMESTAMP_UTC.
 TEST_F(SparkCastExprTestAnsiOff, timestampToTimestampUtc) {
   // No session timezone: identity cast.
-  testCast(
-      makeFlatVector<Timestamp>(
-          {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP()),
-      makeFlatVector<Timestamp>(
-          {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP_UTC()));
+  auto noTimezoneInput = makeFlatVector<Timestamp>(
+      {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP());
+  auto noTimezoneResult = evaluateCast(
+      noTimezoneInput->type(),
+      TIMESTAMP_UTC(),
+      makeRowVector({noTimezoneInput}));
+  auto noTimezoneExpected = makeFlatVector<Timestamp>(
+      {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP_UTC());
+  assertEqualVectors(noTimezoneExpected, noTimezoneResult);
+  EXPECT_EQ(
+      noTimezoneInput->asFlatVector<Timestamp>()->values().get(),
+      noTimezoneResult->asFlatVector<Timestamp>()->values().get());
 
   // America/Los_Angeles (PST = UTC-8): 2020-01-01 00:00:00 UTC
   // → local 2019-12-31 16:00:00 → stored as epoch 1577808000.
@@ -1759,11 +1766,16 @@ TEST_F(SparkCastExprTestAnsiOn, timestampToTimestampUtc) {
 // epoch back to a UTC epoch using the session timezone.
 TEST_F(SparkCastExprTestAnsiOff, timestampUtcToTimestamp) {
   // No session timezone: identity cast.
-  testCast(
-      makeFlatVector<Timestamp>(
-          {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP_UTC()),
-      makeFlatVector<Timestamp>(
-          {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP()));
+  auto noTimezoneInput = makeFlatVector<Timestamp>(
+      {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP_UTC());
+  auto noTimezoneResult = evaluateCast(
+      noTimezoneInput->type(), TIMESTAMP(), makeRowVector({noTimezoneInput}));
+  auto noTimezoneExpected = makeFlatVector<Timestamp>(
+      {Timestamp(0, 0), Timestamp(1'000'000'000, 123)}, TIMESTAMP());
+  assertEqualVectors(noTimezoneExpected, noTimezoneResult);
+  EXPECT_EQ(
+      noTimezoneInput->asFlatVector<Timestamp>()->values().get(),
+      noTimezoneResult->asFlatVector<Timestamp>()->values().get());
 
   // America/Los_Angeles (PST = UTC-8): stored epoch 1577808000
   // → local 2019-12-31 16:00:00 → UTC 2020-01-01 00:00:00 = epoch 1577836800.

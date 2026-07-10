@@ -38,6 +38,14 @@ namespace facebook::velox::exec {
 
 namespace {
 
+enum class CastPlan {
+  kMetadataOnly,
+  kFixedWidthVectorized,
+  kEncodingAware,
+  kRecursiveContainer,
+  kFallbackRowByRow,
+};
+
 const tz::TimeZone* getTimeZoneFromConfig(const core::QueryConfig& config) {
   if (config.adjustTimestampToTimezone()) {
     const auto sessionTzName = config.sessionTimezone();
@@ -46,6 +54,143 @@ const tz::TimeZone* getTimeZoneFromConfig(const core::QueryConfig& config) {
     }
   }
   return nullptr;
+}
+
+bool isDecimalMetadataOnlyCast(const TypePtr& fromType, const TypePtr& toType) {
+  if (!fromType->isDecimal() || !toType->isDecimal()) {
+    return false;
+  }
+
+  if (fromType->isShortDecimal() != toType->isShortDecimal() ||
+      fromType->isLongDecimal() != toType->isLongDecimal()) {
+    return false;
+  }
+
+  const auto [fromPrecision, fromScale] = getDecimalPrecisionScale(*fromType);
+  const auto [toPrecision, toScale] = getDecimalPrecisionScale(*toType);
+  return fromScale == toScale && toPrecision >= fromPrecision;
+}
+
+bool isMetadataOnlyCast(const TypePtr& fromType, const TypePtr& toType) {
+  if (isDecimalMetadataOnlyCast(fromType, toType)) {
+    return true;
+  }
+
+  const auto fromStringStorageType =
+      fromType->equivalent(*VARCHAR()) || fromType->equivalent(*VARBINARY());
+  const auto toStringStorageType =
+      toType->equivalent(*VARCHAR()) || toType->equivalent(*VARBINARY());
+  if (fromStringStorageType && toStringStorageType) {
+    return true;
+  }
+
+  return fromType->isTime() && toType == BIGINT();
+}
+
+bool isBasicNumericType(const TypePtr& type) {
+  return type == TINYINT() || type == SMALLINT() || type == INTEGER() ||
+      type == BIGINT() || type == REAL() || type == DOUBLE();
+}
+
+bool isFixedWidthVectorizedCast(
+    const TypePtr& fromType,
+    const TypePtr& toType) {
+  if (isSupportedFastUpcast(fromType, toType)) {
+    return true;
+  }
+
+  if (fromType == BOOLEAN() && isBasicNumericType(toType)) {
+    return true;
+  }
+
+  if (isBasicNumericType(fromType) && toType == BOOLEAN()) {
+    return true;
+  }
+
+  return false;
+}
+
+bool isTimestampTimestampUtcCast(
+    const TypePtr& fromType,
+    const TypePtr& toType) {
+  return (fromType->equivalent(*TIMESTAMP()) &&
+          toType->equivalent(*TIMESTAMP_UTC())) ||
+      (fromType->equivalent(*TIMESTAMP_UTC()) &&
+       toType->equivalent(*TIMESTAMP()));
+}
+
+CastPlan planCast(const TypePtr& fromType, const TypePtr& toType) {
+  if (*fromType == *toType) {
+    return CastPlan::kFallbackRowByRow;
+  }
+
+  if (isMetadataOnlyCast(fromType, toType)) {
+    return CastPlan::kMetadataOnly;
+  }
+
+  if (isFixedWidthVectorizedCast(fromType, toType)) {
+    return CastPlan::kFixedWidthVectorized;
+  }
+
+  switch (toType->kind()) {
+    case TypeKind::ARRAY:
+    case TypeKind::MAP:
+    case TypeKind::ROW:
+      return CastPlan::kRecursiveContainer;
+    default:
+      return CastPlan::kFallbackRowByRow;
+  }
+}
+
+template <typename T>
+VectorPtr makeMetadataOnlyCastResult(
+    const SelectivityVector& rows,
+    const BaseVector& input,
+    exec::EvalCtx& context,
+    const TypePtr& toType) {
+  if (input.isConstantEncoding()) {
+    const auto* constantInput = input.as<ConstantVector<T>>();
+    if (constantInput->isNullAt(0)) {
+      return BaseVector::createNullConstant(toType, rows.end(), context.pool());
+    }
+
+    T value = constantInput->valueAt(0);
+    return std::make_shared<ConstantVector<T>>(
+        context.pool(), rows.end(), false, toType, std::move(value));
+  }
+
+  VELOX_DCHECK(input.isFlatEncoding());
+  const auto* flatInput = input.asFlatVector<T>();
+  return std::make_shared<FlatVector<T>>(
+      context.pool(),
+      toType,
+      AlignedBuffer::copy(context.pool(), input.nulls()),
+      input.size(),
+      flatInput->values(),
+      std::vector<BufferPtr>(flatInput->stringBuffers()),
+      flatInput->getStats());
+}
+
+VectorPtr makeMetadataOnlyCastResult(
+    const SelectivityVector& rows,
+    const BaseVector& input,
+    exec::EvalCtx& context,
+    const TypePtr& toType) {
+  if (toType->isShortDecimal() || toType == BIGINT()) {
+    return makeMetadataOnlyCastResult<int64_t>(rows, input, context, toType);
+  }
+
+  if (toType->kind() == TypeKind::VARCHAR ||
+      toType->kind() == TypeKind::VARBINARY) {
+    return makeMetadataOnlyCastResult<StringView>(rows, input, context, toType);
+  }
+
+  if (toType->kind() == TypeKind::TIMESTAMP) {
+    return makeMetadataOnlyCastResult<Timestamp>(rows, input, context, toType);
+  }
+
+  VELOX_DCHECK(toType->isLongDecimal());
+  return makeMetadataOnlyCastResult<int128_t>(rows, input, context, toType);
 }
 
 } // namespace
@@ -776,6 +921,36 @@ void CastExpr::applyPeeled(
     const TypePtr& fromType,
     const TypePtr& toType,
     VectorPtr& result) {
+  auto castPlan = planCast(fromType, toType);
+  if (castPlan == CastPlan::kFallbackRowByRow &&
+      isTimestampTimestampUtcCast(fromType, toType) &&
+      hooks_->supportsTimestampUtc() &&
+      getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig()) ==
+          nullptr) {
+    castPlan = CastPlan::kMetadataOnly;
+  }
+
+  switch (castPlan) {
+    case CastPlan::kMetadataOnly:
+      result = makeMetadataOnlyCastResult(rows, input, context, toType);
+      return;
+    case CastPlan::kFixedWidthVectorized:
+      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          applyFixedWidthVectorized,
+          toType->kind(),
+          fromType,
+          toType,
+          rows,
+          context,
+          input,
+          result);
+      return;
+    case CastPlan::kEncodingAware:
+    case CastPlan::kRecursiveContainer:
+    case CastPlan::kFallbackRowByRow:
+      break;
+  }
+
   auto castFromOperator = getCastOperator(fromType);
   auto castToOperator = getCastOperator(toType);
 
@@ -1091,11 +1266,15 @@ void CastExpr::apply(
         rawNulls, remainingRows->begin(), remainingRows->end());
   }
 
+  const auto castPlan = decoded->isIdentityMapping()
+      ? planCast(fromType, toType)
+      : CastPlan::kEncodingAware;
+
   VectorPtr localResult;
   if (!remainingRows->hasSelections()) {
     localResult =
         BaseVector::createNullConstant(toType, rows.end(), context.pool());
-  } else if (decoded->isIdentityMapping()) {
+  } else if (castPlan != CastPlan::kEncodingAware) {
     applyPeeled(
         *remainingRows,
         *decoded->base(),
