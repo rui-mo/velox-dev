@@ -953,6 +953,60 @@ bool HugeintValuesUsingHashTable::testingEquals(const Filter& other) const {
   return false;
 }
 
+std::unique_ptr<Filter> HugeintRange::mergeWith(const Filter* other) const {
+  switch (other->kind()) {
+    case FilterKind::kAlwaysTrue:
+    case FilterKind::kAlwaysFalse:
+    case FilterKind::kIsNull:
+      return other->mergeWith(this);
+    case FilterKind::kIsNotNull:
+      return clone(false);
+    case FilterKind::kHugeintRange: {
+      auto otherRange = other->as<HugeintRange>();
+      auto lower = std::max(lower_, otherRange->lower());
+      auto upper = std::min(upper_, otherRange->upper());
+      bool bothNullAllowed = nullAllowed_ && other->testNull();
+      if (lower <= upper) {
+        return std::make_unique<HugeintRange>(lower, upper, bothNullAllowed);
+      }
+      if (bothNullAllowed) {
+        return std::make_unique<IsNull>();
+      }
+      return std::make_unique<AlwaysFalse>();
+    }
+    case FilterKind::kHugeintValuesUsingHashTable:
+      return other->mergeWith(this);
+    default:
+      VELOX_FAIL("Cannot merge {} with {}", kindName(), other->kindName());
+  }
+}
+
+std::unique_ptr<Filter> HugeintValuesUsingHashTable::mergeWith(
+    const Filter* other) const {
+  switch (other->kind()) {
+    case FilterKind::kAlwaysTrue:
+    case FilterKind::kAlwaysFalse:
+    case FilterKind::kIsNull:
+      return other->mergeWith(this);
+    case FilterKind::kIsNotNull:
+      return clone(false);
+    case FilterKind::kHugeintRange:
+    case FilterKind::kHugeintValuesUsingHashTable: {
+      std::vector<int128_t> valuesToKeep;
+      valuesToKeep.reserve(values_.size());
+      for (const auto& value : values_) {
+        if (other->testInt128(value)) {
+          valuesToKeep.push_back(value);
+        }
+      }
+      return createHugeintValues(
+          valuesToKeep, nullAllowed_ && other->testNull());
+    }
+    default:
+      VELOX_FAIL("Cannot merge {} with {}", kindName(), other->kindName());
+  }
+}
+
 NegatedBigintValuesUsingBitmask::NegatedBigintValuesUsingBitmask(
     int64_t min,
     int64_t max,

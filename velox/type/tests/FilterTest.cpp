@@ -270,6 +270,33 @@ TEST(FilterTest, createHugeintValuesEmpty) {
   EXPECT_FALSE(filter->testInt128(0));
 }
 
+TEST(FilterTest, mergeHugeintValues) {
+  const auto first = HugeInt::build(1, 1);
+  const auto second = HugeInt::build(1, 2);
+  const auto third = HugeInt::build(2, 1);
+
+  auto values = createHugeintValues({first, second}, true);
+  auto otherValues = createHugeintValues({second, third}, true);
+  auto merged = values->mergeWith(otherValues.get());
+  EXPECT_EQ(merged->kind(), common::FilterKind::kHugeintValuesUsingHashTable);
+  EXPECT_TRUE(merged->testNull());
+  EXPECT_FALSE(merged->testInt128(first));
+  EXPECT_TRUE(merged->testInt128(second));
+  EXPECT_FALSE(merged->testInt128(third));
+
+  auto range = betweenHugeint(second, third, false);
+  merged = values->mergeWith(range.get());
+  EXPECT_EQ(merged->kind(), common::FilterKind::kHugeintValuesUsingHashTable);
+  EXPECT_FALSE(merged->testNull());
+  EXPECT_FALSE(merged->testInt128(first));
+  EXPECT_TRUE(merged->testInt128(second));
+  EXPECT_FALSE(merged->testInt128(third));
+
+  range = betweenHugeint(HugeInt::build(3, 1), HugeInt::build(3, 2), false);
+  merged = values->mergeWith(range.get());
+  EXPECT_EQ(merged->kind(), common::FilterKind::kAlwaysFalse);
+}
+
 TEST(FilterTest, negatedBigintRange) {
   auto filter = notEqual(1, false);
   EXPECT_FALSE(filter->testNull());

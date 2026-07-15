@@ -24,6 +24,7 @@
 #include "velox/dwio/parquet/RegisterParquetReader.h" // @manual
 #include "velox/dwio/parquet/reader/PageReader.h" // @manual
 #include "velox/dwio/parquet/reader/ParquetReader.h" // @manual=//velox/connectors/hive:velox_hive_connector_parquet
+#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h" // @manual
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -618,6 +619,145 @@ TEST_F(ParquetTableScanTest, countStar) {
                   .planNode();
 
   assertQuery(plan, {split}, "SELECT 20");
+}
+
+TEST_F(ParquetTableScanTest, longDecimalDynamicFilterPushdown) {
+  const auto decimalType = DECIMAL(38, 0);
+  auto makeLongDecimal = [](int64_t highBits, int64_t lowBits) {
+    return (static_cast<int128_t>(highBits) << 64) + lowBits;
+  };
+
+  std::vector<int128_t> buildValues;
+  buildValues.reserve(20);
+  for (auto i = 1; i <= 20; ++i) {
+    buildValues.push_back(makeLongDecimal(i, i % 5));
+  }
+
+  std::vector<int128_t> probeValues = buildValues;
+  probeValues.reserve(100);
+  for (auto i = 0; i < 80; ++i) {
+    probeValues.push_back(makeLongDecimal(100 + i, i % 5));
+  }
+
+  auto probe = makeRowVector(
+      {"a"}, {makeFlatVector<int128_t>(probeValues, decimalType)});
+  auto payload = makeFlatVector<int64_t>(20, folly::identity);
+  auto build = makeRowVector(
+      {"b", "payload"},
+      {makeFlatVector<int128_t>(buildValues, decimalType), payload});
+
+  auto expected = makeRowVector(
+      {"a", "payload"},
+      {makeFlatVector<int128_t>(buildValues, decimalType), payload});
+
+  auto probeFile = TempFilePath::create();
+  auto buildFile = TempFilePath::create();
+  writeToParquetFile(probeFile->getPath(), {probe}, ParquetWriterOptions{});
+  writeToParquetFile(buildFile->getPath(), {build}, ParquetWriterOptions{});
+
+  auto idGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  core::PlanNodeId probeScanId;
+  core::PlanNodeId buildScanId;
+  core::PlanNodeId joinId;
+  auto plan =
+      PlanBuilder(idGenerator)
+          .tableScan(ROW({"a"}, {decimalType}))
+          .capturePlanNodeId(probeScanId)
+          .hashJoin(
+              {"a"},
+              {"b"},
+              PlanBuilder(idGenerator)
+                  .tableScan(ROW({"b", "payload"}, {decimalType, BIGINT()}))
+                  .capturePlanNodeId(buildScanId)
+                  .planNode(),
+              /*filter=*/"",
+              {"a", "payload"})
+          .capturePlanNodeId(joinId)
+          .planNode();
+
+  auto task =
+      AssertQueryBuilder(plan)
+          .config(
+              core::QueryConfig::kHashProbeDynamicFilterPushdownEnabled, "true")
+          .split(probeScanId, makeSplit(probeFile->getPath()))
+          .split(buildScanId, makeSplit(buildFile->getPath()))
+          .assertResults(expected);
+
+  auto planStats = toPlanStats(task->taskStats());
+  ASSERT_EQ(
+      planStats.at(joinId).customStats.at("dynamicFiltersProduced").sum, 1);
+  ASSERT_EQ(
+      planStats.at(probeScanId).customStats.at("dynamicFiltersAccepted").sum,
+      1);
+}
+
+TEST_F(ParquetTableScanTest, longDecimalDynamicFilterReplacement) {
+  const auto decimalType = DECIMAL(38, 0);
+  auto makeLongDecimal = [](int64_t highBits, int64_t lowBits) {
+    return (static_cast<int128_t>(highBits) << 64) + lowBits;
+  };
+
+  std::vector<int128_t> buildValues;
+  buildValues.reserve(20);
+  for (auto i = 1; i <= 20; ++i) {
+    buildValues.push_back(makeLongDecimal(i, i % 5));
+  }
+
+  std::vector<int128_t> probeValues = buildValues;
+  probeValues.reserve(100);
+  for (auto i = 0; i < 80; ++i) {
+    probeValues.push_back(makeLongDecimal(100 + i, i % 5));
+  }
+
+  auto probe = makeRowVector(
+      {"a"}, {makeFlatVector<int128_t>(probeValues, decimalType)});
+  auto build = makeRowVector(
+      {"b"}, {makeFlatVector<int128_t>(buildValues, decimalType)});
+
+  auto expected = makeRowVector(
+      {"a"}, {makeFlatVector<int128_t>(buildValues, decimalType)});
+
+  auto probeFile = TempFilePath::create();
+  auto buildFile = TempFilePath::create();
+  writeToParquetFile(probeFile->getPath(), {probe}, ParquetWriterOptions{});
+  writeToParquetFile(buildFile->getPath(), {build}, ParquetWriterOptions{});
+
+  auto idGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  core::PlanNodeId probeScanId;
+  core::PlanNodeId buildScanId;
+  core::PlanNodeId joinId;
+  auto plan = PlanBuilder(idGenerator)
+                  .tableScan(ROW({"a"}, {decimalType}))
+                  .capturePlanNodeId(probeScanId)
+                  .hashJoin(
+                      {"a"},
+                      {"b"},
+                      PlanBuilder(idGenerator)
+                          .tableScan(ROW({"b"}, {decimalType}))
+                          .capturePlanNodeId(buildScanId)
+                          .planNode(),
+                      /*filter=*/"",
+                      {"a"})
+                  .capturePlanNodeId(joinId)
+                  .planNode();
+
+  auto task =
+      AssertQueryBuilder(plan)
+          .config(
+              core::QueryConfig::kHashProbeDynamicFilterPushdownEnabled, "true")
+          .split(probeScanId, makeSplit(probeFile->getPath()))
+          .split(buildScanId, makeSplit(buildFile->getPath()))
+          .assertResults(expected);
+
+  auto planStats = toPlanStats(task->taskStats());
+  ASSERT_EQ(
+      planStats.at(joinId).customStats.at("dynamicFiltersProduced").sum, 1);
+  ASSERT_EQ(
+      planStats.at(probeScanId).customStats.at("dynamicFiltersAccepted").sum,
+      1);
+  ASSERT_EQ(
+      planStats.at(joinId).customStats.at("replacedWithDynamicFilterRows").sum,
+      20);
 }
 
 TEST_F(ParquetTableScanTest, decimalSubfieldFilter) {
