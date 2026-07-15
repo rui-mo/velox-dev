@@ -2607,7 +2607,7 @@ class HookOnlyLazyLoader : public VectorLoader {
       VectorPtr* result) override {
     if (hook != nullptr) {
       for (vector_size_t i = 0; i < rows.size(); ++i) {
-        hook->addValueTyped(rows[i], valueAt_(rows[i]));
+        hook->addValueTyped(i, valueAt_(rows[i]));
       }
       return;
     }

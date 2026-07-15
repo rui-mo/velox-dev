@@ -600,7 +600,7 @@ void processFixedWidthRun(
   constexpr bool hasHook = !std::is_same_v<THook, NoHook>;
   if (!hasFilter) {
     if (hasHook) {
-      hook.addValues(scatterRows + rowIndex, values, rows.size());
+      hook.addValues(scatterRows + rowIndex, values, numInput);
     } else if (scatter) {
       scatterNonNulls(rowIndex, numInput, numValues, scatterRows, values);
       numValues = scatterRows[rowIndex + numInput - 1] + 1;

@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include <utility>
+
 #include "velox/exec/Aggregate.h"
 #include "velox/vector/AggregationHook.h"
 #include "velox/vector/DecodedVector.h"
@@ -104,15 +106,9 @@ class SimpleNumericAggregate : public exec::Aggregate {
           !arg->type()->isDecimal()) {
         auto* lazy = decoded.base()->asChecked<const LazyVector>();
         if (lazy->supportsHook()) {
-          velox::aggregate::SimpleCallableHook<TData, UpdateSingleValue> hook(
-              exec::Aggregate::offset_,
-              exec::Aggregate::nullByte_,
-              exec::Aggregate::nullMask_,
-              groups,
-              &this->exec::Aggregate::numNulls_,
-              updateSingleValue);
-          auto indices = decoded.indices();
-          lazy->load(RowSet(indices, arg->size()), &hook);
+          pushdown<
+              velox::aggregate::SimpleCallableHook<TData, UpdateSingleValue>>(
+              groups, rows, arg, updateSingleValue);
           return;
         }
         decoded.decode(*arg, rows);
@@ -165,9 +161,23 @@ class SimpleNumericAggregate : public exec::Aggregate {
       const VectorPtr& arg,
       UpdateSingle updateSingleValue,
       UpdateDuplicate updateDuplicateValues,
-      bool /*mayPushdown*/,
+      bool mayPushdown,
       TData initialValue) {
-    DecodedVector decoded(*arg, rows);
+    DecodedVector decoded(*arg, rows, !mayPushdown);
+    if constexpr (kMayPushdown<TData>) {
+      if (mayPushdown &&
+          decoded.base()->encoding() == VectorEncoding::Simple::LAZY &&
+          !arg->type()->isDecimal()) {
+        auto* lazy = decoded.base()->asChecked<const LazyVector>();
+        if (lazy->supportsHook()) {
+          pushdownSingleGroup<
+              velox::aggregate::SimpleCallableHook<TData, UpdateSingle>>(
+              group, rows, arg, updateSingleValue);
+          return;
+        }
+        decoded.decode(*arg, rows);
+      }
+    }
 
     // Do row by row if not all rows are selected.
     if (decoded.isConstantMapping()) {
@@ -200,40 +210,102 @@ class SimpleNumericAggregate : public exec::Aggregate {
     }
   }
 
-  template <typename THook>
-  void
-  pushdown(char** groups, const SelectivityVector& rows, const VectorPtr& arg) {
+  template <typename THook, typename... Args>
+  void pushdown(
+      char** groups,
+      const SelectivityVector& rows,
+      const VectorPtr& arg,
+      Args&&... args) {
     DecodedVector decoded(*arg, rows, false);
-    const vector_size_t* indices = decoded.indices();
+    const auto pushdownRows = preparePushdownRows(
+        rows, decoded, arg->size(), groups, [&](vector_size_t row) {
+          return groups[row];
+        });
     THook hook(
         exec::Aggregate::offset_,
         exec::Aggregate::nullByte_,
         exec::Aggregate::nullMask_,
-        groups,
-        &this->exec::Aggregate::numNulls_);
-    // The decoded vector does not really keep the info from the 'rows', except
-    // for the 'upper bound' of it. In case not all rows are selected we need to
-    // generate proper indices, which we 'indirect' through the ones we got from
-    // the decoded vector.
-    vector_size_t numIndices{arg->size()};
-    if (not rows.isAllSelected()) {
-      const auto numSelected = rows.countSelected();
-      if (numSelected != arg->size()) {
-        pushdownCustomIndices_.resize(numSelected);
-        vector_size_t tgtIndex{0};
-        rows.applyToSelected([&](vector_size_t i) {
-          pushdownCustomIndices_[tgtIndex++] = indices[i];
-        });
-        indices = pushdownCustomIndices_.data();
-        numIndices = numSelected;
-      }
-    }
+        pushdownRows.groups,
+        &this->exec::Aggregate::numNulls_,
+        std::forward<Args>(args)...);
     auto* lazy = decoded.base()->asChecked<const LazyVector>();
     VELOX_CHECK(lazy->supportsHook());
-    lazy->load(RowSet(indices, numIndices), &hook);
+    lazy->load(RowSet(pushdownRows.indices, pushdownRows.size), &hook);
+  }
+
+  template <typename THook, typename... Args>
+  void pushdownSingleGroup(
+      char* group,
+      const SelectivityVector& rows,
+      const VectorPtr& arg,
+      Args&&... args) {
+    DecodedVector decoded(*arg, rows, false);
+    const auto pushdownRows = preparePushdownRows(
+        rows, decoded, arg->size(), nullptr, [&](vector_size_t /*row*/) {
+          return group;
+        });
+    THook hook(
+        exec::Aggregate::offset_,
+        exec::Aggregate::nullByte_,
+        exec::Aggregate::nullMask_,
+        pushdownRows.groups,
+        &this->exec::Aggregate::numNulls_,
+        std::forward<Args>(args)...);
+    auto* lazy = decoded.base()->asChecked<const LazyVector>();
+    VELOX_CHECK(lazy->supportsHook());
+    lazy->load(RowSet(pushdownRows.indices, pushdownRows.size), &hook);
   }
 
  private:
+  struct PushdownRows {
+    const vector_size_t* indices;
+    vector_size_t size;
+    char** groups;
+  };
+
+  template <typename GroupAt>
+  PushdownRows preparePushdownRows(
+      const SelectivityVector& rows,
+      const DecodedVector& decoded,
+      vector_size_t inputSize,
+      char** denseGroups,
+      GroupAt groupAt) {
+    const vector_size_t* indices = decoded.indices();
+    char** hookGroups = denseGroups;
+    vector_size_t numIndices{inputSize};
+
+    // ValueHook sees load output ordinals. When 'rows' is selective, compact
+    // both the lazy load RowSet and the group pointers so ordinal i addresses
+    // the i-th selected row in both arrays.
+    if (!rows.isAllSelected()) {
+      const auto numSelected = rows.countSelected();
+      if (numSelected != inputSize) {
+        pushdownCustomIndices_.resize(numSelected);
+        pushdownCustomGroups_.resize(numSelected);
+        vector_size_t targetIndex{0};
+        rows.applyToSelected([&](vector_size_t row) {
+          pushdownCustomIndices_[targetIndex] = indices[row];
+          pushdownCustomGroups_[targetIndex] = groupAt(row);
+          ++targetIndex;
+        });
+        return {
+            pushdownCustomIndices_.data(),
+            numSelected,
+            pushdownCustomGroups_.data()};
+      }
+    }
+
+    if (hookGroups == nullptr) {
+      pushdownCustomGroups_.resize(inputSize);
+      for (vector_size_t row = 0; row < inputSize; ++row) {
+        pushdownCustomGroups_[row] = groupAt(row);
+      }
+      hookGroups = pushdownCustomGroups_.data();
+    }
+
+    return {indices, numIndices, hookGroups};
+  }
+
   // TData is either TAccumulator or TResult, which in most cases are the same,
   // but for sum(real) can differ.
   template <

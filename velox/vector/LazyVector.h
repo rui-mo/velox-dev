@@ -35,6 +35,15 @@ using RowSet = folly::Range<const vector_size_t*>;
 // way one can bypass copying data into a vector before use.
 class ValueHook {
  public:
+  // 'row' passed to addNull(), addValue() and addValueTyped() is the ordinal in
+  // the current LazyVector load output, not necessarily the source row read by
+  // the loader or the final sparse position used by the non-hook load path.
+  //
+  // For example, when loading a sparse RowSet into compact hook output, callers
+  // pass row numbers 0..rows.size()-1 and read source rows from RowSet. This
+  // lets hooks, such as aggregation hooks, line up their side data with the
+  // load result rows even if the source rows are sparse or duplicated.
+
   // Type and constants for identifying specific hooks.  Loaders may have
   // hook-specialized template instantiations for some operations.
   enum Kind {
@@ -82,7 +91,8 @@ class ValueHook {
     VELOX_UNSUPPORTED();
   }
 
-  // Fallback implementation of bulk path for addValues.  Actual hooks are
+  // Fallback implementation of bulk path for addValues. 'rows' are load output
+  // ordinals following the same contract as addValue(). Actual hooks are
   // expected to override these if they are not inlined in reader.
   virtual void
   addValues(const vector_size_t* rows, const bool* values, vector_size_t size) {
@@ -184,9 +194,9 @@ class VectorLoader {
  public:
   virtual ~VectorLoader() = default;
 
-  // Produces the lazy values for 'rows' and if 'hook' is non-nullptr,
-  // calls hook on each. If 'hook' is nullptr, sets '*result' to a
-  // vector that contains the values for 'rows'. 'rows' must be a
+  // Produces the lazy values for 'rows' and if 'hook' is non-nullptr, calls
+  // hook on each using load output ordinals. If 'hook' is nullptr, sets
+  // '*result' to a vector that contains the values for 'rows'. 'rows' must be a
   // subset of the rows that were intended to be loadable when the
   // loader was created. This may be called once in the lifetime of
   // 'this'.

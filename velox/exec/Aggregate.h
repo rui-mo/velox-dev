@@ -512,10 +512,10 @@ class Aggregate {
   std::shared_ptr<core::ExpressionEvaluator> expressionEvaluator_{nullptr};
   std::vector<core::LambdaTypedExprPtr> lambdaExpressions_;
 
-  // When selectivity vector has holes, in the pushdown, we need to generate a
-  // different indices vector as the one we get from the DecodedVector is simply
-  // sequential.
+  // When selectivity vector has holes, pushdown needs compact indices and group
+  // pointers because ValueHook rows are load output ordinals.
   std::vector<vector_size_t> pushdownCustomIndices_;
+  std::vector<char*> pushdownCustomGroups_;
 
   bool validateIntermediateInputs_ = false;
 

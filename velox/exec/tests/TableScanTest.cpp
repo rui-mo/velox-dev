@@ -4367,6 +4367,75 @@ TEST_F(TableScanTest, aggregationPushdown) {
   EXPECT_EQ(0, loadedToValueHook(task));
 }
 
+TEST_F(TableScanTest, aggregationPushdownWithMask) {
+  constexpr vector_size_t kSize = 1'000;
+  constexpr int32_t kNumVectors = 10;
+  constexpr vector_size_t kNumMaskedRowsPerVector = 10;
+  auto rowType =
+      ROW({"c0", "c1", "c2", "c3", "mask"},
+          {BIGINT(), BIGINT(), BIGINT(), BIGINT(), BOOLEAN()});
+
+  std::vector<RowVectorPtr> vectors;
+  vectors.reserve(kNumVectors);
+  for (auto i = 0; i < kNumVectors; ++i) {
+    vectors.push_back(makeRowVector(
+        rowType->names(),
+        {
+            makeFlatVector<int64_t>(kSize, [](auto row) { return row % 7; }),
+            makeFlatVector<int64_t>(kSize, [](auto row) { return row; }),
+            makeFlatVector<int64_t>(kSize, [](auto row) { return row * 2; }),
+            makeFlatVector<int64_t>(kSize, [](auto row) { return row * 3; }),
+            makeFlatVector<bool>(
+                kSize, [](auto row) { return row % 100 == 0; }),
+        }));
+  }
+
+  auto filePath = TempFilePath::create();
+  writeToFile(filePath->getPath(), vectors);
+  createDuckDbTable(vectors);
+
+  auto loadedToValueHook = [](const std::shared_ptr<Task> task,
+                              int operatorIndex = 0) {
+    auto stats = task->taskStats()
+                     .pipelineStats[0]
+                     .operatorStats[operatorIndex]
+                     .runtimeStats;
+    auto it = stats.find("loadedToValueHook");
+    return it != stats.end() ? it->second.sum : 0;
+  };
+
+  auto plan = PlanBuilder()
+                  .tableScan(rowType)
+                  .singleAggregation(
+                      {"c0"},
+                      {"sum(c1)", "min(c2)", "max(c3)"},
+                      {"mask", "mask", "mask"})
+                  .planNode();
+  auto task = assertQuery(
+      plan,
+      {filePath},
+      "SELECT c0, sum(CASE WHEN mask THEN c1 END), "
+      "min(CASE WHEN mask THEN c2 END), max(CASE WHEN mask THEN c3 END) "
+      "FROM tmp GROUP BY c0");
+  EXPECT_EQ(
+      3 * kNumVectors * kNumMaskedRowsPerVector, loadedToValueHook(task, 1));
+
+  plan =
+      PlanBuilder()
+          .tableScan(rowType)
+          .singleAggregation(
+              {}, {"sum(c1)", "min(c2)", "max(c3)"}, {"mask", "mask", "mask"})
+          .planNode();
+  task = assertQuery(
+      plan,
+      {filePath},
+      "SELECT sum(CASE WHEN mask THEN c1 END), "
+      "min(CASE WHEN mask THEN c2 END), max(CASE WHEN mask THEN c3 END) "
+      "FROM tmp");
+  EXPECT_EQ(
+      3 * kNumVectors * kNumMaskedRowsPerVector, loadedToValueHook(task, 1));
+}
+
 TEST_F(TableScanTest, decimalDisableAggregationPushdown) {
   vector_size_t size = 1'000;
   auto rowVector = makeRowVector({

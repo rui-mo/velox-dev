@@ -1363,7 +1363,7 @@ class StringDictionaryColumnVisitor
         for (auto i = 0; i < numInput; ++i) {
           super::values_.addValue(
               scatterRows ? scatterRows[super::rowIndex_ + i]
-                          : super::rowIndex_ + i,
+                          : super::rowIndex_ + super::numValuesBias_ + i,
               valueInDictionary(input[i]));
         }
       }
