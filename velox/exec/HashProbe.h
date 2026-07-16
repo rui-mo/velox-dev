@@ -227,6 +227,7 @@ class HashProbe : public Operator {
   void applyFilterOnTableRowsForNullAwareJoin(
       SelectivityVector& rows,
       SelectivityVector& filterPassedRows,
+      bool filterPropagateNulls,
       std::function<int32_t(char**, int32_t)> iterator);
 
   void ensureLoadedIfNotAtEnd(column_index_t channel);
@@ -502,8 +503,7 @@ class HashProbe : public Operator {
   // Maps from column index in hash table to channel in 'filterInputType_'.
   std::vector<IdentityProjection> filterTableProjections_;
 
-  // The following six fields are used in null-aware anti join filter
-  // processing.
+  // The following fields are used in null-aware anti join filter processing.
 
   // Used to decode a probe side filter input column to check nulls.
   DecodedVector filterInputColumnDecodedVector_;
@@ -516,6 +516,9 @@ class HashProbe : public Operator {
   // Used to store the null-key joined rows for filter processing.
   RowVectorPtr filterTableInput_;
   SelectivityVector filterTableInputRows_;
+
+  // Used to decode a build side filter input column to check nulls.
+  DecodedVector filterTableInputColumnDecodedVector_;
 
   // Used to store the filter result for null-key joined rows.
   std::vector<VectorPtr> filterTableResult_;

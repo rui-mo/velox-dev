@@ -1436,8 +1436,7 @@ void HashProbe::prepareFilterRowsForNullAwareJoin(
       }
     }
     nullFilterInputRows_.updateBounds();
-    // TODO: consider to skip filtering on 'nullFilterInputRows_' as we know
-    // it will never pass the filtering.
+    filterInputRows_.deselect(nullFilterInputRows_);
   }
 
   // NOTE: for null-aware anti join, we will skip filtering on the probe rows
@@ -1476,11 +1475,48 @@ const uint64_t* getFlatFilterResult(VectorPtr& result) {
   return values;
 }
 
+bool hasTrueFilterResult(
+    VectorPtr& result,
+    const SelectivityVector& rows,
+    DecodedVector& decodedResult) {
+  if (!rows.hasSelections()) {
+    return false;
+  }
+
+  if (auto* values = getFlatFilterResult(result)) {
+    if (rows.isAllSelected()) {
+      return !bits::testSetBits(
+          values, rows.begin(), rows.end(), [](vector_size_t) {
+            return false;
+          });
+    }
+    bool hasTrue = false;
+    bits::testSetBits(values, rows.begin(), rows.end(), [&](vector_size_t row) {
+      if (rows.isValid(row)) {
+        hasTrue = true;
+        return false;
+      }
+      return true;
+    });
+    return hasTrue;
+  }
+
+  decodedResult.decode(*result, rows);
+  if (decodedResult.isConstantMapping()) {
+    return !decodedResult.isNullAt(0) && decodedResult.valueAt<bool>(0);
+  }
+
+  return !rows.testSelected([&](vector_size_t row) {
+    return decodedResult.isNullAt(row) || !decodedResult.valueAt<bool>(row);
+  });
+}
+
 } // namespace
 
 void HashProbe::applyFilterOnTableRowsForNullAwareJoin(
     SelectivityVector& rows,
     SelectivityVector& filterPassedRows,
+    bool filterPropagateNulls,
     std::function<int32_t(char**, int32_t)> iterator) {
   if (!rows.hasSelections()) {
     return;
@@ -1498,9 +1534,48 @@ void HashProbe::applyFilterOnTableRowsForNullAwareJoin(
           projection.inputChannel,
           filterTableInput_->childAt(projection.outputChannel));
     }
+    if (filterPropagateNulls) {
+      for (auto& projection : filterTableProjections_) {
+        filterTableInputColumnDecodedVector_.decode(
+            *filterTableInput_->childAt(projection.outputChannel),
+            filterTableInputRows_);
+        if (filterTableInputColumnDecodedVector_.mayHaveNulls()) {
+          if (const uint64_t* nulls =
+                  filterTableInputColumnDecodedVector_.nulls(
+                      &filterTableInputRows_)) {
+            filterTableInputRows_.deselectNulls(nulls, 0, numBuildRows);
+            if (!filterTableInputRows_.hasSelections()) {
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (!filterTableInputRows_.hasSelections()) {
+      continue;
+    }
 
     // Skip probe rows that already passed the filter on a previous build batch.
     rows.deselect(filterPassedRows);
+    if (!rows.hasSelections()) {
+      return;
+    }
+    if (filterInputProjections_.empty()) {
+      EvalCtx evalCtx(
+          operatorCtx_->execCtx(), filter_.get(), filterTableInput_.get());
+      filter_->eval(filterTableInputRows_, evalCtx, filterTableResult_);
+      if (hasTrueFilterResult(
+              filterTableResult_[0],
+              filterTableInputRows_,
+              decodedFilterTableResult_)) {
+        rows.applyToSelected(
+            [&](vector_size_t row) { filterPassedRows.setValid(row, true); });
+        filterPassedRows.updateBounds();
+        return;
+      }
+      continue;
+    }
+
     rows.applyToSelected([&](vector_size_t row) {
       for (auto& projection : filterInputProjections_) {
         filterTableInput_->childAt(projection.outputChannel) =
@@ -1511,30 +1586,14 @@ void HashProbe::applyFilterOnTableRowsForNullAwareJoin(
           operatorCtx_->execCtx(), filter_.get(), filterTableInput_.get());
       filter_->eval(filterTableInputRows_, evalCtx, filterTableResult_);
 
-      bool passed = false;
-      if (auto* values = getFlatFilterResult(filterTableResult_[0])) {
-        passed = !bits::testSetBits(
-            values, 0, numBuildRows, [](vector_size_t) { return false; });
-      } else {
-        decodedFilterTableResult_.decode(
-            *filterTableResult_[0], filterTableInputRows_);
-        if (decodedFilterTableResult_.isConstantMapping()) {
-          passed = !decodedFilterTableResult_.isNullAt(0) &&
-              decodedFilterTableResult_.valueAt<bool>(0);
-        } else {
-          for (vector_size_t i = 0; i < numBuildRows; ++i) {
-            if (!decodedFilterTableResult_.isNullAt(i) &&
-                decodedFilterTableResult_.valueAt<bool>(i)) {
-              passed = true;
-              break;
-            }
-          }
-        }
-      }
-      if (passed) {
+      if (hasTrueFilterResult(
+              filterTableResult_[0],
+              filterTableInputRows_,
+              decodedFilterTableResult_)) {
         filterPassedRows.setValid(row, true);
       }
     });
+    filterPassedRows.updateBounds();
   }
 }
 
@@ -1579,7 +1638,10 @@ SelectivityVector HashProbe::evalFilterForNullAwareJoin(
     BaseHashTable::NullKeyRowsIterator iter;
     nullKeyProbeRows.updateBounds();
     applyFilterOnTableRowsForNullAwareJoin(
-        nullKeyProbeRows, filterPassedRows, [&](char** data, int32_t maxRows) {
+        nullKeyProbeRows,
+        filterPassedRows,
+        filterPropagateNulls,
+        [&](char** data, int32_t maxRows) {
           return table_->listNullKeyRows(
               &iter, maxRows, data, nullKeyProbeHashers_);
         });
@@ -1587,7 +1649,10 @@ SelectivityVector HashProbe::evalFilterForNullAwareJoin(
   BaseHashTable::RowsIterator iter;
   crossJoinProbeRows.updateBounds();
   applyFilterOnTableRowsForNullAwareJoin(
-      crossJoinProbeRows, filterPassedRows, [&](char** data, int32_t maxRows) {
+      crossJoinProbeRows,
+      filterPassedRows,
+      filterPropagateNulls,
+      [&](char** data, int32_t maxRows) {
         return table_->listAllRows(
             &iter, maxRows, RowContainer::kUnlimited, data);
       });
@@ -1651,10 +1716,13 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
           filterInput.get(), numRows, filterPropagateNulls);
     }
 
-    EvalCtx evalCtx(operatorCtx_->execCtx(), filter_.get(), filterInput.get());
-    filter_->eval(0, 1, true, filterInputRows_, evalCtx, filterResult_);
+    if (filterInputRows_.hasSelections()) {
+      EvalCtx evalCtx(
+          operatorCtx_->execCtx(), filter_.get(), filterInput.get());
+      filter_->eval(0, 1, true, filterInputRows_, evalCtx, filterResult_);
 
-    decodedFilterResult_.decode(*filterResult_[0], filterInputRows_);
+      decodedFilterResult_.decode(*filterResult_[0], filterInputRows_);
+    }
   } else if (nullAware_) {
     prepareFilterRowsForNullAwareJoin(nullptr, numRows, filterPropagateNulls);
   }

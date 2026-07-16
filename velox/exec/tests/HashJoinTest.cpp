@@ -1635,6 +1635,47 @@ TEST_P(
       .run();
 }
 
+TEST_P(
+    MultiThreadedHashJoinTest,
+    nullAwareAntiJoinWithFilterBatchedEvaluationAndNullFilterInputs) {
+  auto probeVectors = makeBatches(1, [&](int32_t /*unused*/) {
+    return makeRowVector(
+        {"t0", "t1"},
+        {
+            makeFlatVector<int32_t>(
+                512,
+                [](auto row) { return row % 50; },
+                [](auto row) { return row < 128; }),
+            makeFlatVector<int32_t>(
+                512, [](auto row) { return row; }, nullEvery(17)),
+        });
+  });
+  auto buildVectors = makeBatches(1, [&](int32_t /*unused*/) {
+    return makeRowVector(
+        {"u0", "u1"},
+        {
+            makeFlatVector<int32_t>(4096, [](auto row) { return row % 25; }),
+            makeFlatVector<int32_t>(
+                4096, [](auto row) { return row * 2; }, nullEvery(3)),
+        });
+  });
+
+  HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+      .numDrivers(numDrivers_)
+      .probeKeys({"t0"})
+      .probeVectors(std::move(probeVectors))
+      .buildKeys({"u0"})
+      .buildVectors(std::move(buildVectors))
+      .joinType(core::JoinType::kAnti)
+      .nullAware(true)
+      .joinFilter("t1 <> u1")
+      .joinOutputLayout({"t0", "t1"})
+      .referenceQuery(
+          "SELECT t.* FROM t WHERE t0 NOT IN (SELECT u0 FROM u WHERE t1 <> u1)")
+      .checkSpillStats(false)
+      .run();
+}
+
 TEST_P(MultiThreadedHashJoinTest, nullAwareAntiJoinWithFilterEarlyTermination) {
   auto probeVectors = makeBatches(1, [&](int32_t /*unused*/) {
     return makeRowVector(
