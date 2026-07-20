@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "velox/exec/fuzzer/ReferenceQueryRunner.h"
+#include "velox/expression/fuzzer/ArgValuesGenerators.h"
 #include "velox/expression/fuzzer/FuzzerRunner.h"
 #include "velox/expression/fuzzer/SparkSpecialFormSignatureGenerator.h"
 #include "velox/functions/prestosql/fuzzer/FloorCeilRoundArgTypesGenerator.h"
@@ -37,6 +38,7 @@
 using namespace facebook::velox::functions::sparksql::fuzzer;
 using facebook::velox::functions::sparksql::SparkQueryConfig;
 using facebook::velox::fuzzer::ArgTypesGenerator;
+using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::test::ReferenceQueryRunner;
 
 DEFINE_int64(
@@ -123,6 +125,12 @@ int main(int argc, char** argv) {
           {"make_timestamp",
            std::make_shared<MakeTimestampArgTypesGenerator>()}};
 
+  std::unordered_map<std::string, std::shared_ptr<ArgValuesGenerator>>
+      argValuesGenerators = {
+          {"url_decode",
+           std::make_shared<
+               facebook::velox::fuzzer::UrlDecodeArgValuesGenerator>()}};
+
   std::shared_ptr<ReferenceQueryRunner> referenceQueryRunner{nullptr};
   return FuzzerRunner::run(
       FLAGS_seed,
@@ -130,7 +138,7 @@ int main(int argc, char** argv) {
       {{}},
       queryConfigs,
       argTypesGenerators,
-      {{}},
+      argValuesGenerators,
       referenceQueryRunner,
       std::make_shared<
           facebook::velox::fuzzer::SparkSpecialFormSignatureGenerator>());

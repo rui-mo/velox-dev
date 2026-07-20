@@ -16,6 +16,8 @@
 
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
 
+#include <array>
+
 #include "velox/common/fuzzer/ConstrainedGenerators.h"
 #include "velox/common/fuzzer/Utils.h"
 #include "velox/core/Expressions.h"
@@ -42,6 +44,43 @@ const std::vector<TypePtr>& jsonScalarTypes() {
   };
   return kScalarTypes;
 }
+
+class UrlEncodedInputGenerator : public AbstractInputGenerator {
+ public:
+  UrlEncodedInputGenerator(size_t seed, const TypePtr& type, double nullRatio)
+      : AbstractInputGenerator(seed, type, nullptr, nullRatio) {}
+
+  variant generate() override {
+    if (coinToss(rng_, nullRatio_)) {
+      return variant::null(type_->kind());
+    }
+
+    static constexpr std::array<std::string_view, 16> kTokens = {
+        "",
+        "hello",
+        "Velox",
+        "a_b-1.*",
+        "+",
+        "%20",
+        "%2F",
+        "%3A",
+        "%25",
+        "%7E",
+        "%E2%98%83",
+        "%F0%9F%98%8B",
+        "name=value",
+        "a%2Bb",
+        "x%26y",
+        "%5Btag%5D"};
+
+    std::string input;
+    const auto numTokens = rand<uint32_t>(rng_, 0, 8);
+    for (auto i = 0; i < numTokens; ++i) {
+      input.append(kTokens[rand<size_t>(rng_, 0, kTokens.size() - 1)]);
+    }
+    return variant(std::move(input));
+  }
+};
 
 } // namespace
 
@@ -422,6 +461,25 @@ std::vector<core::TypedExprPtr> URLArgValuesGenerator::generate(
                 [state.inputRowNames_.size() + i - signature.args.size()]));
   }
 
+  return inputExpressions;
+}
+
+std::vector<core::TypedExprPtr> UrlDecodeArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_EQ(signature.args.size(), 1);
+  populateInputTypesAndNames(signature, state);
+
+  state.customInputGenerators_.emplace_back(
+      std::make_shared<UrlEncodedInputGenerator>(
+          rand<uint32_t>(rng), signature.args[0], options.nullRatio));
+
+  std::vector<core::TypedExprPtr> inputExpressions{
+      signature.args.size(), nullptr};
+  inputExpressions[0] = std::make_shared<core::FieldAccessTypedExpr>(
+      signature.args[0], state.inputRowNames_.back());
   return inputExpressions;
 }
 
