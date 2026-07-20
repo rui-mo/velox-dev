@@ -31,6 +31,7 @@
 #include "velox/type/tz/TimeZoneMap.h"
 
 #include "velox/connectors/hive/HiveConfig.h" // @manual=//velox/connectors/hive:velox_hive_connector_parquet
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/parquet/writer/Writer.h" // @manual
 
 using namespace facebook::velox;
@@ -724,6 +725,83 @@ TEST_F(ParquetTableScanTest, nullMap) {
       {},
       "",
       "SELECT i, c FROM tmp");
+}
+
+TEST_F(ParquetTableScanTest, extractionArraySize) {
+  auto arrayVector = makeNullableArrayVector<int64_t>(
+      {{{1, 2, 3}}, {{}}, std::nullopt, {{4}}});
+  auto vector = makeRowVector({"col"}, {arrayVector});
+
+  auto file = TempFilePath::create();
+  writeToParquetFile(file->getPath(), {vector}, ParquetWriterOptions{});
+
+  std::vector<NamedExtraction> extractions = {
+      {"col",
+       {ExtractionPathElement::simple(ExtractionStep::kSize)},
+       BIGINT()}};
+  connector::ColumnHandleMap assignments = {
+      {"col",
+       std::make_shared<HiveColumnHandle>(
+           "col",
+           HiveColumnHandle::ColumnType::kRegular,
+           BIGINT(),
+           ARRAY(BIGINT()),
+           std::vector<common::Subfield>{},
+           std::move(extractions))}};
+
+  auto outputType = ROW({"col"}, {BIGINT()});
+  auto plan = PlanBuilder(pool_.get())
+                  .tableScan(outputType, {}, "", nullptr, assignments)
+                  .planNode();
+
+  auto result = AssertQueryBuilder(plan)
+                    .split(makeSplit(file->getPath()))
+                    .copyResults(pool_.get());
+
+  auto expected = makeRowVector(
+      {"col"}, {makeNullableFlatVector<int64_t>({3, 0, std::nullopt, 1})});
+  assertEqualVectors(expected, result);
+}
+
+TEST_F(ParquetTableScanTest, extractionMapSize) {
+  auto mapVector = makeNullableMapVector<int64_t, int64_t>(
+      {std::vector<std::pair<int64_t, std::optional<int64_t>>>{
+           {1, 10}, {2, 20}, {3, 30}},
+       std::vector<std::pair<int64_t, std::optional<int64_t>>>{},
+       std::nullopt,
+       std::vector<std::pair<int64_t, std::optional<int64_t>>>{
+           {4, std::nullopt}}});
+  auto vector = makeRowVector({"col"}, {mapVector});
+
+  auto file = TempFilePath::create();
+  writeToParquetFile(file->getPath(), {vector}, ParquetWriterOptions{});
+
+  std::vector<NamedExtraction> extractions = {
+      {"col",
+       {ExtractionPathElement::simple(ExtractionStep::kSize)},
+       BIGINT()}};
+  connector::ColumnHandleMap assignments = {
+      {"col",
+       std::make_shared<HiveColumnHandle>(
+           "col",
+           HiveColumnHandle::ColumnType::kRegular,
+           BIGINT(),
+           MAP(BIGINT(), BIGINT()),
+           std::vector<common::Subfield>{},
+           std::move(extractions))}};
+
+  auto outputType = ROW({"col"}, {BIGINT()});
+  auto plan = PlanBuilder(pool_.get())
+                  .tableScan(outputType, {}, "", nullptr, assignments)
+                  .planNode();
+
+  auto result = AssertQueryBuilder(plan)
+                    .split(makeSplit(file->getPath()))
+                    .copyResults(pool_.get());
+
+  auto expected = makeRowVector(
+      {"col"}, {makeNullableFlatVector<int64_t>({3, 0, std::nullopt, 1})});
+  assertEqualVectors(expected, result);
 }
 
 TEST_F(ParquetTableScanTest, singleRowStruct) {

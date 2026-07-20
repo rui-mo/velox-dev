@@ -72,6 +72,8 @@ class MapColumnReader : public dwio::common::SelectiveMapColumnReader {
 
   void seekToRowGroup(int64_t index) override;
 
+  uint64_t skip(uint64_t numValues) override;
+
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
   void read(
@@ -105,6 +107,8 @@ class MapColumnReader : public dwio::common::SelectiveMapColumnReader {
       dwio::common::FormatData::FilterRowGroupsResult&) const override;
 
  private:
+  uint64_t skipLengthsOnly(uint64_t numValues);
+
   RepeatedLengths lengths_;
   RepeatedLengths keyLengths_;
   RepeatedLengths elementLengths_;
@@ -129,6 +133,8 @@ class ListColumnReader : public dwio::common::SelectiveListColumnReader {
 
   void seekToRowGroup(int64_t index) override;
 
+  uint64_t skip(uint64_t numValues) override;
+
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
   void read(
@@ -162,6 +168,8 @@ class ListColumnReader : public dwio::common::SelectiveListColumnReader {
       dwio::common::FormatData::FilterRowGroupsResult&) const override;
 
  private:
+  uint64_t skipLengthsOnly(uint64_t numValues);
+
   RepeatedLengths lengths_;
   LevelInfo levelInfo_;
 };

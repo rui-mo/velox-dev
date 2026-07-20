@@ -40,10 +40,16 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     ParquetParams& params,
     common::ScanSpec& scanSpec) {
-  VELOX_CHECK_EQ(
-      static_cast<int>(scanSpec.extractionType()),
-      static_cast<int>(common::ScanSpec::ExtractionType::kNone),
-      "Parquet reader does not support extraction pushdown");
+  const auto extractionType = scanSpec.extractionType();
+  const bool supportsExtraction =
+      extractionType == common::ScanSpec::ExtractionType::kNone ||
+      (extractionType == common::ScanSpec::ExtractionType::kSize &&
+       (fileType->type()->kind() == TypeKind::ARRAY ||
+        fileType->type()->kind() == TypeKind::MAP));
+  VELOX_CHECK(
+      supportsExtraction,
+      "Parquet reader only supports size extraction pushdown on ARRAY and MAP, got: {}",
+      static_cast<int>(extractionType));
   auto colName = scanSpec.fieldName();
 
   if (fileType->type()->isTime()) {

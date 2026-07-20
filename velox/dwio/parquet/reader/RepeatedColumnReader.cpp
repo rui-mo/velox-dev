@@ -18,11 +18,18 @@
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
+#include <array>
+
 namespace facebook::velox::parquet {
 
 class ParquetTypeWithId;
 
 namespace {
+bool isSizeOnlyExtraction(const common::ScanSpec& scanSpec) {
+  return scanSpec.extractionType() == common::ScanSpec::ExtractionType::kSize &&
+      scanSpec.deltaUpdate() == nullptr;
+}
+
 PageReader* readLeafRepDefs(
     dwio::common::SelectiveColumnReader* reader,
     int32_t numTop,
@@ -47,7 +54,9 @@ PageReader* readLeafRepDefs(
   }
   if (type.type()->kind() == TypeKind::MAP) {
     pageReader = readLeafRepDefs(children[0], numTop, true);
-    readLeafRepDefs(children[1], numTop, false);
+    if (children.size() > 1) {
+      readLeafRepDefs(children[1], numTop, false);
+    }
     auto map = dynamic_cast<MapColumnReader*>(reader);
     assert(map);
     map->setLengthsFromRepDefs(*pageReader);
@@ -121,23 +130,29 @@ MapColumnReader::MapColumnReader(
           params,
           scanSpec) {
   DWIO_ENSURE_EQ(fileType_->id(), fileType->id(), "working on the same node");
+  const bool readSizeOnly = isSizeOnlyExtraction(scanSpec);
   auto& keyChildType = requestedType->childAt(0);
-  auto& elementChildType = requestedType->childAt(1);
   keyReader_ = ParquetColumnReader::build(
       columnReaderOptions,
       keyChildType,
       fileType_->childAt(0),
       params,
       *scanSpec.children()[0]);
-  elementReader_ = ParquetColumnReader::build(
-      columnReaderOptions,
-      elementChildType,
-      fileType_->childAt(1),
-      params,
-      *scanSpec.children()[1]);
+  if (!readSizeOnly) {
+    auto& elementChildType = requestedType->childAt(1);
+    elementReader_ = ParquetColumnReader::build(
+        columnReaderOptions,
+        elementChildType,
+        fileType_->childAt(1),
+        params,
+        *scanSpec.children()[1]);
+  }
   reinterpret_cast<const ParquetTypeWithId*>(fileType.get())
       ->makeLevelInfo(levelInfo_);
-  children_ = {keyReader_.get(), elementReader_.get()};
+  children_.push_back(keyReader_.get());
+  if (elementReader_) {
+    children_.push_back(elementReader_.get());
+  }
 }
 
 void MapColumnReader::enqueueRowGroup(
@@ -153,6 +168,31 @@ void MapColumnReader::seekToRowGroup(int64_t index) {
   BufferPtr noBuffer;
   formatData_->as<ParquetData>().setNulls(noBuffer, 0);
   lengths_.setLengths(nullptr);
+}
+
+uint64_t MapColumnReader::skip(uint64_t numValues) {
+  if (isSizeOnlyExtraction(*scanSpec_)) {
+    return skipLengthsOnly(numValues);
+  }
+  return SelectiveMapColumnReader::skip(numValues);
+}
+
+uint64_t MapColumnReader::skipLengthsOnly(uint64_t numValues) {
+  numValues = formatData_->skipNulls(numValues);
+  std::array<int32_t, kBufferSize> buffer;
+  uint64_t childElements{0};
+  uint64_t lengthsRead{0};
+  while (lengthsRead < numValues) {
+    const uint64_t chunk =
+        std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
+    readLengths(buffer.data(), static_cast<int32_t>(chunk), nullptr);
+    for (size_t i = 0; i < chunk; ++i) {
+      childElements += buffer[i];
+    }
+    lengthsRead += chunk;
+  }
+  childTargetReadOffset_ += childElements;
+  return numValues;
 }
 
 void MapColumnReader::skipUnreadLengths() {
@@ -202,6 +242,19 @@ void MapColumnReader::read(
     }
     readOffset_ = offset;
   }
+  if (isSizeOnlyExtraction(*scanSpec_)) {
+    dwio::common::SelectiveColumnReader::prepareRead<char>(
+        offset, rows, incomingNulls);
+    const auto activeRows = applyFilter(rows);
+    nestedRowsAllSelected_ = activeRows.size() == rows.back() + 1;
+    VELOX_CHECK_EQ(
+        scanSpec_->maxArrayElementsCount(),
+        std::numeric_limits<vector_size_t>::max());
+    makeNestedRowSet(activeRows, rows.back());
+    numValues_ = activeRows.size();
+    readOffset_ = offset + rows.back() + 1;
+    return;
+  }
   SelectiveMapColumnReader::read(offset, rows, incomingNulls);
 
   // The child should be at the end of the range provided to this
@@ -214,8 +267,12 @@ void MapColumnReader::read(
   // point on next read, Parquet needs to seek here because new
   // repdefs will be scanned and new lengths provided, overwriting the
   // previous ones before the next read().
-  keyReader_->seekTo(childTargetReadOffset_, false);
-  elementReader_->seekTo(childTargetReadOffset_, false);
+  if (keyReader_) {
+    keyReader_->seekTo(childTargetReadOffset_, false);
+  }
+  if (elementReader_) {
+    elementReader_->seekTo(childTargetReadOffset_, false);
+  }
 }
 
 void MapColumnReader::filterRowGroups(
@@ -236,6 +293,10 @@ ListColumnReader::ListColumnReader(
           fileType,
           params,
           scanSpec) {
+  if (scanSpec_->children().empty()) {
+    scanSpec.getOrCreateChild(common::ScanSpec::kArrayElementsFieldName);
+  }
+  scanSpec_->children()[0]->setProjectOut(true);
   auto& childType = requestedType->childAt(0);
   child_ = ParquetColumnReader::build(
       columnReaderOptions,
@@ -261,7 +322,34 @@ void ListColumnReader::seekToRowGroup(int64_t index) {
   BufferPtr noBuffer;
   formatData_->as<ParquetData>().setNulls(noBuffer, 0);
   lengths_.setLengths(nullptr);
-  child_->seekToRowGroup(index);
+  if (child_) {
+    child_->seekToRowGroup(index);
+  }
+}
+
+uint64_t ListColumnReader::skip(uint64_t numValues) {
+  if (isSizeOnlyExtraction(*scanSpec_)) {
+    return skipLengthsOnly(numValues);
+  }
+  return SelectiveListColumnReader::skip(numValues);
+}
+
+uint64_t ListColumnReader::skipLengthsOnly(uint64_t numValues) {
+  numValues = formatData_->skipNulls(numValues);
+  std::array<int32_t, kBufferSize> buffer{};
+  uint64_t childElements = 0;
+  uint64_t lengthsRead = 0;
+  while (lengthsRead < numValues) {
+    uint64_t chunk =
+        std::min(numValues - lengthsRead, static_cast<uint64_t>(kBufferSize));
+    readLengths(buffer.data(), static_cast<int32_t>(chunk), nullptr);
+    for (size_t i = 0; i < chunk; ++i) {
+      childElements += static_cast<size_t>(buffer[i]);
+    }
+    lengthsRead += chunk;
+  }
+  childTargetReadOffset_ += static_cast<int64_t>(childElements);
+  return numValues;
 }
 
 void ListColumnReader::skipUnreadLengths() {
@@ -310,6 +398,18 @@ void ListColumnReader::read(
     }
     readOffset_ = offset;
   }
+  if (isSizeOnlyExtraction(*scanSpec_)) {
+    dwio::common::SelectiveColumnReader::prepareRead<char>(
+        offset, rows, incomingNulls);
+    auto activeRows = applyFilter(rows);
+    nestedRowsAllSelected_ = activeRows.size() == rows.back() + 1 &&
+        scanSpec_->maxArrayElementsCount() ==
+            std::numeric_limits<vector_size_t>::max();
+    makeNestedRowSet(activeRows, rows.back());
+    numValues_ = activeRows.size();
+    readOffset_ = offset + rows.back() + 1;
+    return;
+  }
   SelectiveListColumnReader::read(offset, rows, incomingNulls);
 
   // The child should be at the end of the range provided to this
@@ -322,7 +422,9 @@ void ListColumnReader::read(
   // point on next read, Parquet needs to seek here because new
   // repdefs will be scanned and new lengths provided, overwriting the
   // previous ones before the next read().
-  child_->seekTo(childTargetReadOffset_, false);
+  if (child_) {
+    child_->seekTo(childTargetReadOffset_, false);
+  }
 }
 
 void ListColumnReader::filterRowGroups(
