@@ -83,6 +83,23 @@ void exportToArrow(
     memory::MemoryPool* pool,
     const ArrowOptions& options = ArrowOptions{});
 
+/// Returns a vector that can be exported using exportToArrow with 'options'.
+///
+/// When dictionary or constant flattening is enabled, Arrow export can flatten
+/// scalar wrappers, but not complex wrappers or wrappers over non-flat values.
+/// This helper materializes only the vectors required to satisfy these limits.
+/// For RowVector input, top-level children are handled independently so one
+/// complex child does not force unrelated sibling columns to be flattened.
+///
+/// If 'sliceRowChildrenToRowSize' is true, oversized top-level RowVector
+/// children are sliced to the RowVector size. This matches exportToArrow's row
+/// selection and is useful for callers whose input may come from operators such
+/// as Limit.
+VectorPtr prepareVectorForArrowExport(
+    const VectorPtr& vector,
+    const ArrowOptions& options = ArrowOptions{},
+    bool sliceRowChildrenToRowSize = false);
+
 /// Export the type of a Velox vector to an ArrowSchema.
 ///
 /// The guidelines on API usage and memory management are the same as the ones

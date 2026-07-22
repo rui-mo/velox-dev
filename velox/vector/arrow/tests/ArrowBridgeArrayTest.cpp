@@ -1069,6 +1069,68 @@ TEST_F(ArrowBridgeArrayExportTest, dictionaryNested) {
   EXPECT_EQ(values.Value(2), 3);
 }
 
+TEST_F(ArrowBridgeArrayExportTest, prepareVectorForArrowExport) {
+  auto dictionary = vectorMaker_.flatVector<int64_t>({1, 2, 3});
+  auto scalar = BaseVector::wrapInDictionary(
+      nullptr, makeBuffer<vector_size_t>({0, 1}), 2, dictionary);
+
+  auto array = vectorMaker_.arrayVector<int32_t>({{1}, {2}});
+  auto complex = BaseVector::wrapInDictionary(
+      nullptr, makeBuffer<vector_size_t>({0, 1}), 2, array);
+  auto row = vectorMaker_.rowVector({"scalar", "complex"}, {scalar, complex});
+
+  auto prepared = velox::prepareVectorForArrowExport(
+      row, {.flattenDictionary = true, .flattenConstant = true});
+  ASSERT_EQ(prepared->encoding(), VectorEncoding::Simple::ROW);
+  auto preparedRow = prepared->asUnchecked<RowVector>();
+
+  EXPECT_EQ(preparedRow->childAt(0), scalar);
+  EXPECT_EQ(
+      preparedRow->childAt(0)->encoding(), VectorEncoding::Simple::DICTIONARY);
+  EXPECT_EQ(preparedRow->childAt(1)->encoding(), VectorEncoding::Simple::ARRAY);
+  EXPECT_EQ(complex->encoding(), VectorEncoding::Simple::DICTIONARY);
+
+  auto wrappedElements = BaseVector::wrapInDictionary(
+      nullptr,
+      makeBuffer<vector_size_t>({1, 0}),
+      2,
+      vectorMaker_.flatVector<int32_t>({10, 20}));
+  auto nestedWrappedArray = std::make_shared<ArrayVector>(
+      pool_.get(),
+      ARRAY(INTEGER()),
+      nullptr,
+      2,
+      makeBuffer<vector_size_t>({0, 1}),
+      makeBuffer<vector_size_t>({1, 1}),
+      wrappedElements);
+
+  auto preparedNestedArray = velox::prepareVectorForArrowExport(
+      nestedWrappedArray, {.flattenDictionary = true});
+  EXPECT_EQ(
+      nestedWrappedArray->elements()->encoding(),
+      VectorEncoding::Simple::DICTIONARY);
+  EXPECT_EQ(
+      preparedNestedArray->asUnchecked<ArrayVector>()->elements()->encoding(),
+      VectorEncoding::Simple::FLAT);
+}
+
+TEST_F(
+    ArrowBridgeArrayExportTest,
+    prepareVectorForArrowExportSlicesRowChildren) {
+  auto shortVector = vectorMaker_.flatVector<int64_t>({1, 2});
+  auto longVector = vectorMaker_.flatVector<int64_t>({1, 2, 3});
+  auto row =
+      vectorMaker_.rowVector({"short", "long"}, {shortVector, longVector});
+
+  auto prepared = velox::prepareVectorForArrowExport(row, ArrowOptions{}, true);
+  ASSERT_EQ(prepared->encoding(), VectorEncoding::Simple::ROW);
+  auto preparedRow = prepared->asUnchecked<RowVector>();
+
+  EXPECT_EQ(preparedRow->size(), 2);
+  EXPECT_EQ(preparedRow->childAt(0), shortVector);
+  EXPECT_EQ(preparedRow->childAt(1)->size(), 2);
+}
+
 TEST_F(ArrowBridgeArrayExportTest, unknownType) {
   VectorPtr vector =
       BaseVector::createNullConstant(UNKNOWN(), 2048, pool_.get());

@@ -170,6 +170,18 @@ class ArrowMemoryPool final : public ::arrow::MemoryPool {
   int64_t allocated_;
 };
 
+BufferPtr makeModuloIndices(
+    vector_size_t size,
+    vector_size_t modulo,
+    memory::MemoryPool* pool) {
+  auto indices = AlignedBuffer::allocate<vector_size_t>(size, pool);
+  auto rawIndices = indices->asMutable<vector_size_t>();
+  for (vector_size_t i = 0; i < size; ++i) {
+    rawIndices[i] = i % modulo;
+  }
+  return indices;
+}
+
 std::vector<CompressionKind> params = {
     CompressionKind::CompressionKind_NONE,
     CompressionKind::CompressionKind_SNAPPY,
@@ -1164,6 +1176,78 @@ TEST_F(ParquetWriterTest, dictionaryEncodedVector) {
 
   data = makeRowVector({wrappedVector});
   write(data);
+}
+
+TEST_F(ParquetWriterTest, complexChildDoesNotFlattenDictionarySiblings) {
+  constexpr vector_size_t size = 1'000;
+  constexpr vector_size_t dictionarySize = 97;
+  constexpr int32_t numScalarColumns = 20;
+
+  auto dictionary = makeFlatVector<int64_t>(
+      dictionarySize, [](auto row) { return static_cast<int64_t>(row * 3); });
+
+  std::vector<VectorPtr> children;
+  std::vector<std::string> names;
+  children.reserve(numScalarColumns + 1);
+  names.reserve(numScalarColumns + 1);
+
+  for (int32_t i = 0; i < numScalarColumns; ++i) {
+    children.push_back(
+        BaseVector::wrapInDictionary(
+            BufferPtr(nullptr),
+            makeModuloIndices(size, dictionarySize, leafPool_.get()),
+            size,
+            dictionary));
+    names.push_back(fmt::format("scalar_{}", i));
+  }
+
+  children.push_back(
+      makeArrayVector<int32_t>(
+          size,
+          [](auto row) { return row % 3; },
+          [](auto row, auto index) { return row * 10 + index; }));
+  names.push_back("complex");
+
+  auto data = makeRowVector(names, children);
+  write(data);
+
+  for (int32_t i = 0; i < numScalarColumns; ++i) {
+    EXPECT_EQ(data->childAt(i)->encoding(), VectorEncoding::Simple::DICTIONARY);
+  }
+  EXPECT_EQ(
+      data->childAt(numScalarColumns)->encoding(),
+      VectorEncoding::Simple::ARRAY);
+}
+
+TEST_F(
+    ParquetWriterTest,
+    dictionaryWrappedComplexChildDoesNotFlattenDictionarySiblings) {
+  constexpr vector_size_t size = 1'000;
+  constexpr vector_size_t dictionarySize = 97;
+
+  auto dictionary = makeFlatVector<int64_t>(
+      dictionarySize, [](auto row) { return static_cast<int64_t>(row * 3); });
+  auto scalar = BaseVector::wrapInDictionary(
+      BufferPtr(nullptr),
+      makeModuloIndices(size, dictionarySize, leafPool_.get()),
+      size,
+      dictionary);
+
+  auto array = makeArrayVector<int32_t>(
+      size,
+      [](auto row) { return row % 3; },
+      [](auto row, auto index) { return row * 10 + index; });
+  auto complex = BaseVector::wrapInDictionary(
+      BufferPtr(nullptr),
+      makeModuloIndices(size, size, leafPool_.get()),
+      size,
+      array);
+
+  auto data = makeRowVector({"scalar", "complex"}, {scalar, complex});
+  write(data);
+
+  EXPECT_EQ(data->childAt(0)->encoding(), VectorEncoding::Simple::DICTIONARY);
+  EXPECT_EQ(data->childAt(1)->encoding(), VectorEncoding::Simple::DICTIONARY);
 }
 
 TEST_F(ParquetWriterTest, allNulls) {

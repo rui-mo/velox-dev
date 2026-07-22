@@ -844,6 +844,81 @@ bool isFlatScalarZeroCopy(const TypePtr& type, const ArrowOptions& options) {
       !needsTimeConversion;
 }
 
+bool needsFlattenForArrowExport(
+    const VectorPtr& vector,
+    const ArrowOptions& options) {
+  if (!vector) {
+    return false;
+  }
+
+  switch (vector->encoding()) {
+    case VectorEncoding::Simple::DICTIONARY:
+      if (options.flattenDictionary &&
+          (!vector->isScalar() ||
+           (vector->valueVector() &&
+            !vector->wrappedVector()->isFlatEncoding()))) {
+        return true;
+      }
+      return !options.flattenDictionary && vector->valueVector() &&
+          needsFlattenForArrowExport(vector->valueVector(), options);
+
+    case VectorEncoding::Simple::CONSTANT:
+      if (options.flattenConstant &&
+          (!vector->isScalar() ||
+           (vector->valueVector() &&
+            !vector->wrappedVector()->isFlatEncoding()))) {
+        return true;
+      }
+      return !options.flattenConstant && vector->valueVector() &&
+          needsFlattenForArrowExport(vector->valueVector(), options);
+
+    case VectorEncoding::Simple::ROW: {
+      const auto* rowVector = vector->asUnchecked<RowVector>();
+      const auto& children = rowVector->children();
+      return std::any_of(
+          children.begin(), children.end(), [&](const auto& child) {
+            return needsFlattenForArrowExport(child, options);
+          });
+    }
+
+    case VectorEncoding::Simple::ARRAY:
+      return needsFlattenForArrowExport(
+          vector->asUnchecked<ArrayVector>()->elements(), options);
+
+    case VectorEncoding::Simple::MAP: {
+      const auto* mapVector = vector->asUnchecked<MapVector>();
+      return needsFlattenForArrowExport(mapVector->mapKeys(), options) ||
+          needsFlattenForArrowExport(mapVector->mapValues(), options);
+    }
+
+    case VectorEncoding::Simple::LAZY:
+      return needsFlattenForArrowExport(
+          BaseVector::loadedVectorShared(vector), options);
+
+    default:
+      return false;
+  }
+}
+
+VectorPtr prepareChildForArrowExport(
+    const VectorPtr& vector,
+    const ArrowOptions& options) {
+  if (!vector) {
+    return nullptr;
+  }
+
+  VectorPtr prepared = BaseVector::loadedVectorShared(vector);
+  if (needsFlattenForArrowExport(prepared, options)) {
+    BaseVector::ensureWritable(
+        SelectivityVector::empty(),
+        prepared->type(),
+        prepared->pool(),
+        prepared);
+    BaseVector::flattenVector(prepared);
+  }
+  return prepared;
+}
+
 // Returns the size of a single element of a given `type` in the target arrow
 // buffer.
 size_t getArrowElementSize(const TypePtr& type, const ArrowOptions& options) {
@@ -1583,6 +1658,57 @@ void exportToArrow(
     const ArrowOptions& options) {
   exportToArrowImpl(
       *vector, Selection(vector->size()), options, arrowArray, pool);
+}
+
+VectorPtr prepareVectorForArrowExport(
+    const VectorPtr& vector,
+    const ArrowOptions& options,
+    bool sliceRowChildrenToRowSize) {
+  if (!vector) {
+    return nullptr;
+  }
+
+  VectorPtr prepared = BaseVector::loadedVectorShared(vector);
+  if (prepared->encoding() != VectorEncoding::Simple::ROW) {
+    if (needsFlattenForArrowExport(prepared, options)) {
+      BaseVector::ensureWritable(
+          SelectivityVector::empty(),
+          prepared->type(),
+          prepared->pool(),
+          prepared);
+      BaseVector::flattenVector(prepared);
+    }
+    return prepared;
+  }
+
+  const auto* rowVector = prepared->asUnchecked<RowVector>();
+  const auto& children = rowVector->children();
+  std::vector<VectorPtr> preparedChildren;
+  preparedChildren.reserve(children.size());
+
+  bool changed = prepared != vector;
+  for (const auto& child : children) {
+    auto preparedChild = prepareChildForArrowExport(child, options);
+    if (sliceRowChildrenToRowSize && preparedChild &&
+        preparedChild->size() > rowVector->size()) {
+      preparedChild = preparedChild->slice(0, rowVector->size());
+    }
+
+    changed = changed || preparedChild != child;
+    preparedChildren.push_back(std::move(preparedChild));
+  }
+
+  if (!changed) {
+    return vector;
+  }
+
+  return std::make_shared<RowVector>(
+      rowVector->pool(),
+      rowVector->type(),
+      rowVector->nulls(),
+      rowVector->size(),
+      std::move(preparedChildren),
+      rowVector->getNullCount());
 }
 
 void exportToArrow(

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <functional>
+
 #include "folly/Benchmark.h"
 #include "folly/init/Init.h"
 #include "velox/dwio/common/FileSink.h"
@@ -40,6 +42,32 @@ void writeParquet(const RowVectorPtr& data, memory::MemoryPool* rootPool) {
     folly::BenchmarkSuspender suspender;
     auto sink = std::make_unique<MemorySink>(
         kSinkSize, FileSink::Options{.pool = leafPool.get()});
+    WriterOptions options;
+    options.memoryPool = rootPool;
+    options.formatSpecificOptions = std::make_shared<ParquetWriterOptions>();
+    suspender.dismiss();
+    auto writer = std::make_unique<parquet::Writer>(
+        std::move(sink), options, asRowType(data->type()));
+    writer->write(data);
+    writer->close();
+    suspender.rehire();
+  }
+}
+
+// Writes freshly created RowVectors to Parquet. Vector creation is excluded
+// from timing, but each timed iteration sees a new input vector so writer-side
+// flattening cannot mutate the batch once and hide the cost in later
+// iterations.
+void writeFreshParquet(
+    const std::function<RowVectorPtr(memory::MemoryPool*)>& makeData,
+    memory::MemoryPool* rootPool) {
+  auto sinkPool = rootPool->addLeafChild("sink");
+  auto dataPool = rootPool->addLeafChild("data");
+  for (int32_t i = 0; i < kNumIterations; ++i) {
+    folly::BenchmarkSuspender suspender;
+    auto data = makeData(dataPool.get());
+    auto sink = std::make_unique<MemorySink>(
+        kSinkSize, FileSink::Options{.pool = sinkPool.get()});
     WriterOptions options;
     options.memoryPool = rootPool;
     options.formatSpecificOptions = std::make_shared<ParquetWriterOptions>();
@@ -183,7 +211,8 @@ BENCHMARK_DRAW_LINE();
 // columns get materialized.  With selective flattening, only the one that
 // needs it is flattened.
 
-// Builds a dict-of-dict INTEGER column (forces flattening in needFlatten).
+// Builds a dict-of-dict INTEGER column that must be flattened before Arrow
+// export.
 VectorPtr makeDictOfDictInteger(
     vector_size_t numRows,
     int32_t dictionarySize,
@@ -357,6 +386,73 @@ VectorPtr makeMapVarcharInteger(
         return static_cast<int32_t>(mapRow * 10 + row);
       });
 }
+
+VectorPtr makeDictionaryWrappedMapVarcharInteger(
+    vector_size_t numRows,
+    int32_t entriesPerRow,
+    memory::MemoryPool* pool) {
+  auto map = makeMapVarcharInteger(numRows, entriesPerRow, pool);
+  auto indices =
+      test::makeIndices(numRows, [](vector_size_t i) { return i; }, pool);
+  return BaseVector::wrapInDictionary(
+      BufferPtr(nullptr), indices, numRows, map);
+}
+
+RowVectorPtr makeWideDictVarcharWithMap(
+    int32_t numPassthroughColumns,
+    bool wrapMapInDictionary,
+    memory::MemoryPool* pool) {
+  test::VectorMaker maker(pool);
+
+  std::vector<VectorPtr> columns;
+  std::vector<std::string> names;
+  columns.reserve(numPassthroughColumns + 1);
+  names.reserve(numPassthroughColumns + 1);
+
+  for (int32_t i = 0; i < numPassthroughColumns; ++i) {
+    columns.push_back(makeDictVarchar(kNumRows, 10, pool));
+    names.push_back(fmt::format("dict_{}", i));
+  }
+
+  columns.push_back(
+      wrapMapInDictionary
+          ? makeDictionaryWrappedMapVarcharInteger(kNumRows, 3, pool)
+          : makeMapVarcharInteger(kNumRows, 3, pool));
+  names.push_back(wrapMapInDictionary ? "dict_map" : "map");
+
+  return maker.rowVector(std::move(names), std::move(columns));
+}
+
+void benchMixedDictVarcharAndMapFresh(
+    int32_t numPassthroughColumns,
+    bool wrapMapInDictionary) {
+  writeFreshParquet(
+      [=](memory::MemoryPool* pool) {
+        return makeWideDictVarcharWithMap(
+            numPassthroughColumns, wrapMapInDictionary, pool);
+      },
+      rootPool.get());
+}
+
+BENCHMARK_DRAW_LINE();
+
+// Fresh-input benchmarks for row-local Arrow export preparation. A plain MAP
+// column used to make the Parquet writer flatten every dictionary sibling. A
+// dictionary-wrapped MAP still needs materialization, but only for that child.
+BENCHMARK(FreshMixed_5DictPassthrough_1Map) {
+  benchMixedDictVarcharAndMapFresh(5, false);
+}
+BENCHMARK(FreshMixed_20DictPassthrough_1Map) {
+  benchMixedDictVarcharAndMapFresh(20, false);
+}
+BENCHMARK(FreshMixed_5DictPassthrough_1DictMap) {
+  benchMixedDictVarcharAndMapFresh(5, true);
+}
+BENCHMARK(FreshMixed_20DictPassthrough_1DictMap) {
+  benchMixedDictVarcharAndMapFresh(20, true);
+}
+
+BENCHMARK_DRAW_LINE();
 
 void benchMapColumn(int32_t entriesPerRow) {
   folly::BenchmarkSuspender suspender;

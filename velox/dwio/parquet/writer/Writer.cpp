@@ -467,10 +467,7 @@ void Writer::write(const VectorPtr& data) {
       data->type()->equivalent(*schema_),
       "The file schema type should be equal with the input rowvector type.");
 
-  VectorPtr exportData = data;
-  if (needFlatten(exportData)) {
-    BaseVector::flattenVector(exportData);
-  }
+  VectorPtr exportData = prepareVectorForArrowExport(data, options_);
 
   ArrowArray array;
   exportToArrow(exportData, array, generalPool_.get(), options_);
@@ -583,22 +580,6 @@ void Writer::setMemoryReclaimers() {
   // TODO https://github.com/facebookincubator/velox/issues/8190
   pool_->setReclaimer(exec::MemoryReclaimer::create());
   generalPool_->setReclaimer(exec::MemoryReclaimer::create());
-}
-
-bool Writer::needFlatten(const VectorPtr& data) const {
-  auto rowVector = std::dynamic_pointer_cast<RowVector>(data);
-  VELOX_CHECK_NOT_NULL(
-      rowVector, "Arrow export expects a RowVector as input data.");
-
-  const auto& children = rowVector->children();
-  return std::any_of(children.begin(), children.end(), [](const auto& child) {
-    bool isNestedWrapped =
-        (child->encoding() == VectorEncoding::Simple::DICTIONARY ||
-         child->encoding() == VectorEncoding::Simple::CONSTANT) &&
-        child->valueVector() && !child->wrappedVector()->isFlatEncoding();
-    bool isComplex = !child->isScalar();
-    return isNestedWrapped || isComplex;
-  });
 }
 
 std::unique_ptr<dwio::common::Writer> ParquetWriterFactory::createWriter(
