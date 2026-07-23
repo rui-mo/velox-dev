@@ -402,6 +402,70 @@ TEST_P(HashJoinTest, booleanPayloadFilterDictionaryValidation) {
   }
 }
 
+TEST_P(HashJoinTest, leftAndFullJoinFilterSkipsNoMatchRows) {
+  auto probeVectors = {
+      makeRowVector(
+          {"t0", "t1"},
+          {
+              makeFlatVector<int32_t>({1, 2, 3, 4}),
+              makeFlatVector<int32_t>({10, 20, 30, 40}),
+          }),
+  };
+  auto buildVectors = {
+      makeRowVector(
+          {"u0", "u1"},
+          {
+              makeFlatVector<int32_t>({1, 2, 5}),
+              makeFlatVector<int32_t>({20, 10, 50}),
+          }),
+  };
+
+  const std::string filter = "if (u1 is null, t1 / (t1 - t1) > 0, u1 > t1)";
+  const std::string referenceFilter =
+      "CASE WHEN u.u1 IS NULL THEN t.t1 / (t.t1 - t.t1) > 0 "
+      "ELSE u.u1 > t.t1 END";
+
+  {
+    SCOPED_TRACE("left join");
+    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+        .parallelizeJoinBuildRows(parallelBuildSideRowsEnabled_)
+        .probeKeys({"t0"})
+        .probeVectors(std::vector<RowVectorPtr>(probeVectors))
+        .buildKeys({"u0"})
+        .buildVectors(std::vector<RowVectorPtr>(buildVectors))
+        .joinType(core::JoinType::kLeft)
+        .joinFilter(filter)
+        .joinOutputLayout({"t0", "t1", "u1"})
+        .injectSpill(false)
+        .referenceQuery(
+            fmt::format(
+                "SELECT t.t0, t.t1, u.u1 FROM t LEFT JOIN u "
+                "ON t.t0 = u.u0 AND {}",
+                referenceFilter))
+        .run();
+  }
+
+  {
+    SCOPED_TRACE("full join");
+    HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+        .parallelizeJoinBuildRows(parallelBuildSideRowsEnabled_)
+        .probeKeys({"t0"})
+        .probeVectors(std::vector<RowVectorPtr>(probeVectors))
+        .buildKeys({"u0"})
+        .buildVectors(std::vector<RowVectorPtr>(buildVectors))
+        .joinType(core::JoinType::kFull)
+        .joinFilter(filter)
+        .joinOutputLayout({"t0", "t1", "u0", "u1"})
+        .injectSpill(false)
+        .referenceQuery(
+            fmt::format(
+                "SELECT t.t0, t.t1, u.u0, u.u1 FROM t FULL OUTER JOIN u "
+                "ON t.t0 = u.u0 AND {}",
+                referenceFilter))
+        .run();
+  }
+}
+
 DEBUG_ONLY_TEST_P(MultiThreadedHashJoinTest, filterSpillOnFirstProbeInput) {
   auto spillDirectory = TempDirectoryPath::create();
   std::atomic_bool injectProbeSpillOnce{true};

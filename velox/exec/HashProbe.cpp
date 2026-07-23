@@ -1630,8 +1630,8 @@ int32_t HashProbe::evalFilter(int32_t numRows) {
   // false-positives when filter evaluates to true for rows with NULLs on the
   // build side; (2) avoid errors in filter evaluation that would fail the
   // query unnecessarily.
-  // TODO Apply the same to left joins.
-  if (isAntiJoin(joinType_) || isLeftSemiProjectJoin(joinType_)) {
+  if (isLeftJoin(joinType_) || isFullJoin(joinType_) || isAntiJoin(joinType_) ||
+      isLeftSemiProjectJoin(joinType_)) {
     for (auto i = 0; i < numRows; ++i) {
       if (outputTableRows[i] == nullptr) {
         filterInputRows_.setValid(i, false);
