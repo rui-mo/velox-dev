@@ -248,21 +248,18 @@ TEST_F(ParquetReaderTest, parquetFieldIdColumnMapping) {
       *leafPool_);
 }
 
-TEST_F(ParquetReaderTest, columnReaderOptionsInitializedBeforeBuild) {
-  const auto fileNestedType =
-      ROW({"padding", "present"}, {INTEGER(), INTEGER()});
-  const auto fileType = ROW({"nested"}, {fileNestedType});
+TEST_F(ParquetReaderTest, nestedNameColumnMapping) {
   auto data = makeRowVector(
-      fileType->names(),
+      {"nested"},
       {makeRowVector(
-          fileNestedType->names(),
+          // Make positional and name-based mapping disagree.
+          {"padding", "present"},
           {makeFlatVector<int32_t>({10, 20, 30}),
            makeFlatVector<int32_t>({1, 2, 3})})});
   auto* sink = write(data);
 
-  const auto outputNestedType =
-      ROW({"present", "missing"}, {INTEGER(), INTEGER()});
-  const auto outputType = ROW({"nested"}, {outputNestedType});
+  const auto outputNestedType = ROW({"present", "missing"}, INTEGER());
+  const auto outputType = ROW("nested", outputNestedType);
   auto readerOptions = makeDefaultReaderOptions();
   readerOptions.setFileSchema(outputType);
   readerOptions.setColumnMappingMode(ColumnMappingMode::kName);
@@ -270,9 +267,9 @@ TEST_F(ParquetReaderTest, columnReaderOptionsInitializedBeforeBuild) {
   auto readerBundle =
       readerBuilder(*sink, outputType).options(readerOptions).build();
   auto expected = makeRowVector(
-      outputType->names(),
+      {"nested"},
       {makeRowVector(
-          outputNestedType->names(),
+          {"present", "missing"},
           {makeFlatVector<int32_t>({1, 2, 3}),
            makeNullableFlatVector<int32_t>(
                {std::nullopt, std::nullopt, std::nullopt})})});

@@ -1553,6 +1553,8 @@ class ParquetRowReader::Impl {
       : pool_{readerBase->getMemoryPool()},
         readerBase_{readerBase},
         options_{options},
+        columnReaderOptions_{
+            dwio::common::makeColumnReaderOptions(readerBase_->options())},
         rowGroups_{*readerBase_->thriftFileMetaData().row_groups()},
         nextRowGroupIdsIdx_{0},
         currentRowGroupPtr_{nullptr},
@@ -1583,8 +1585,6 @@ class ParquetRowReader::Impl {
         options_.timestampPrecision());
     requestedType_ = options_.requestedType() ? options_.requestedType()
                                               : readerBase_->schema();
-    columnReaderOptions_ =
-        dwio::common::makeColumnReaderOptions(readerBase_->options());
     columnReader_ = ParquetColumnReader::build(
         columnReaderOptions_,
         requestedType_,
@@ -1784,7 +1784,7 @@ class ParquetRowReader::Impl {
   memory::MemoryPool& pool_;
   const std::shared_ptr<ReaderBase> readerBase_;
   const dwio::common::RowReaderOptions options_;
-  dwio::common::ColumnReaderOptions columnReaderOptions_;
+  const dwio::common::ColumnReaderOptions columnReaderOptions_;
 
   // All row groups from file metadata.
   std::vector<thrift::RowGroup>& rowGroups_;
