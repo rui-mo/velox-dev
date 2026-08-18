@@ -720,10 +720,7 @@ void VectorHasher::copyStringToLocal(const UniqueValue* unique) {
 
 void VectorHasher::setDistinctOverflow() {
   distinctOverflow_ = true;
-  uniqueValues_.clear();
-  uniqueHugeintValues_.clear();
-  uniqueValuesStorage_.clear();
-  distinctStringsBytes_ = 0;
+  clearDistinctValues();
 }
 
 void VectorHasher::setRangeOverflow() {
@@ -747,7 +744,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
     case TypeKind::BIGINT:
       if (!distinctOverflow_) {
         std::vector<int64_t> values;
-        values.reserve(uniqueValues_.size());
+        values.reserve(numDistinct());
         for (const auto& value : uniqueValues_) {
           values.emplace_back(value.data());
         }
@@ -758,7 +755,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
     case TypeKind::HUGEINT:
       if (!distinctOverflow_) {
         std::vector<int128_t> values;
-        values.reserve(uniqueHugeintValues_.size());
+        values.reserve(numDistinct());
         for (const auto& entry : uniqueHugeintValues_) {
           values.emplace_back(entry.first);
         }
@@ -770,7 +767,7 @@ std::unique_ptr<common::Filter> VectorHasher::getFilter(
     case TypeKind::VARBINARY:
       if (!distinctOverflow_) {
         std::vector<std::string> values;
-        values.reserve(uniqueValues_.size());
+        values.reserve(numDistinct());
         for (const auto& value : uniqueValues_) {
           values.emplace_back(value.asString());
         }
@@ -873,7 +870,7 @@ void VectorHasher::cardinality(
     asRange = kRangeTooLarge;
     asDistincts = distinctOverflow_
         ? kRangeTooLarge
-        : addIdReserve(uniqueHugeintValues_.size(), reservePct) + 1;
+        : addIdReserve(numDistinct(), reservePct) + 1;
     return;
   }
   int64_t signedRange;
@@ -903,7 +900,7 @@ void VectorHasher::cardinality(
     return;
   }
   // Padded count of values + 1 for null.
-  asDistincts = addIdReserve(uniqueValues_.size(), reservePct) + 1;
+  asDistincts = addIdReserve(numDistinct(), reservePct) + 1;
 }
 
 uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int32_t reservePct) {
@@ -914,11 +911,7 @@ uint64_t VectorHasher::enableValueIds(uint64_t multiplier, int32_t reservePct) {
   checkTypeSupportsValueIds();
 
   multiplier_ = multiplier;
-  rangeSize_ = addIdReserve(
-                   typeKind_ == TypeKind::HUGEINT ? uniqueHugeintValues_.size()
-                                                  : uniqueValues_.size(),
-                   reservePct) +
-      1;
+  rangeSize_ = addIdReserve(numDistinct(), reservePct) + 1;
   isRange_ = false;
   uint64_t result;
   if (__builtin_mul_overflow(multiplier_, rangeSize_, &result)) {
@@ -1023,9 +1016,7 @@ std::string VectorHasher::toString() const {
     out << " range size " << rangeSize_ << ": [" << min_ << ", " << max_ << "]";
   }
   if (!distinctOverflow_) {
-    out << " numDistinct: "
-        << (typeKind_ == TypeKind::HUGEINT ? uniqueHugeintValues_.size()
-                                           : uniqueValues_.size());
+    out << " numDistinct: " << numDistinct();
   }
   return out.str();
 }

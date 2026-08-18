@@ -296,9 +296,7 @@ class VectorHasher {
   }
 
   void resetStats() {
-    uniqueValues_.clear();
-    uniqueHugeintValues_.clear();
-    uniqueValuesStorage_.clear();
+    clearDistinctValues();
     hasHugeintValue_ = false;
   }
 
@@ -365,15 +363,15 @@ class VectorHasher {
   // true if no values have been added.
   bool empty() const {
     if (typeKind_ == TypeKind::HUGEINT) {
-      return !hasHugeintValue_ && uniqueHugeintValues_.empty();
+      return !hasHugeintValue_ && numDistinct() == 0;
     }
-    return !hasRange_ && uniqueValues_.empty();
+    return !hasRange_ && numDistinct() == 0;
   }
 
   std::string toString() const;
 
   size_t numUniqueValues() const {
-    return uniqueValues_.size();
+    return numDistinct();
   }
 
  private:
@@ -387,6 +385,18 @@ class VectorHasher {
     int64_t word =
         bits::loadPartialWord(reinterpret_cast<const uint8_t*>(data), size);
     return size == 0 ? word : word + (1L << (size * 8));
+  }
+
+  size_t numDistinct() const {
+    return typeKind_ == TypeKind::HUGEINT ? uniqueHugeintValues_.size()
+                                          : uniqueValues_.size();
+  }
+
+  void clearDistinctValues() {
+    uniqueValues_.clear();
+    uniqueHugeintValues_.clear();
+    uniqueValuesStorage_.clear();
+    distinctStringsBytes_ = 0;
   }
 
   template <typename T>

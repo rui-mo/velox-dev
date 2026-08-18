@@ -504,6 +504,7 @@ TEST_F(VectorHasherTest, integerIds) {
   SelectivityVector rows(ints->size());
   hasher->decode(*vector, rows);
   EXPECT_FALSE(hasher->computeValueIds(rows, hashes));
+  EXPECT_EQ(hasher->numUniqueValues(), 99);
   hasher->enableValueRange(1, 50);
   hasher->decode(*vector, rows);
   EXPECT_TRUE(hasher->computeValueIds(rows, hashes));
@@ -533,6 +534,10 @@ TEST_F(VectorHasherTest, integerIds) {
   ASSERT_TRUE(bigintValues->testInt64(kMin + 100));
   ASSERT_FALSE(bigintValues->testInt64(kMin + 101));
   ASSERT_FALSE(bigintValues->testInt64(0));
+
+  hasher->resetStats();
+  EXPECT_TRUE(hasher->empty());
+  EXPECT_EQ(hasher->numUniqueValues(), 0);
 
   hasher = exec::VectorHasher::create(BIGINT(), 1);
   hasher->enableValueIds(1, VectorHasher::kNoLimit);
@@ -797,6 +802,7 @@ TEST_F(VectorHasherTest, mergeHugeint) {
   hasher1.cardinality(0, numRange, numDistinct);
   EXPECT_EQ(numRange, VectorHasher::kRangeTooLarge);
   EXPECT_EQ(numDistinct, 16);
+  EXPECT_EQ(hasher1.numUniqueValues(), 15);
 
   auto filter = hasher1.getFilter(false);
   ASSERT_NE(filter, nullptr);
@@ -821,6 +827,8 @@ TEST_F(VectorHasherTest, mergeHugeint) {
   overflowHasher1.cardinality(0, numRange, numDistinct);
   EXPECT_EQ(numRange, VectorHasher::kRangeTooLarge);
   EXPECT_EQ(numDistinct, VectorHasher::kRangeTooLarge);
+  EXPECT_FALSE(overflowHasher1.empty());
+  EXPECT_EQ(overflowHasher1.numUniqueValues(), 0);
   EXPECT_EQ(nullptr, overflowHasher1.getFilter(false));
 }
 
@@ -933,6 +941,7 @@ TEST_F(VectorHasherTest, hugeintFilter) {
 
   hasher->decode(*vector, rows);
   hasher->computeValueIds(rows, hashes);
+  EXPECT_EQ(hasher->numUniqueValues(), 3);
 
   auto filter = hasher->getFilter(false);
   ASSERT_NE(nullptr, filter);
@@ -950,6 +959,10 @@ TEST_F(VectorHasherTest, hugeintFilter) {
   ASSERT_TRUE(filterWithNull->testNull());
   EXPECT_TRUE(filterWithNull->testInt128(first));
   EXPECT_FALSE(filterWithNull->testInt128(missing));
+
+  hasher->resetStats();
+  EXPECT_TRUE(hasher->empty());
+  EXPECT_EQ(hasher->numUniqueValues(), 0);
 }
 
 TEST_F(VectorHasherTest, int128BoundaryCollisions) {
@@ -1630,6 +1643,10 @@ TEST_F(VectorHasherTest, stringFilterWithLongStrings) {
   // Test rejection of non-existent strings.
   ASSERT_FALSE(bytesValues->testBytes("not in the set", 14));
   ASSERT_FALSE(bytesValues->testBytes("different", 9));
+
+  hasher->resetStats();
+  EXPECT_TRUE(hasher->empty());
+  EXPECT_EQ(hasher->numUniqueValues(), 0);
 }
 
 TEST_F(VectorHasherTest, stringFilterDistinctOverflow) {
