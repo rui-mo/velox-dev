@@ -1031,6 +1031,83 @@ TEST_F(VectorHasherTest, int128BoundaryCollisionsForRows) {
   }
 }
 
+TEST_F(VectorHasherTest, timestampMicrosecondsDisabledByDefault) {
+  auto vector = makeFlatVector<Timestamp>({
+      Timestamp::fromMicros(1'000),
+      Timestamp::fromMicros(1'001),
+  });
+
+  auto hasher = exec::VectorHasher::create(TIMESTAMP(), 0);
+  SelectivityVector rows(vector->size());
+  raw_vector<uint64_t> result(vector->size());
+
+  hasher->decode(*vector, rows);
+  EXPECT_FALSE(hasher->computeValueIds(rows, result));
+  EXPECT_FALSE(hasher->mayUseValueIds());
+  EXPECT_EQ(nullptr, hasher->getFilter(false));
+}
+
+TEST_F(VectorHasherTest, timestampMicrosecondValueIds) {
+  auto vector = makeFlatVector<Timestamp>({
+      Timestamp::fromMicros(1'000),
+      Timestamp::fromMicros(1'001),
+      Timestamp::fromMicros(2'000),
+  });
+
+  auto hasher = exec::VectorHasher::create(
+      TIMESTAMP(), 0, VectorHasher::TimestampValueIdPrecision::kMicroseconds);
+  SelectivityVector rows(vector->size());
+  raw_vector<uint64_t> result(vector->size());
+
+  hasher->decode(*vector, rows);
+  EXPECT_FALSE(hasher->computeValueIds(rows, result));
+
+  uint64_t asRange;
+  uint64_t asDistinct;
+  hasher->cardinality(0, asRange, asDistinct);
+  EXPECT_EQ(1'002, asRange);
+  EXPECT_EQ(vector->size() + 1, asDistinct);
+
+  hasher->enableValueIds(1, 0);
+  hasher->decode(*vector, rows);
+  ASSERT_TRUE(hasher->computeValueIds(rows, result));
+
+  std::unordered_set<uint64_t> uniqueValueIds;
+  for (auto id : result) {
+    ASSERT_TRUE(uniqueValueIds.insert(id).second);
+  }
+
+  EXPECT_EQ(nullptr, hasher->getFilter(false));
+}
+
+TEST_F(VectorHasherTest, timestampRangeChecksPrecision) {
+  auto aligned = makeFlatVector<Timestamp>({
+      Timestamp::fromMillis(1),
+      Timestamp::fromMillis(2),
+  });
+  auto outOfPrecision = makeFlatVector<Timestamp>({
+      Timestamp::fromMicros(1'001),
+  });
+
+  auto hasher = exec::VectorHasher::create(TIMESTAMP(), 0);
+  SelectivityVector alignedRows(aligned->size());
+  raw_vector<uint64_t> alignedResult(aligned->size());
+
+  hasher->decode(*aligned, alignedRows);
+  EXPECT_FALSE(hasher->computeValueIds(alignedRows, alignedResult));
+
+  hasher->enableValueRange(1, 0);
+  hasher->decode(*aligned, alignedRows);
+  ASSERT_TRUE(hasher->computeValueIds(alignedRows, alignedResult));
+
+  SelectivityVector outOfPrecisionRows(outOfPrecision->size());
+  raw_vector<uint64_t> outOfPrecisionResult(outOfPrecision->size());
+  hasher->decode(*outOfPrecision, outOfPrecisionRows);
+  EXPECT_FALSE(
+      hasher->computeValueIds(outOfPrecisionRows, outOfPrecisionResult));
+  EXPECT_FALSE(hasher->mayUseValueIds());
+}
+
 TEST_F(VectorHasherTest, computeValueIdsInteger) {
   testComputeValueIds<int32_t>(false);
   testComputeValueIds<int32_t>(true);

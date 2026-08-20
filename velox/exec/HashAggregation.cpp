@@ -74,7 +74,13 @@ void HashAggregation::initialize() {
   setupGroupingKeyChannelProjections(
       groupingKeyInputChannels, groupingKeyOutputChannels);
 
-  auto hashers = createVectorHashers(inputType, groupingKeyInputChannels);
+  auto hashers = createVectorHashers(
+      inputType,
+      groupingKeyInputChannels,
+      VectorHasher::timestampValueIdPrecisionFromConfig(
+          operatorCtx_->driverCtx()
+              ->queryConfig()
+              .timestampValueIdPrecision()));
   const auto numHashers = hashers.size();
 
   std::vector<column_index_t> preGroupedChannels;

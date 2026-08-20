@@ -240,11 +240,17 @@ void HashBuild::setupTable() {
   VELOX_CHECK_NULL(table_);
 
   const auto numKeys = keyChannels_.size();
+  auto timestampValueIdPrecision =
+      VectorHasher::timestampValueIdPrecisionFromConfig(
+          operatorCtx_->driverCtx()->queryConfig().timestampValueIdPrecision());
   std::vector<std::unique_ptr<VectorHasher>> keyHashers;
   keyHashers.reserve(numKeys);
   for (vector_size_t i = 0; i < numKeys; ++i) {
     keyHashers.emplace_back(
-        VectorHasher::create(tableType_->childAt(i), keyChannels_[i]));
+        VectorHasher::create(
+            tableType_->childAt(i),
+            keyChannels_[i],
+            timestampValueIdPrecision));
   }
 
   const auto numDependents = tableType_->size() - numKeys;

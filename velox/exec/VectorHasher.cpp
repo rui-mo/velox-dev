@@ -83,6 +83,21 @@ uint64_t hashOne(DecodedVector& decoded, vector_size_t index) {
 }
 } // namespace
 
+VectorHasher::TimestampValueIdPrecision
+VectorHasher::timestampValueIdPrecisionFromConfig(int32_t precision) {
+  switch (precision) {
+    case static_cast<int32_t>(TimestampValueIdPrecision::kMilliseconds):
+      return TimestampValueIdPrecision::kMilliseconds;
+    case static_cast<int32_t>(TimestampValueIdPrecision::kMicroseconds):
+      return TimestampValueIdPrecision::kMicroseconds;
+    default:
+      VELOX_USER_FAIL(
+          "Unsupported timestamp value ID precision: {}. Supported values are "
+          "3 (milliseconds) and 6 (microseconds).",
+          precision);
+  }
+}
+
 template <bool typeProvidesCustomComparison, TypeKind Kind>
 void VectorHasher::hashValues(
     const SelectivityVector& rows,
@@ -664,6 +679,27 @@ void VectorHasher::analyzeValue(int128_t value) {
   }
 }
 
+void VectorHasher::analyzeValue(Timestamp value) {
+  if (FOLLY_UNLIKELY(!isTimestampPrecisionLossless(value))) {
+    setRangeOverflow();
+    setDistinctOverflow();
+    return;
+  }
+
+  auto normalized = toInt64(value);
+  if (!rangeOverflow_) {
+    updateRange(normalized);
+  }
+  if (!distinctOverflow_) {
+    UniqueValue unique(normalized);
+    unique.setId(uniqueValues_.size() + 1);
+    if (uniqueValues_.insert(unique).second &&
+        uniqueValues_.size() > kMaxDistinct) {
+      setDistinctOverflow();
+    }
+  }
+}
+
 template <>
 void VectorHasher::analyzeValue(StringView value) {
   int size = value.size();
@@ -1023,7 +1059,8 @@ std::string VectorHasher::toString() const {
 
 std::vector<std::unique_ptr<VectorHasher>> createVectorHashers(
     const RowTypePtr& rowType,
-    const std::vector<core::FieldAccessTypedExprPtr>& keys) {
+    const std::vector<core::FieldAccessTypedExprPtr>& keys,
+    VectorHasher::TimestampValueIdPrecision timestampValueIdPrecision) {
   const auto numKeys = keys.size();
   std::vector<column_index_t> keyChannels;
   keyChannels.reserve(numKeys);
@@ -1031,18 +1068,22 @@ std::vector<std::unique_ptr<VectorHasher>> createVectorHashers(
     const auto channel = exprToChannel(key.get(), rowType);
     keyChannels.push_back(channel);
   }
-  return createVectorHashers(rowType, keyChannels);
+  return createVectorHashers(rowType, keyChannels, timestampValueIdPrecision);
 }
 
 std::vector<std::unique_ptr<VectorHasher>> createVectorHashers(
     const RowTypePtr& rowType,
-    const std::vector<column_index_t>& keyChannels) {
+    const std::vector<column_index_t>& keyChannels,
+    VectorHasher::TimestampValueIdPrecision timestampValueIdPrecision) {
   const auto numKeys = keyChannels.size();
   std::vector<std::unique_ptr<VectorHasher>> hashers;
   hashers.reserve(numKeys);
   for (const auto& keyChannel : keyChannels) {
     hashers.push_back(
-        VectorHasher::create(rowType->childAt(keyChannel), keyChannel));
+        VectorHasher::create(
+            rowType->childAt(keyChannel),
+            keyChannel,
+            timestampValueIdPrecision));
   }
   return hashers;
 }

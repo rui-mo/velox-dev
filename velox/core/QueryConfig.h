@@ -881,6 +881,17 @@ class QueryConfig {
       false,
       "Enable dynamic filter pushdown for string types from hash probe.")
 
+  /// Precision for mapping timestamp keys to value IDs in hash tables.
+  /// Supported values are 3 for milliseconds and 6 for microseconds.
+  VELOX_QUERY_CONFIG(
+      kTimestampValueIdPrecision,
+      timestampValueIdPrecision,
+      "timestamp_value_id_precision",
+      int32_t,
+      3,
+      "Precision for timestamp value IDs. Supported values are 3 "
+      "(milliseconds) and 6 (microseconds).")
+
   /// The maximum byte size of Bloom filter from hash probe. 0 = disabled.
   VELOX_QUERY_CONFIG(
       kHashProbeBloomFilterPushdownMaxSize,

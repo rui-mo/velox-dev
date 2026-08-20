@@ -166,6 +166,11 @@ Generic Configuration
      - bool
      - false
      - Whether hash probe can generate dynamic filter for string types and push down to upstream operators.
+   * - timestamp_value_id_precision
+     - integer
+     - 3
+     - Precision for mapping timestamp keys to value IDs in hash tables. Valid
+       values are 3 (milliseconds) and 6 (microseconds).
    * - hash_probe_bloom_filter_pushdown_max_size
      - integer
      - 0

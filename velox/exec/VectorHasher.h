@@ -142,11 +142,24 @@ class VectorHasher {
   // reservePct to enableValueIds().
   static constexpr int32_t kNoLimit = -1;
 
-  VectorHasher(TypePtr type, column_index_t channel)
+  enum class TimestampValueIdPrecision : int8_t {
+    kMilliseconds = 3,
+    kMicroseconds = 6,
+  };
+
+  static TimestampValueIdPrecision timestampValueIdPrecisionFromConfig(
+      int32_t precision);
+
+  VectorHasher(
+      TypePtr type,
+      column_index_t channel,
+      TimestampValueIdPrecision timestampValueIdPrecision =
+          TimestampValueIdPrecision::kMilliseconds)
       : channel_(channel),
         type_(std::move(type)),
         typeKind_(type_->kind()),
-        typeProvidesCustomComparison_(type_->providesCustomComparison()) {
+        typeProvidesCustomComparison_(type_->providesCustomComparison()),
+        timestampValueIdPrecision_(timestampValueIdPrecision) {
     if (!typeSupportsValueIds()) {
       // Ensure any range or unique value based hashing is disabled.
       setRangeOverflow();
@@ -165,8 +178,11 @@ class VectorHasher {
 
   static std::unique_ptr<VectorHasher> create(
       TypePtr type,
-      column_index_t channel) {
-    return std::make_unique<VectorHasher>(std::move(type), channel);
+      column_index_t channel,
+      TimestampValueIdPrecision timestampValueIdPrecision =
+          TimestampValueIdPrecision::kMilliseconds) {
+    return std::make_unique<VectorHasher>(
+        std::move(type), channel, timestampValueIdPrecision);
   }
 
   column_index_t channel() const {
@@ -407,9 +423,7 @@ class VectorHasher {
     return value;
   }
 
-  inline int64_t toInt64(Timestamp timestamp) const {
-    return timestamp.toMillis();
-  }
+  inline int64_t toInt64(Timestamp timestamp) const;
 
   // Sets the data statistics from 'other'. Does not set the mapping mode.
   void copyStatsFrom(const VectorHasher& other);
@@ -513,6 +527,8 @@ class VectorHasher {
 
   void analyzeValue(int128_t value);
 
+  void analyzeValue(Timestamp value);
+
   template <typename T>
   bool tryMapToRangeSimd(
       const T* values,
@@ -600,6 +616,8 @@ class VectorHasher {
 
   uint64_t lookupValueId(int128_t value) const;
 
+  bool isTimestampPrecisionLossless(Timestamp value) const;
+
   void updateRange(int64_t value) {
     if (hasRange_) {
       if (value < min_) {
@@ -643,6 +661,7 @@ class VectorHasher {
   const TypePtr type_;
   const TypeKind typeKind_;
   const bool typeProvidesCustomComparison_;
+  const TimestampValueIdPrecision timestampValueIdPrecision_;
 
   DecodedVector decoded_;
   raw_vector<uint64_t> cachedHashes_;
@@ -762,9 +781,9 @@ inline uint64_t VectorHasher::lookupValueId(StringView value) const {
 
 template <>
 inline uint64_t VectorHasher::lookupValueId(Timestamp timestamp) const {
-  return timestamp.getNanos() % 1'000'000 != 0
-      ? kUnmappable
-      : lookupValueId(timestamp.toMillis());
+  return isTimestampPrecisionLossless(timestamp)
+      ? lookupValueId(toInt64(timestamp))
+      : kUnmappable;
 }
 
 template <>
@@ -773,15 +792,62 @@ inline uint64_t VectorHasher::valueId(bool value) {
 }
 template <>
 inline uint64_t VectorHasher::valueId(Timestamp value) {
-  if (FOLLY_UNLIKELY(
-          value.getNanos() % Timestamp::kNanosecondsInMillisecond != 0)) {
-    // The timestamp is in nanosecond or microsecond precision. The values are
-    // not mappable to milliseconds without precision loss.
+  if (FOLLY_UNLIKELY(!isTimestampPrecisionLossless(value))) {
+    // The timestamp is not mappable to the configured precision without loss.
     setRangeOverflow();
     setDistinctOverflow();
     return kUnmappable;
   }
-  return valueId(value.toMillis());
+  return valueId(toInt64(value));
+}
+
+inline bool VectorHasher::isTimestampPrecisionLossless(Timestamp value) const {
+  switch (timestampValueIdPrecision_) {
+    case TimestampValueIdPrecision::kMilliseconds:
+      return value.getNanos() % Timestamp::kNanosecondsInMillisecond == 0;
+    case TimestampValueIdPrecision::kMicroseconds:
+      return value.getNanos() % Timestamp::kNanosecondsInMicrosecond == 0;
+  }
+  VELOX_UNREACHABLE();
+}
+
+inline int64_t VectorHasher::toInt64(Timestamp timestamp) const {
+  switch (timestampValueIdPrecision_) {
+    case TimestampValueIdPrecision::kMilliseconds:
+      return timestamp.toMillis();
+    case TimestampValueIdPrecision::kMicroseconds:
+      return timestamp.toMicros();
+  }
+  VELOX_UNREACHABLE();
+}
+
+template <>
+inline bool VectorHasher::tryMapToRange(
+    const Timestamp* values,
+    const SelectivityVector& rows,
+    uint64_t* result) {
+  VELOX_DCHECK(isRange_);
+  if (!isRange_) {
+    return false;
+  }
+
+  bool inRange = true;
+  rows.testSelected([&](vector_size_t row) {
+    if (!isTimestampPrecisionLossless(values[row])) {
+      inRange = false;
+      return false;
+    }
+    auto int64Value = toInt64(values[row]);
+    if (int64Value > max_ || int64Value < min_) {
+      inRange = false;
+      return false;
+    }
+    auto hash = int64Value - min_ + 1;
+    result[row] = multiplier_ == 1 ? hash : result[row] + multiplier_ * hash;
+    return true;
+  });
+
+  return inRange;
 }
 
 template <>
@@ -827,11 +893,15 @@ bool VectorHasher::makeValueIdsDecoded<bool, false>(
 /// Creates VectorHasher instances for specified columns.
 std::vector<std::unique_ptr<VectorHasher>> createVectorHashers(
     const RowTypePtr& rowType,
-    const std::vector<core::FieldAccessTypedExprPtr>& keys);
+    const std::vector<core::FieldAccessTypedExprPtr>& keys,
+    VectorHasher::TimestampValueIdPrecision timestampValueIdPrecision =
+        VectorHasher::TimestampValueIdPrecision::kMilliseconds);
 
 std::vector<std::unique_ptr<VectorHasher>> createVectorHashers(
     const RowTypePtr& rowType,
-    const std::vector<column_index_t>& keyChannels);
+    const std::vector<column_index_t>& keyChannels,
+    VectorHasher::TimestampValueIdPrecision timestampValueIdPrecision =
+        VectorHasher::TimestampValueIdPrecision::kMilliseconds);
 
 } // namespace facebook::velox::exec
 
