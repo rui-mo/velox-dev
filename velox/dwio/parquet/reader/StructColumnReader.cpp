@@ -16,6 +16,7 @@
 
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
+#include <algorithm>
 #include <optional>
 #include <tuple>
 
@@ -199,6 +200,8 @@ StructColumnReader::StructColumnReader(
 
     childSpecs[i]->setSubscript(children_.size() - 1);
   }
+  applyMissingFieldPolicy(
+      columnReaderOptions, params.nullStructIfAllFieldsMissing());
   ensureSyntheticRepDefSource(columnReaderOptions, params);
   auto type = reinterpret_cast<const ParquetTypeWithId*>(fileType_.get());
   if (type->parent()) {
@@ -208,6 +211,30 @@ StructColumnReader::StructColumnReader(
         repDefSourceLevelMode(*type, repDefSourceType(*repDefSourceReader_));
   }
   VELOX_DCHECK_EQ(type->parent() == nullptr, repDefSourceReader_ == nullptr);
+}
+
+void StructColumnReader::applyMissingFieldPolicy(
+    const dwio::common::ColumnReaderOptions& columnReaderOptions,
+    bool nullStructIfAllFieldsMissing) {
+  const bool useColumnNames = columnReaderOptions.columnMappingMode_ ==
+      dwio::common::ColumnMappingMode::kName;
+  if (!nullStructIfAllFieldsMissing || !useColumnNames) {
+    return;
+  }
+
+  auto& childSpecs = scanSpec_->stableChildren();
+  if (childSpecs.empty()) {
+    nullStructForMissingFields_ = true;
+    return;
+  }
+
+  if (std::all_of(childSpecs.begin(), childSpecs.end(), [&](auto* childSpec) {
+        return childSpec->columnType() ==
+            common::ScanSpec::ColumnType::kRegular &&
+            isChildMissing(*childSpec);
+      })) {
+    nullStructForMissingFields_ = true;
+  }
 }
 
 void StructColumnReader::ensureSyntheticRepDefSource(
@@ -349,6 +376,13 @@ void StructColumnReader::setNullsFromRepDefs(PageReader& pageReader) {
       nullptr,
       nullsInReadRange()->asMutable<uint64_t>(),
       0);
+  // Repeated parents still need rep/def levels to determine the number of
+  // structs. Preserve that count, but mark every struct null when the
+  // missing-field policy applies to this reader.
+  if (nullStructForMissingFields_) {
+    bits::fillBits(
+        nullsInReadRange()->asMutable<uint64_t>(), 0, numStructs, bits::kNull);
+  }
   formatData_->as<ParquetData>().setNulls(nullsInReadRange(), numStructs);
 }
 
