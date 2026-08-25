@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/SelectiveStructColumnReader.h"
 #include "velox/dwio/parquet/common/LevelConversion.h"
@@ -78,7 +80,15 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
       dwio::common::FormatData::FilterRowGroupsResult&) const override;
 
  private:
-  dwio::common::SelectiveColumnReader* findBestLeaf();
+  void ensureRepDefSourceChild(
+      const dwio::common::ColumnReaderOptions& columnReaderOptions,
+      ParquetParams& params);
+
+  void applyMissingFieldPolicy(
+      const dwio::common::ColumnReaderOptions& columnReaderOptions,
+      bool nullStructIfAllFieldsMissing);
+
+  dwio::common::SelectiveColumnReader* FOLLY_NONNULL findBestLeaf();
 
   void enqueueRowGroup(uint32_t index, dwio::common::BufferedInput& input);
 
@@ -95,6 +105,10 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
   // The level information for extracting nulls for 'this' from the
   // repdefs in a leaf PageReader.
   LevelInfo levelInfo_;
+
+  // Owns the ScanSpec for the non-projected reader that only sources
+  // repetition and definition levels for this struct.
+  std::unique_ptr<common::ScanSpec> repDefSourceScanSpec_;
 };
 
 } // namespace facebook::velox::parquet

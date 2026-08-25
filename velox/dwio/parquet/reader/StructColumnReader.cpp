@@ -16,6 +16,8 @@
 
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
+#include <algorithm>
+
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
 #include "velox/dwio/parquet/reader/RepeatedColumnReader.h"
@@ -61,6 +63,9 @@ StructColumnReader::StructColumnReader(
 
     childSpecs[i]->setSubscript(children_.size() - 1);
   }
+  applyMissingFieldPolicy(
+      columnReaderOptions, params.nullStructIfAllFieldsMissing());
+  ensureRepDefSourceChild(columnReaderOptions, params);
   auto type = reinterpret_cast<const ParquetTypeWithId*>(fileType_.get());
   if (type->parent()) {
     levelMode_ = reinterpret_cast<const ParquetTypeWithId*>(fileType_.get())
@@ -86,6 +91,69 @@ StructColumnReader::StructColumnReader(
   }
 }
 
+void StructColumnReader::applyMissingFieldPolicy(
+    const dwio::common::ColumnReaderOptions& columnReaderOptions,
+    bool nullStructIfAllFieldsMissing) {
+  if (!nullStructIfAllFieldsMissing) {
+    return;
+  }
+
+  auto& childSpecs = scanSpec_->stableChildren();
+  if (childSpecs.empty()) {
+    scanSpec_->setConstantValue(
+        BaseVector::createNullConstant(requestedType_, 1, pool_));
+    return;
+  }
+
+  const bool useColumnNames = columnReaderOptions.columnMappingMode_ ==
+      dwio::common::ColumnMappingMode::kName;
+  if (useColumnNames &&
+      std::all_of(childSpecs.begin(), childSpecs.end(), [&](auto* childSpec) {
+        return childSpec->columnType() ==
+            common::ScanSpec::ColumnType::kRegular &&
+            isChildMissing(*childSpec);
+      })) {
+    scanSpec_->setConstantValue(
+        BaseVector::createNullConstant(requestedType_, 1, pool_));
+    return;
+  }
+
+  scanSpec_->setConstantValue(nullptr);
+}
+
+void StructColumnReader::ensureRepDefSourceChild(
+    const dwio::common::ColumnReaderOptions& columnReaderOptions,
+    ParquetParams& params) {
+  auto type = reinterpret_cast<const ParquetTypeWithId*>(fileType_.get());
+  if (!type->parent() || !children_.empty()) {
+    return;
+  }
+
+  for (auto i = 0; i < fileType_->size(); ++i) {
+    const auto& childFileType = fileType_->childAt(i);
+    if (!childFileType) {
+      continue;
+    }
+
+    // Struct nullness can be derived from any leaf under the struct. If no
+    // requested child selected one, keep the first physical child reader solely
+    // as the repetition/definition level source.
+    repDefSourceScanSpec_ = std::make_unique<common::ScanSpec>(
+        fileType_->type()->asRow().nameOf(i));
+    repDefSourceScanSpec_->addAllChildFields(*childFileType->type());
+    repDefSourceScanSpec_->setProjectOut(false);
+
+    addChild(
+        ParquetColumnReader::build(
+            columnReaderOptions,
+            childFileType->type(),
+            childFileType,
+            params,
+            *repDefSourceScanSpec_));
+    return;
+  }
+}
+
 dwio::common::SelectiveColumnReader* FOLLY_NONNULL
 StructColumnReader::findBestLeaf() {
   SelectiveColumnReader* best = nullptr;
@@ -107,7 +175,10 @@ StructColumnReader::findBestLeaf() {
       best = child;
     }
   }
-  assert(best);
+  VELOX_CHECK_NOT_NULL(
+      best,
+      "Cannot extract repetition/definition levels for struct '{}' because it has no child columns.",
+      scanSpec_->fieldName());
   return best;
 }
 
@@ -201,6 +272,13 @@ void StructColumnReader::setNullsFromRepDefs(PageReader& pageReader) {
       nullptr,
       nullsInReadRange()->asMutable<uint64_t>(),
       0);
+  // Repeated parents still need rep/def levels to determine the number of
+  // structs. Preserve that count, but mark every struct null when schema
+  // evolution synthesized this field as a null constant.
+  if (scanSpec_->isConstant() && scanSpec_->constantValue()->isNullAt(0)) {
+    bits::fillBits(
+        nullsInReadRange()->asMutable<uint64_t>(), 0, numStructs, bits::kNull);
+  }
   formatData_->as<ParquetData>().setNulls(nullsInReadRange(), numStructs);
 }
 
