@@ -665,15 +665,7 @@ void VectorHasher::analyzeValue(int128_t value) {
 }
 
 void VectorHasher::analyzeValue(Timestamp value) {
-  if (!rangeOverflow_) {
-    int64_t millis;
-    if (FOLLY_UNLIKELY(!tryTimestampToMillis(value, millis))) {
-      setRangeOverflow();
-    } else {
-      updateRange(millis);
-    }
-  }
-
+  updateTimestampRange(value);
   analyzeValue(timestampAsInt128(value));
 }
 

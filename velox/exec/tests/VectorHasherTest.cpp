@@ -1121,6 +1121,30 @@ TEST_F(VectorHasherTest, timestampAnalyzePrecision) {
   EXPECT_NE(0, rowResult[0]);
 }
 
+TEST_F(VectorHasherTest, timestampRangeStatsNotEmpty) {
+  auto vector = makeFlatVector<Timestamp>(
+      {Timestamp::fromMillis(1), Timestamp::fromMillis(2)});
+  SelectivityVector rows(vector->size());
+  raw_vector<uint64_t> result(vector->size());
+
+  auto hasher = exec::VectorHasher::create(TIMESTAMP(), 0);
+  hasher->decode(*vector, rows);
+  ASSERT_FALSE(hasher->computeValueIds(rows, result));
+
+  hasher->resetStats();
+  ASSERT_FALSE(hasher->empty());
+
+  VectorHasher mergedHasher(TIMESTAMP(), 0);
+  mergedHasher.merge(*hasher, VectorHasher::kMaxDistinct);
+
+  uint64_t asRange;
+  uint64_t asDistinct;
+  mergedHasher.cardinality(0, asRange, asDistinct);
+  EXPECT_EQ(3, asRange);
+  EXPECT_EQ(1, asDistinct);
+  EXPECT_TRUE(mergedHasher.mayUseValueIds());
+}
+
 TEST_F(VectorHasherTest, timestampMergePrecision) {
   auto subMillisecondVector =
       makeFlatVector<Timestamp>({Timestamp::fromMicros(1'001)});

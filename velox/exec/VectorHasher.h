@@ -363,7 +363,7 @@ class VectorHasher {
   // true if no values have been added.
   bool empty() const {
     const bool hasSeenValue =
-        usesInt128DistinctValues() ? hasHugeintValue_ : hasRange_;
+        hasRange_ || (usesInt128DistinctValues() && hasHugeintValue_);
     return !hasSeenValue && numDistinct() == 0;
   }
 
@@ -390,7 +390,8 @@ class VectorHasher {
     return typeKind_ == TypeKind::HUGEINT || typeKind_ == TypeKind::TIMESTAMP;
   }
 
-  // Pack timestamps as (seconds, nanos) for exact distinct value ids.
+  // Pack timestamps injectively for exact distinct value ids. This is not
+  // order-preserving because negative seconds are cast to uint64_t.
   static int128_t timestampAsInt128(Timestamp timestamp) {
     return HugeInt::build(
         static_cast<uint64_t>(timestamp.getSeconds()), timestamp.getNanos());
@@ -405,6 +406,19 @@ class VectorHasher {
     }
     millis = timestamp.toMillis();
     return true;
+  }
+
+  void updateTimestampRange(Timestamp timestamp) {
+    if (rangeOverflow_) {
+      return;
+    }
+
+    int64_t millis;
+    if (FOLLY_UNLIKELY(!tryTimestampToMillis(timestamp, millis))) {
+      setRangeOverflow();
+    } else {
+      updateRange(millis);
+    }
   }
 
   size_t numDistinct() const {
@@ -812,16 +826,7 @@ inline uint64_t VectorHasher::valueId(Timestamp value) {
     return valueId(millis);
   }
 
-  // Keep range stats only for timestamps that fit the millisecond domain.
-  // Distinct value ids below remain exact for sub-millisecond timestamps.
-  if (!rangeOverflow_) {
-    int64_t millis;
-    if (FOLLY_UNLIKELY(!tryTimestampToMillis(value, millis))) {
-      setRangeOverflow();
-    } else {
-      updateRange(millis);
-    }
-  }
+  updateTimestampRange(value);
   return valueId(timestampAsInt128(value));
 }
 
