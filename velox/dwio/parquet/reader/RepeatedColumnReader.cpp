@@ -33,10 +33,6 @@ PageReader* readLeafRepDefs(
     // A struct can have no logical children and use a separate physical leaf
     // solely as its rep/def source.
     auto* repDefSourceReader = structReader->repDefSourceReader();
-    VELOX_CHECK_NOT_NULL(
-        repDefSourceReader,
-        "Cannot source repetition/definition levels for nested struct: {}",
-        structReader->fileType().fullName());
     pageReader = readLeafRepDefs(repDefSourceReader, numTop, true);
     structReader->setNullsFromRepDefs(*pageReader);
     for (auto* child : children) {
@@ -103,19 +99,10 @@ void enqueueRowGroupRecursive(
   const auto& children = reader.children();
   if (children.empty()) {
     if (auto* structReader = dynamic_cast<StructColumnReader*>(&reader)) {
-      auto* repDefSourceReader = structReader->repDefSourceReader();
-      if (!repDefSourceReader) {
-        auto& type = reinterpret_cast<const ParquetTypeWithId&>(
-            structReader->fileType());
-        if (!type.parent()) {
-          return;
-        }
-        VELOX_CHECK_NOT_NULL(
-            repDefSourceReader,
-            "Cannot source repetition/definition levels for nested struct: {}",
-            structReader->fileType().fullName());
+      // Only the root struct has no rep/def source.
+      if (auto* repDefSourceReader = structReader->repDefSourceReader()) {
+        enqueueRowGroupRecursive(*repDefSourceReader, index, input);
       }
-      enqueueRowGroupRecursive(*repDefSourceReader, index, input);
       return;
     }
     return reader.formatData().as<ParquetData>().enqueueRowGroup(index, input);

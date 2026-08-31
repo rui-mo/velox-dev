@@ -121,10 +121,6 @@ LevelMode repDefSourceLevelMode(
     const ParquetTypeWithId& sourceType) {
   const auto* node = &sourceType;
   while (node != &structType) {
-    VELOX_CHECK_NOT_NULL(
-        node,
-        "Cannot source repetition/definition levels for nested struct: {}",
-        structType.fullName());
     if (node->type()->kind() == TypeKind::ARRAY ||
         node->type()->kind() == TypeKind::MAP) {
       return LevelMode::kStructOverLists;
@@ -138,16 +134,8 @@ const ParquetTypeWithId& repDefSourceType(
     const dwio::common::SelectiveColumnReader& reader) {
   const auto* source = &reader;
   while (source->fileType().type()->kind() == TypeKind::ROW) {
-    const auto* structReader = dynamic_cast<const StructColumnReader*>(source);
-    VELOX_CHECK_NOT_NULL(
-        structReader,
-        "Cannot source repetition/definition levels for nested struct: {}",
-        source->fileType().fullName());
-    source = structReader->repDefSourceReader();
-    VELOX_CHECK_NOT_NULL(
-        source,
-        "Cannot source repetition/definition levels for nested struct: {}",
-        structReader->fileType().fullName());
+    source =
+        static_cast<const StructColumnReader*>(source)->repDefSourceReader();
   }
   return *reinterpret_cast<const ParquetTypeWithId*>(&source->fileType());
 }
@@ -208,6 +196,7 @@ StructColumnReader::StructColumnReader(
     levelMode_ =
         repDefSourceLevelMode(*type, repDefSourceType(*repDefSourceReader_));
   }
+  VELOX_DCHECK_EQ(type->parent() == nullptr, repDefSourceReader_ == nullptr);
 }
 
 void StructColumnReader::ensureSyntheticRepDefSource(
@@ -240,13 +229,7 @@ void StructColumnReader::ensureSyntheticRepDefSource(
 dwio::common::SelectiveColumnReader* FOLLY_NONNULL
 StructColumnReader::findBestLeaf() {
   if (children_.empty()) {
-    auto* syntheticReader =
-        syntheticRepDefSource_ ? syntheticRepDefSource_->reader.get() : nullptr;
-    VELOX_CHECK_NOT_NULL(
-        syntheticReader,
-        "Cannot source repetition/definition levels for nested struct: {}",
-        fileType_->fullName());
-    return syntheticReader;
+    return syntheticRepDefSource_->reader.get();
   }
 
   SelectiveColumnReader* best = nullptr;

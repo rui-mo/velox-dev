@@ -64,8 +64,9 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
   void setNullsFromRepDefs(PageReader& pageReader);
 
   /// Returns the reader that supplies repetition and definition levels for
-  /// this struct. The reader may be a logical child or a synthetic physical
-  /// leaf and must not be advanced using the enclosing struct's row count.
+  /// this struct. This is null exactly for the root struct. For a nested
+  /// struct, the reader may be a logical child or a synthetic physical leaf
+  /// and must not be advanced using the enclosing struct's row count.
   dwio::common::SelectiveColumnReader* repDefSourceReader() const {
     return repDefSourceReader_;
   }
@@ -99,8 +100,7 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
 
   bool isRowGroupBuffered(uint32_t index, dwio::common::BufferedInput& input);
 
-  // Reader subtree used for getting nullability information for 'this'. This
-  // is nullptr for the root of a table.
+  // Reader subtree used for getting nullability information for 'this'.
   dwio::common::SelectiveColumnReader* repDefSourceReader_{nullptr};
 
   // Mode for getting nulls from repdefs. kStructOverLists if the source is
