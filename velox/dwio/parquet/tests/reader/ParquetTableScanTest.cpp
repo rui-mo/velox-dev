@@ -1398,8 +1398,8 @@ TEST_F(ParquetTableScanTest, testColumnNotExists) {
 }
 
 // The filters reference whole structs without projecting or filtering their
-// children. A scalar first child covers kNulls, while an ARRAY first child
-// covers kStructOverLists.
+// children. The first struct has a repeated branch before a scalar sibling;
+// the second has scalar children only.
 TEST_F(ParquetTableScanTest, structFilterByIndex) {
   const auto id = makeFlatVector<int64_t>({1, 2, 3});
   const auto detailElements = makeRowVector(
@@ -1413,8 +1413,8 @@ TEST_F(ParquetTableScanTest, structFilterByIndex) {
   const auto name = makeRowVector(
       {"details", "suffix"},
       {
-          // The first physical child is an ARRAY of ROW. Only one leaf in this
-          // subtree is needed as the repetition/definition level source.
+          // A repeated branch appears first in schema order, but a scalar
+          // sibling can provide the struct's levels with less added I/O.
           details,
           makeFlatVector<std::string>({"Jr.", "Sr.", "III"}),
       },
@@ -1422,7 +1422,6 @@ TEST_F(ParquetTableScanTest, structFilterByIndex) {
   const auto nickname = makeRowVector(
       {"value", "suffix"},
       {
-          // The scalar first child is the repetition/definition level source.
           makeFlatVector<std::string>({"Jan", "Johnny", "Sue"}),
           makeFlatVector<std::string>({"J.", "S.", "L."}),
       },
@@ -1458,21 +1457,20 @@ TEST_F(ParquetTableScanTest, structFilterByIndex) {
       .assertResults(expected);
 }
 
-// A MAP is the first physical child of a struct with no projected fields. Two
+// A MAP is the only physical child of a struct with no projected fields. Two
 // entries in the first row must not shift the following null struct, and an
 // empty map must still leave its enclosing struct non-null.
-TEST_F(ParquetTableScanTest, mapFirstStructFilterByIndex) {
+TEST_F(ParquetTableScanTest, mapStructFilterByIndex) {
   const auto id = makeFlatVector<int64_t>({1, 2, 3, 4});
   const auto name = makeRowVector(
-      {"lookup", "suffix"},
+      {"lookup"},
       {
-          // The MAP is the first physical child and supplies repetition and
-          // definition levels for the enclosing struct.
+          // The MAP supplies repetition and definition levels for the
+          // enclosing struct.
           makeMapVector(
               {0, 2, 2, 2},
               makeFlatVector<int64_t>({10, 20, 30}),
               makeFlatVector<bool>({true, false, true})),
-          makeFlatVector<std::string>({"Jr.", "Sr.", "III", "IV"}),
       },
       [](auto row) { return row == 1; });
   const auto vector = makeRowVector({"id", "name"}, {id, name});

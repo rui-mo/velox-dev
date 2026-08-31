@@ -16,8 +16,12 @@
 
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 
+#include <optional>
+#include <tuple>
+
 #include "velox/dwio/common/BufferedInput.h"
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
+#include "velox/dwio/parquet/reader/ParquetData.h"
 #include "velox/dwio/parquet/reader/RepeatedColumnReader.h"
 
 namespace facebook::velox::common {
@@ -27,27 +31,89 @@ class ScanSpec;
 namespace facebook::velox::parquet {
 namespace {
 
-const ParquetTypeWithId* findFirstPhysicalLeafImpl(
-    const ParquetTypeWithId& type) {
-  if (type.getChildren().empty()) {
-    return type.isLeaf() ? &type : nullptr;
-  }
+struct PhysicalLeafCost {
+  const ParquetTypeWithId* type;
+  bool hasCompleteMetadata{true};
+  uint64_t readBytes{0};
+  uint64_t uncompressedBytes{0};
+  uint64_t numValues{0};
 
-  for (auto i = 0; i < type.getChildren().size(); ++i) {
-    if (const auto* leaf = findFirstPhysicalLeafImpl(type.parquetChildAt(i))) {
-      return leaf;
+  bool operator<(const PhysicalLeafCost& other) const {
+    // Minimize bytes fetched first, then bytes decompressed and levels decoded.
+    // Use the physical column ordinal as a stable final tie-breaker.
+    if (hasCompleteMetadata != other.hasCompleteMetadata) {
+      return hasCompleteMetadata;
     }
+    if (!hasCompleteMetadata) {
+      return type->column() < other.type->column();
+    }
+    return std::tuple{readBytes, uncompressedBytes, numValues, type->column()} <
+        std::tuple{
+            other.readBytes,
+            other.uncompressedBytes,
+            other.numValues,
+            other.type->column()};
   }
-  return nullptr;
+};
+
+PhysicalLeafCost physicalLeafCost(
+    const ParquetTypeWithId& type,
+    const FileMetaDataPtr& fileMetaData) {
+  PhysicalLeafCost cost{.type = &type};
+  // The source reader is fixed for the file, so aggregate its cost across all
+  // non-empty row groups. Empty groups are never read.
+  for (auto i = 0; i < fileMetaData.numRowGroups(); ++i) {
+    auto rowGroup = fileMetaData.rowGroup(i);
+    if (rowGroup.numRows() == 0) {
+      continue;
+    }
+    if (type.column() >= static_cast<uint32_t>(rowGroup.numColumns())) {
+      cost.hasCompleteMetadata = false;
+      return cost;
+    }
+    auto chunk = rowGroup.columnChunk(type.column());
+    if (!chunk.hasMetadata()) {
+      cost.hasCompleteMetadata = false;
+      return cost;
+    }
+    cost.readBytes += chunk.readSize();
+    cost.uncompressedBytes +=
+        static_cast<uint64_t>(chunk.totalUncompressedSize());
+    cost.numValues += static_cast<uint64_t>(chunk.numValues());
+  }
+  return cost;
 }
 
-const ParquetTypeWithId& findFirstPhysicalLeaf(const ParquetTypeWithId& type) {
-  const auto* leaf = findFirstPhysicalLeafImpl(type);
-  VELOX_CHECK_NOT_NULL(
-      leaf,
+std::optional<PhysicalLeafCost> findCheapestPhysicalLeafImpl(
+    const ParquetTypeWithId& type,
+    const FileMetaDataPtr& fileMetaData) {
+  if (type.getChildren().empty()) {
+    if (type.isLeaf()) {
+      return physicalLeafCost(type, fileMetaData);
+    }
+    return std::nullopt;
+  }
+
+  std::optional<PhysicalLeafCost> best;
+  for (auto i = 0; i < type.getChildren().size(); ++i) {
+    auto candidate =
+        findCheapestPhysicalLeafImpl(type.parquetChildAt(i), fileMetaData);
+    if (candidate && (!best || *candidate < *best)) {
+      best = std::move(candidate);
+    }
+  }
+  return best;
+}
+
+const ParquetTypeWithId& findCheapestPhysicalLeaf(
+    const ParquetTypeWithId& type,
+    const FileMetaDataPtr& fileMetaData) {
+  auto best = findCheapestPhysicalLeafImpl(type, fileMetaData);
+  VELOX_CHECK(
+      best.has_value(),
       "Cannot source repetition/definition levels for nested struct: {}",
       type.fullName());
-  return *leaf;
+  return *best->type;
 }
 
 LevelMode repDefSourceLevelMode(
@@ -152,12 +218,13 @@ void StructColumnReader::ensureSyntheticRepDefSource(
     return;
   }
 
-  const auto* leafType = &findFirstPhysicalLeaf(*type);
+  const auto* leafType =
+      &findCheapestPhysicalLeaf(*type, params.fileMetaData());
   std::shared_ptr<const dwio::common::TypeWithId> leafFileType(
       fileType_, leafType);
 
-  // Struct nullness can be derived from any leaf under the struct. Keep one
-  // physical leaf reader solely as the repetition/definition level source.
+  // Struct nullness can be derived from any leaf under the struct. Keep the
+  // least expensive physical leaf solely as the repetition/definition source.
   auto repDefSource = std::make_unique<SyntheticRepDefSource>();
   repDefSource->scanSpec = std::make_unique<common::ScanSpec>(leafType->name_);
   repDefSource->scanSpec->setProjectOut(false);
