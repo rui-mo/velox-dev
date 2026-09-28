@@ -76,6 +76,7 @@ add_executable(
   MaskTest.cpp
   MightContainTest.cpp
   MonotonicallyIncreasingIdTest.cpp
+  PmodSpecialFormTest.cpp
   RaiseErrorTest.cpp
   RandStrTest.cpp
   RandTest.cpp
