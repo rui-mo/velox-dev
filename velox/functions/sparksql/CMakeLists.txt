@@ -37,6 +37,7 @@ velox_add_library(
   DecimalArithmetic.cpp
   DecimalCeil.cpp
   DecimalCompare.cpp
+  ElementAt.cpp
   Elt.cpp
   FilterFunction.cpp
   FormatNumber.cpp
@@ -81,6 +82,7 @@ velox_add_library(
   DecimalArithmetic.h
   DecimalCeil.h
   DecimalUtil.h
+  ElementAt.h
   detail/DecimalArithmeticFunctions.h
   detail/DecimalCeilFunction.h
   Elt.h
