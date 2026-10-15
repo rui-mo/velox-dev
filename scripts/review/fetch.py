@@ -21,20 +21,62 @@ Usage: fetch.py <owner/repo> <pr-number>
 Examples:
     fetch.py facebookincubator/velox 17495
     fetch.py https://github.com/facebookincubator/velox/pull/17495
+
+Requires only Python's standard library. Set GH_TOKEN or GITHUB_TOKEN for
+private repositories or higher API rate limits.
 """
 
 import json
+import os
 import re
-import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 
-def run_gh(*args):
-    result = subprocess.run(["gh"] + list(args), capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"Error: {result.stderr.strip()}", file=sys.stderr)
-        return None
-    return result.stdout.strip()
+def request_github(path, accept="application/vnd.github+json"):
+    headers = {
+        "Accept": accept,
+        "User-Agent": "velox-pr-review",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    url = f"https://api.github.com/{path}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        try:
+            message = json.loads(error.read()).get("message", error.reason)
+        except (ValueError, UnicodeDecodeError):
+            message = error.reason
+        sys.exit(
+            f"Error: GitHub API request failed: {url}: HTTP {error.code}: {message}"
+        )
+    except (urllib.error.URLError, TimeoutError) as error:
+        sys.exit(f"Error: GitHub API request failed: {url}: {error}")
+
+
+def fetch_json(path):
+    raw = request_github(path)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as error:
+        sys.exit(f"Error: Invalid JSON from GitHub API: {path}: {error}")
+
+
+def fetch_pages(path):
+    items = []
+    page = 1
+    while True:
+        batch = fetch_json(f"{path}?per_page=100&page={page}")
+        items.extend(batch)
+        if len(batch) < 100:
+            return items
+        page += 1
 
 
 def parse_args():
@@ -52,54 +94,36 @@ def parse_args():
 
 
 def fetch_pr_metadata(repo, pr):
-    raw = run_gh(
-        "pr",
-        "view",
-        pr,
-        "--repo",
-        repo,
-        "--json",
-        "title,body,author,state,files,additions,deletions,baseRefName,headRefName",
-    )
-    if not raw:
-        return None
-    return json.loads(raw)
+    path = f"repos/{repo}/pulls/{pr}"
+    data = fetch_json(path)
+    files = fetch_pages(f"{path}/files")
+    return {
+        "title": data["title"],
+        "body": data["body"] or "",
+        "author": {"login": data["user"]["login"]},
+        "state": "MERGED" if data["merged"] else data["state"].upper(),
+        "headRefName": data["head"]["ref"],
+        "baseRefName": data["base"]["ref"],
+        "additions": data["additions"],
+        "deletions": data["deletions"],
+        "files": [{"path": file["filename"]} for file in files],
+    }
 
 
 def fetch_diff(repo, pr):
-    return run_gh("pr", "diff", pr, "--repo", repo)
+    return request_github(f"repos/{repo}/pulls/{pr}", "application/vnd.github.diff")
 
 
 def fetch_issue_comments(repo, pr):
-    raw = run_gh(
-        "api",
-        f"repos/{repo}/issues/{pr}/comments",
-        "--paginate",
-    )
-    if not raw:
-        return []
-    return json.loads(raw)
+    return fetch_pages(f"repos/{repo}/issues/{pr}/comments")
 
 
 def fetch_review_comments(repo, pr):
-    raw = run_gh(
-        "api",
-        f"repos/{repo}/pulls/{pr}/comments",
-        "--paginate",
-    )
-    if not raw:
-        return []
-    return json.loads(raw)
+    return fetch_pages(f"repos/{repo}/pulls/{pr}/comments")
 
 
 def fetch_reviews(repo, pr):
-    raw = run_gh(
-        "api",
-        f"repos/{repo}/pulls/{pr}/reviews",
-    )
-    if not raw:
-        return []
-    return json.loads(raw)
+    return fetch_pages(f"repos/{repo}/pulls/{pr}/reviews")
 
 
 def print_section(title, content):
@@ -113,8 +137,10 @@ def main():
     repo, pr = parse_args()
 
     metadata = fetch_pr_metadata(repo, pr)
-    if not metadata:
-        sys.exit(1)
+    diff = fetch_diff(repo, pr)
+    comments = fetch_issue_comments(repo, pr)
+    reviews = fetch_reviews(repo, pr)
+    inline = fetch_review_comments(repo, pr)
 
     print_section(
         f"PR #{pr}: {metadata['title']}",
@@ -126,13 +152,11 @@ def main():
         f"\n{metadata['body']}",
     )
 
-    diff = fetch_diff(repo, pr)
     if diff:
         print_section("Diff", diff)
 
     skip = {"netlify[bot]", "github-actions[bot]"}
 
-    comments = fetch_issue_comments(repo, pr)
     visible = [c for c in comments if c["user"]["login"] not in skip]
     if visible:
         lines = []
@@ -142,7 +166,6 @@ def main():
             lines.append("")
         print_section("Comments", "\n".join(lines))
 
-    reviews = fetch_reviews(repo, pr)
     visible_reviews = [r for r in reviews if r.get("body")]
     if visible_reviews:
         lines = []
@@ -154,11 +177,11 @@ def main():
             lines.append("")
         print_section("Reviews", "\n".join(lines))
 
-    inline = fetch_review_comments(repo, pr)
     if inline:
         lines = []
         for c in inline:
-            loc = f"{c['path']}:{c.get('line', c.get('original_line', '?'))}"
+            line = c.get("line") or c.get("original_line") or "?"
+            loc = f"{c['path']}:{line}"
             lines.append(f"--- {c['user']['login']} on {loc} ({c['created_at']}) ---")
             lines.append(c["body"])
             lines.append("")
