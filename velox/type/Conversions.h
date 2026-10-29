@@ -36,27 +36,35 @@ namespace facebook::velox::util {
 struct PrestoCastPolicy {
   static constexpr bool truncate = false;
   static constexpr bool legacyCast = false;
+  // Trims leading and trailing whitespace before casting strings to integral
+  // types. Applies only when 'truncate' is false.
+  static constexpr bool trimWhiteSpace = true;
   // Throws if we encounter unicode when converting to int
   // See issue : https://github.com/facebookincubator/velox/issues/10803
   // Remove when unicode support is added.
   static constexpr bool throwOnUnicode = true;
 };
 
+// Spark cast hooks trim strings before conversion, so Spark policies do not
+// trim again.
 struct SparkCastPolicy {
   static constexpr bool truncate = true;
   static constexpr bool legacyCast = false;
+  static constexpr bool trimWhiteSpace = false;
   static constexpr bool throwOnUnicode = false;
 };
 
 struct SparkTryCastPolicy {
   static constexpr bool truncate = false;
   static constexpr bool legacyCast = false;
+  static constexpr bool trimWhiteSpace = false;
   static constexpr bool throwOnUnicode = false;
 };
 
 struct LegacyCastPolicy {
   static constexpr bool truncate = false;
   static constexpr bool legacyCast = true;
+  static constexpr bool trimWhiteSpace = true;
   static constexpr bool throwOnUnicode = false;
 };
 
@@ -338,37 +346,19 @@ struct Converter<
   static Expected<T> tryCast(std::string_view v) {
     if constexpr (TPolicy::truncate) {
       return convertStringToInt(v);
-    } else if constexpr (std::is_same_v<TPolicy, SparkTryCastPolicy>) {
-      // Spark cast hooks have already applied Spark-compatible string trim.
-      return detail::callFollyTo<T>(v);
+    } else if constexpr (TPolicy::trimWhiteSpace) {
+      return detail::callFollyTo<T>(trimWhiteSpace(v.data(), v.size()));
     } else {
-      auto trimmed = trimWhiteSpace(v.data(), v.size());
-      return detail::callFollyTo<T>(trimmed);
+      return detail::callFollyTo<T>(v);
     }
   }
 
   static Expected<T> tryCast(const StringView& v) {
-    if constexpr (TPolicy::truncate) {
-      return convertStringToInt(std::string_view(v));
-    } else if constexpr (std::is_same_v<TPolicy, SparkTryCastPolicy>) {
-      // Spark cast hooks have already applied Spark-compatible string trim.
-      return detail::callFollyTo<T>(std::string_view(v));
-    } else {
-      auto trimmed = trimWhiteSpace(v.data(), v.size());
-      return detail::callFollyTo<T>(trimmed);
-    }
+    return tryCast(std::string_view(v));
   }
 
   static Expected<T> tryCast(const std::string& v) {
-    if constexpr (TPolicy::truncate) {
-      return convertStringToInt(v);
-    } else if constexpr (std::is_same_v<TPolicy, SparkTryCastPolicy>) {
-      // Spark cast hooks have already applied Spark-compatible string trim.
-      return detail::callFollyTo<T>(v);
-    } else {
-      auto trimmed = trimWhiteSpace(v.data(), v.length());
-      return detail::callFollyTo<T>(trimmed);
-    }
+    return tryCast(std::string_view(v));
   }
 
   static Expected<T> tryCast(const bool& v) {

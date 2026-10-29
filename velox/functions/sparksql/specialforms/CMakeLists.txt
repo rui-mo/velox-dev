@@ -33,7 +33,6 @@ velox_add_library(
   MakeDecimal.h
   SparkCastExpr.h
   SparkCastHooks.h
-  SparkCastStringTrim.h
 )
 
 velox_link_libraries(

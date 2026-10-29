@@ -105,6 +105,11 @@ int main(int argc, char** argv) {
       },
       nullptr,
       DECIMAL(38, 16));
+  auto integerStringInput = vectorMaker.flatVector<std::string>(
+      vectorSize, [](auto j) { return std::to_string(j); });
+  auto dateStringInput = vectorMaker.flatVector<std::string>(
+      vectorSize,
+      [](auto j) { return fmt::format("2024-05-{:02d}", 1 + j % 30); });
 
   auto timestampInput = vectorMaker.rowVector(
       {"timestamp", "timestamp_utc"},
@@ -129,12 +134,19 @@ int main(int argc, char** argv) {
       .addBenchmarkSet(
           setName,
           vectorMaker.rowVector(
-              {"decimal", "short_decimal", "small_decimal", "long_decimal"},
+              {"decimal",
+               "short_decimal",
+               "small_decimal",
+               "long_decimal",
+               "integer_string",
+               "date_string"},
               {
                   decimalInput,
                   shortDecimalInput,
                   smallDecimalInput,
                   longDecimalInput,
+                  integerStringInput,
+                  dateStringInput,
               }))
       .addExpression(
           "cast_decimal_to_inline_string", "cast (decimal as varchar)")
@@ -155,6 +167,9 @@ int main(int argc, char** argv) {
           "cast_long_decimal_as_float", "cast (long_decimal as float)")
       .addExpression(
           "cast_long_decimal_as_double", "cast (long_decimal as double)")
+      .addExpression("cast_string_as_int", "cast (integer_string as int)")
+      .addExpression("cast_string_as_bigint", "cast (integer_string as bigint)")
+      .addExpression("cast_string_as_date", "cast (date_string as date)")
       .withIterations(iterations)
       .disableTesting();
 

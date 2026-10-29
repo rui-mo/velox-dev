@@ -22,7 +22,6 @@
 #include "velox/common/base/VeloxException.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
 #include "velox/functions/sparksql/TimestampUtils.h"
-#include "velox/functions/sparksql/specialforms/SparkCastStringTrim.h"
 #include "velox/type/TimestampConversion.h"
 #include "velox/type/Type.h"
 #include "velox/type/tz/TimeZoneMap.h"
@@ -167,7 +166,8 @@ Expected<int32_t> SparkCastHooks::castStringToDate(
   //   "1970-01-01 123"
   //   "1970-01-01 (BC)"
   return util::fromDateString(
-      removeWhiteSpaces(dateString, *DATE()), util::ParseMode::kSparkCast);
+      trimForCast(dateString, exec::StringCastTarget::kDate),
+      util::ParseMode::kSparkCast);
 }
 
 Expected<int64_t> SparkCastHooks::castStringToTime(
@@ -192,10 +192,52 @@ Expected<double> SparkCastHooks::castStringToDouble(
   return util::Converter<TypeKind::DOUBLE>::tryCast(data);
 }
 
-StringView SparkCastHooks::removeWhiteSpaces(
+namespace {
+
+// Spark UTF8String.trimAll trims boundary bytes 0x00..0x20 and 0x7F.
+bool isUtf8StringTrimAllByte(char value) {
+  const auto byte = static_cast<uint8_t>(value);
+  return byte <= 0x20 || byte == 0x7F;
+}
+
+// Java String.trim trims boundary characters <= U+0020.
+bool isJavaStringTrimByte(char value) {
+  return static_cast<uint8_t>(value) <= 0x20;
+}
+
+template <typename TShouldTrim>
+StringView trimBytes(const StringView& view, TShouldTrim shouldTrim) {
+  const auto* data = view.data();
+  size_t start = 0;
+  size_t end = view.size();
+  while (start < end && shouldTrim(data[start])) {
+    ++start;
+  }
+  while (end > start && shouldTrim(data[end - 1])) {
+    --end;
+  }
+  return StringView(data + start, end - start);
+}
+
+} // namespace
+
+StringView SparkCastHooks::trimForCast(
     const StringView& view,
-    const Type& toType) const {
-  return trimStringForCast(view, toType);
+    exec::StringCastTarget target) const {
+  // Keep these target-specific rules in sync with Spark. See
+  // https://issues.apache.org/jira/browse/SPARK-59182.
+  switch (target) {
+    case exec::StringCastTarget::kFloatingPoint:
+    case exec::StringCastTarget::kDecimal:
+      return trimBytes(view, isJavaStringTrimByte);
+    case exec::StringCastTarget::kBoolean:
+    case exec::StringCastTarget::kIntegral:
+    case exec::StringCastTarget::kDate:
+    case exec::StringCastTarget::kTimestamp:
+    case exec::StringCastTarget::kTime:
+      return trimBytes(view, isUtf8StringTrimAllByte);
+  }
+  VELOX_UNREACHABLE();
 }
 
 void SparkCastHooks::castDateTimestampToGMT(

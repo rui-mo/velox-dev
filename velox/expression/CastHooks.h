@@ -30,10 +30,6 @@ namespace facebook::velox::tz {
 class TimeZone;
 }
 
-namespace facebook::velox {
-class Type;
-}
-
 namespace facebook::velox::exec {
 
 enum PolicyType {
@@ -44,6 +40,19 @@ enum PolicyType {
 };
 
 fmt::underlying_t<PolicyType> format_as(PolicyType f);
+
+/// Category of the target type of a cast from string. Callers resolve it once
+/// per vector so that hooks can trim by target type without inspecting the
+/// type on every row; telling a decimal from a BIGINT takes a dynamic_cast.
+enum class StringCastTarget {
+  kBoolean,
+  kIntegral,
+  kFloatingPoint,
+  kDecimal,
+  kDate,
+  kTimestamp,
+  kTime,
+};
 
 /// This class provides cast hooks to allow different behaviors of CastExpr and
 /// SparkCastExpr. The main purpose is to create customized cast implementation
@@ -107,17 +116,18 @@ class CastHooks {
       int64_t sessionStartTimeMs) const = 0;
 
   /// 'data' is guaranteed to be non-empty and has been processed by
-  /// removeWhiteSpaces.
+  /// trimForCast.
   virtual Expected<float> castStringToReal(const StringView& data) const = 0;
 
   /// 'data' is guaranteed to be non-empty and has been processed by
-  /// removeWhiteSpaces.
+  /// trimForCast.
   virtual Expected<double> castStringToDouble(const StringView& data) const = 0;
 
-  /// Trims leading and trailing whitespaces for string casts to 'toType'.
-  virtual StringView removeWhiteSpaces(
+  /// Trims leading and trailing characters of 'view' before casting it to a
+  /// type in 'target'. The set of trimmed characters may depend on 'target'.
+  virtual StringView trimForCast(
       const StringView& view,
-      const Type& toType) const = 0;
+      StringCastTarget target) const = 0;
 
   /// Returns the options to cast from timestamp to string.
   virtual const TimestampToStringOptions& timestampToStringOptions() const = 0;

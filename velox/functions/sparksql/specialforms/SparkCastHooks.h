@@ -44,8 +44,8 @@ class SparkCastHooks : public exec::CastHooks {
   Expected<std::optional<Timestamp>> castDoubleToTimestamp(
       double value) const override;
 
-  /// 1) Removes all leading and trailing UTF8 white-spaces before cast. 2) Uses
-  /// non-standard cast mode to cast from string to date.
+  /// 1) Trims leading and trailing bytes like Spark UTF8String.trimAll before
+  /// cast. 2) Uses non-standard cast mode to cast from string to date.
   Expected<int32_t> castStringToDate(
       const StringView& dateString) const override;
 
@@ -56,7 +56,7 @@ class SparkCastHooks : public exec::CastHooks {
   ///   - s is an optional second (0-59); omitted seconds default to zero
   ///   - SSSSSS is optional fractional seconds (up to 6 digits for
   ///   microseconds)
-  /// Expects timeString to be trimmed by CastExpr::removeWhiteSpaces.
+  /// Expects timeString to be trimmed by trimForCast.
   Expected<int64_t> castStringToTime(
       StringView timeString,
       const tz::TimeZone* timeZone,
@@ -70,8 +70,9 @@ class SparkCastHooks : public exec::CastHooks {
   // strings with different letter cases to double.
   Expected<double> castStringToDouble(const StringView& data) const override;
 
-  /// Matches Spark string cast trim semantics for casts to 'toType'.
-  StringView removeWhiteSpaces(const StringView& view, const Type& toType)
+  /// Trims like Java String.trim for floating-point and decimal targets, and
+  /// like Spark UTF8String.trimAll for all other targets.
+  StringView trimForCast(const StringView& view, exec::StringCastTarget target)
       const override;
 
   // Supports Spark boolean to timestamp cast.

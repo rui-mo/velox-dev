@@ -106,6 +106,26 @@ bool isSupportedFastUpcast(const TypePtr& fromType, const TypePtr& toType) {
   return false;
 }
 
+// Returns the string cast target of a fixed-width primitive kind. CastExpr
+// casts strings to DECIMAL, DATE, and TIME outside applyCastKernel, so the
+// kind alone determines the target there.
+template <TypeKind Kind>
+constexpr StringCastTarget stringCastTarget() {
+  if constexpr (Kind == TypeKind::BOOLEAN) {
+    return StringCastTarget::kBoolean;
+  } else if constexpr (Kind == TypeKind::REAL || Kind == TypeKind::DOUBLE) {
+    return StringCastTarget::kFloatingPoint;
+  } else if constexpr (Kind == TypeKind::TIMESTAMP) {
+    return StringCastTarget::kTimestamp;
+  } else {
+    static_assert(
+        Kind == TypeKind::TINYINT || Kind == TypeKind::SMALLINT ||
+        Kind == TypeKind::INTEGER || Kind == TypeKind::BIGINT ||
+        Kind == TypeKind::HUGEINT);
+    return StringCastTarget::kIntegral;
+  }
+}
+
 } // namespace
 
 template <typename Func>
@@ -234,7 +254,7 @@ void CastExpr::applyCastKernel(
           TypeTraits<ToKind>::isPrimitiveType &&
           TypeTraits<ToKind>::isFixedWidth) {
         inputRowValue =
-            hooks_->removeWhiteSpaces(inputRowValue, *result->type());
+            hooks_->trimForCast(inputRowValue, stringCastTarget<ToKind>());
         if (inputRowValue.size() == 0) {
           setError("Empty string");
           return;
@@ -411,7 +431,8 @@ void CastExpr::applyVarcharToDecimalCastKernel(
   rows.applyToSelected([&](auto row) {
     T decimalValue;
     const auto status = DecimalUtil::castFromString<T>(
-        hooks_->removeWhiteSpaces(sourceVector->valueAt(row), *toType),
+        hooks_->trimForCast(
+            sourceVector->valueAt(row), StringCastTarget::kDecimal),
         toPrecisionScale.first,
         toPrecisionScale.second,
         decimalValue);

@@ -196,9 +196,9 @@ Expected<double> PrestoCastHooks::castStringToDouble(
   return doCastToFloatingPoint<double>(data, lenientInfNan_);
 }
 
-StringView PrestoCastHooks::removeWhiteSpaces(
+StringView PrestoCastHooks::trimForCast(
     const StringView& view,
-    const Type& /*toType*/) const {
+    StringCastTarget /*target*/) const {
   return view;
 }
 

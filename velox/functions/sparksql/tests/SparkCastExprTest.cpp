@@ -843,12 +843,19 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
         makeNullableFlatVector<Timestamp>(
             {Timestamp(0, 0), Timestamp(28'800, 0)}, TIMESTAMP_UTC()));
 
-    // Leading and trailing whitespace is stripped before parsing.
+    // Leading and trailing bytes 0x00 through 0x20 and 0x7F are trimmed before
+    // parsing.
     testCast(
         makeNullableFlatVector<std::string>(
-            {"\n\f\r\t\n\x1f 2000-01-01 12:21:56\v\x1c\x1d\x1e"}, VARCHAR()),
+            {"\n\f\r\t\n\x1f 2000-01-01 12:21:56\v\x1c\x1d\x1e",
+             std::string(
+                 "\0"
+                 "2000-01-01 12:21:56\x7F",
+                 21)},
+            VARCHAR()),
         makeNullableFlatVector<Timestamp>(
-            {Timestamp(946'729'316, 0)}, TIMESTAMP_UTC()));
+            {Timestamp(946'729'316, 0), Timestamp(946'729'316, 0)},
+            TIMESTAMP_UTC()));
 
     // Outer whitespace trimming: trailing/leading spaces, tabs, and newlines
     // around a date-only string are trimmed by CastExpr before the parser
@@ -924,6 +931,15 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
         {16512},
         VARCHAR(),
         DATE());
+    testCast<std::string, int32_t>(
+        "date",
+        {std::string(
+            "\0"
+            "2015-03-18\x7F",
+            12)},
+        {16512},
+        VARCHAR(),
+        DATE());
     testCast<std::string, float>(
         "real", {"\n\f\r\t\n\u001F 123.0\u000B\u001C\u001D\u001E"}, {123.0});
     testCast<std::string, float>(
@@ -945,6 +961,13 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
     testCast<std::string, Timestamp>(
         "timestamp",
         {"\n\f\r\t\n\u001F 2000-01-01 12:21:56\u000B\u001C\u001D\u001E"},
+        {Timestamp(946729316, 0)});
+    testCast<std::string, Timestamp>(
+        "timestamp",
+        {std::string(
+            "\0"
+            "2000-01-01 12:21:56\x7F",
+            21)},
         {Timestamp(946729316, 0)});
     testCast<std::string, bool>(
         "boolean", {std::string("\0true\x7F", 6)}, {true});
@@ -1990,6 +2013,13 @@ TEST_F(SparkCastExprTest, stringCastNoTrimInvalidAcrossModes) {
        trailingDel("1.23"),
        leadingEnQuad("1.23"),
        trailingEnQuad("1.23")});
+  testStringCastNoTrimInvalidAcrossModes<int128_t>(
+      "decimal(38, 0)",
+      DECIMAL(38, 0),
+      {leadingDel("1.23"),
+       trailingDel("1.23"),
+       leadingEnQuad("1.23"),
+       trailingEnQuad("1.23")});
 }
 
 // ============================================================================
@@ -2310,12 +2340,21 @@ TEST_F(SparkCastExprTestAnsiOn, stringToDate) {
 
 TEST_F(SparkCastExprTestAnsiOn, stringToTime) {
   auto validInput = makeRowVector({makeFlatVector<std::string>(
-      {"12:03:17.123456", " 12:30:45 ", "12:30"})});
+      {"12:03:17.123456",
+       " 12:30:45 ",
+       std::string(
+           "\0"
+           "12:30:45\x7F",
+           10),
+       "12:30"})});
   auto validResult = evaluateCast(VARCHAR(), TIME_MICRO_UTC(), validInput);
   ASSERT_TRUE(validResult->type()->equivalent(*TIME_MICRO_UTC()));
   assertEqualVectors(
       makeFlatVector<int64_t>(
-          {43'397'123'456LL, 45'045'000'000LL, 45'000'000'000LL},
+          {43'397'123'456LL,
+           45'045'000'000LL,
+           45'045'000'000LL,
+           45'000'000'000LL},
           TIME_MICRO_UTC()),
       validResult);
 
@@ -2760,6 +2799,10 @@ TEST_F(SparkCastExprTestAnsiOff, stringToTime) {
        "12:03:17.123",
        "12:03:17.123456",
        " 12:30:45 ",
+       std::string(
+           "\0"
+           "12:30:45\x7F",
+           10),
        "24:00:00",
        "12:60:00",
        "12:30:60",
@@ -2771,6 +2814,7 @@ TEST_F(SparkCastExprTestAnsiOff, stringToTime) {
        5'400'000'000LL,
        43'397'123'000LL,
        43'397'123'456LL,
+       45'045'000'000LL,
        45'045'000'000LL,
        std::nullopt,
        std::nullopt,
@@ -2814,11 +2858,6 @@ TEST_F(SparkCastExprTestAnsiOff, primitiveInvalidCornerCase) {
         "bigint",
         {"abc", "+", "-", "  "},
         {std::nullopt, std::nullopt, std::nullopt, std::nullopt});
-    const auto enQuad = std::string("\xE2\x80\x80", 3);
-    testCast<std::string, int32_t>(
-        "integer",
-        {enQuad + "123", std::string("123") + enQuad},
-        {std::nullopt, std::nullopt});
 
     // Overflow cases.
     testCast<std::string, int8_t>(
@@ -3508,21 +3547,8 @@ TEST_F(SparkCastExprTestAnsiOff, varcharToDecimal) {
 
   // Interior whitespace stays invalid; leading/trailing cases are valid and
   // covered in testVarcharToDecimal().
-  const auto enQuad = std::string("\xE2\x80\x80", 3);
   testCast<std::string, int128_t>(
       "decimal(38, 0)", {"1. 23"}, {std::nullopt}, VARCHAR(), DECIMAL(38, 0));
-  testCast<std::string, int128_t>(
-      "decimal(38, 0)",
-      {std::string("1.23\x7F", 5)},
-      {std::nullopt},
-      VARCHAR(),
-      DECIMAL(38, 0));
-  testCast<std::string, int128_t>(
-      "decimal(38, 0)",
-      {enQuad + "1.23"},
-      {std::nullopt},
-      VARCHAR(),
-      DECIMAL(38, 0));
   testCast<std::string, int64_t>(
       "decimal(12, 2)", {"-3E+ 2"}, {std::nullopt}, VARCHAR(), DECIMAL(12, 2));
 
@@ -3737,18 +3763,6 @@ TEST_F(SparkCastExprTestAnsiOff, stringToRealDoubleInvalidReturnsNull) {
   // Invalid format strings return NULL in legacy (ANSI off) mode. Empty and
   // whitespace-only strings (trimmed to empty) return NULL as well.
   for (const auto& value : invalidStringToRealDoubleInputs()) {
-    SCOPED_TRACE(value);
-    testCast<std::string, float>("real", {value}, {std::nullopt});
-    testCast<std::string, double>("double", {value}, {std::nullopt});
-  }
-  {
-    const std::string value = std::string("1.5\x7F", 4);
-    SCOPED_TRACE(value);
-    testCast<std::string, float>("real", {value}, {std::nullopt});
-    testCast<std::string, double>("double", {value}, {std::nullopt});
-  }
-  {
-    const auto value = std::string("\xE2\x80\x80", 3) + "1.5";
     SCOPED_TRACE(value);
     testCast<std::string, float>("real", {value}, {std::nullopt});
     testCast<std::string, double>("double", {value}, {std::nullopt});
