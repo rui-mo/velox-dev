@@ -1,3 +1,13 @@
 spark.master local[1]
 spark.driver.cores 1
 spark.sql.shuffle.partitions 1
+# Velox evaluates Spark functions with ANSI mode disabled by default
+# ('spark.ansi_enabled'), while Spark 4 enables ANSI mode by default.
+spark.sql.ansi.enabled false
+# Must match the session timezone used by the Velox fuzzers.
+spark.sql.session.timeZone America/Los_Angeles
+# Parquet files written by Velox carry no Spark version metadata. Read
+# ancient dates and timestamps as-is instead of failing.
+spark.sql.parquet.datetimeRebaseModeInRead CORRECTED
+spark.sql.parquet.int96RebaseModeInRead CORRECTED
+spark.ui.enabled false

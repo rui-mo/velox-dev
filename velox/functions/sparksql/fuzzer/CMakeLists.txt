@@ -60,7 +60,7 @@ endforeach()
 add_custom_command(
   OUTPUT ${PROTO_OUTPUT_FILES}
   COMMAND protobuf::protoc ${PROTO_PATH_ARGS} --cpp_out ${PROJECT_BINARY_DIR} ${PROTO_FILES_FULL}
-  DEPENDS protobuf::protoc
+  DEPENDS protobuf::protoc ${PROTO_FILES_FULL}
   COMMENT "Running PROTO compiler"
   VERBATIM
 )
@@ -71,7 +71,7 @@ add_custom_command(
   COMMAND
     protobuf::protoc ${PROTO_PATH_ARGS} --grpc_out=${PROJECT_BINARY_DIR}
     --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin> ${PROTO_FILES_FULL}
-  DEPENDS protobuf::protoc
+  DEPENDS protobuf::protoc ${PROTO_FILES_FULL}
   COMMENT "Running gRPC C++ protocol buffer compiler"
   VERBATIM
 )
