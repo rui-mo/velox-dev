@@ -49,10 +49,11 @@ bundled in the Spark distribution, so no extra jar is needed.
 
     "$SPARK_HOME"/sbin/start-connect-server.sh
 
-Spark should be configured with the settings in
-``scripts/ci/spark/conf/spark-defaults.conf.example``, e.g. ANSI mode disabled and the
-session timezone set to ``America/Los_Angeles``, to match the configuration used by
-the Velox fuzzers. If Spark Connect server is started successfully, you can see log as
+The Spark Query Runner sets the Spark SQL configs that match the configuration used by
+the Velox fuzzers for its session, e.g. ANSI mode disabled and the session timezone set
+to ``America/Los_Angeles``. The settings in
+``scripts/ci/spark/conf/spark-defaults.conf.example`` apply the same configs to the
+whole server. If Spark Connect server is started successfully, you can see log as
 below. The server will be started at `localhost:15002`.
 
 .. code-block::
@@ -69,6 +70,26 @@ the image and run below command to start Spark connect server in it.
 
 You can then provide the Spark Query Runner with the SQL query and the data to run the
 query on. The tool will execute the query on Spark and return results as Velox data format.
+
+Error Handling
+--------------
+
+Spark errors are classified by their Java exception and SQLSTATE. Analysis errors
+(``AnalysisException``, including legacy errors that have no SQLSTATE, and SQLSTATE
+class 42), unsupported features (class 0A), resource limit errors (classes 53 and 54),
+Spark internal errors (class XX) and fatal JVM errors, e.g. ``OutOfMemoryError``, mean
+Spark cannot run the query, so the query is reported as not supported by the reference
+DB and the results are not verified. Other errors, e.g. division by zero with ANSI mode
+enabled, are reported as a reference query failure. A syntax error means the SQL
+generated from the Velox plan is invalid and fails the test. A stopped SparkContext
+fails the test as well because all following queries would fail. A query that runs
+longer than the timeout, 5 minutes by default, is interrupted and reported as not
+supported. Each failed query is logged with the ``Spark query`` prefix.
+
+In local mode, a task that runs out of memory kills the whole Spark Connect server.
+Running Spark in local-cluster mode, e.g. with ``spark.master local-cluster[1,4,3072]``
+and ``spark.executor.memory 2g``, runs the tasks in a separate executor JVM, which is
+relaunched after such a failure.
 
 Currently to use Spark as reference DB is only supported in aggregate fuzzer test, in which
 the results from Velox and Spark are compared to check for any differences. If the results

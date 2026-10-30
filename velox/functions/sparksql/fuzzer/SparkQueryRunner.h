@@ -15,6 +15,9 @@
  */
 #pragma once
 
+#include <chrono>
+#include <unordered_map>
+
 #include "grpc++/channel.h" // @manual
 #include "grpc++/client_context.h" // @manual
 #include "grpc++/create_channel.h" // @manual
@@ -30,28 +33,47 @@ namespace facebook::velox::functions::sparksql::fuzzer {
 using facebook::velox::fuzzer::DataSpec;
 
 /// Query runner that uses Spark as a reference database. It converts Velox
-/// query plan to Spark SQL and executes it in Spark. The results are returned
-/// as Velox compatible format.
+/// query plan to Spark SQL and executes it in Spark through Spark Connect. The
+/// results are returned as Velox compatible format.
+///
+/// Spark errors are classified by Java exception and SQLSTATE. Analysis errors
+/// (SQLSTATE class 42), feature not supported errors (class 0A), resource
+/// limit errors (classes 53 and 54), Spark internal errors (class XX) and fatal
+/// JVM errors such as OutOfMemoryError are reported as
+/// kReferenceQueryUnsupported because they mean that Spark cannot run the
+/// query, not that the query fails on the data. Other errors are runtime
+/// errors and are reported as kReferenceQueryFail. A Spark parse error means
+/// the generated SQL is invalid and throws, as does a stopped SparkContext.
+/// Each error is logged with the 'Spark query' prefix to help with triaging
+/// fuzzer runs.
 class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
  public:
+  static constexpr std::chrono::seconds kDefaultQueryTimeout{300};
+
   /// @param coordinatorUri Spark connect server endpoint, e.g. localhost:15002.
+  /// @param queryTimeout Maximum time a query is allowed to run. A query that
+  /// exceeds it is interrupted and reported as kReferenceQueryUnsupported.
+  /// @param sessionConfigs Spark SQL configs to set for the session before
+  /// running the first query. These override 'defaultSessionConfigs()'.
   SparkQueryRunner(
       memory::MemoryPool* pool,
       const std::string& coordinatorUri,
       const std::string& userId,
-      const std::string& userName)
-      : ReferenceQueryRunner(pool),
-        userId_(userId),
-        userName_(userName),
-        sessionId_(generateUUID()),
-        stub_(
-            spark::connect::SparkConnectService::NewStub(
-                grpc::CreateChannel(
-                    coordinatorUri,
-                    grpc::InsecureChannelCredentials()))) {
-    pool_ = aggregatePool()->addLeafChild("leaf");
-    copyPool_ = aggregatePool()->addLeafChild("copy");
-  };
+      const std::string& userName,
+      std::chrono::seconds queryTimeout = kDefaultQueryTimeout,
+      const std::unordered_map<std::string, std::string>& sessionConfigs = {});
+
+  ~SparkQueryRunner() override;
+
+  /// Spark SQL configs that make Spark match the default behavior of Velox
+  /// Spark functions: ANSI mode off and America/Los_Angeles session time zone.
+  static const std::unordered_map<std::string, std::string>&
+  defaultSessionConfigs();
+
+  /// Returns how a Spark query that failed with 'status' should be reported.
+  /// Throws if it is a parse error or the Spark Connect server is not usable.
+  static exec::test::ReferenceQueryErrorCode classifyError(
+      const grpc::Status& status);
 
   RunnerType runnerType() const override {
     return RunnerType::kSparkQueryRunner;
@@ -61,6 +83,10 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
 
   const std::unordered_map<std::string, DataSpec>&
   aggregationFunctionDataSpecs() const override;
+
+  /// Returns false if the signature uses types without a Spark equivalent,
+  /// e.g. UNKNOWN, TIME, HUGEINT or INTERVAL DAY TO SECOND.
+  bool isSupported(const exec::FunctionSignature& signature) override;
 
   /// Converts Velox query plan to Spark SQL. Supports Values -> Aggregation.
   /// Values node is converted into reading from 'tmp' table.
@@ -85,7 +111,7 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   executeAndReturnVector(const core::PlanNodePtr& plan) override;
 
   /// Executes Spark SQL query and returns the results. Tables referenced by
-  /// the query must already exist.
+  /// the query must already exist. Throws if the query fails.
   std::vector<velox::RowVectorPtr> execute(const std::string& sql) override;
 
   bool supportsVeloxVectorResults() const override {
@@ -95,9 +121,28 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
  private:
   using ReferenceQueryRunner::toSql;
 
+  struct QueryResult {
+    std::vector<velox::RowVectorPtr> data;
+    // Empty if the query succeeded.
+    std::optional<exec::test::ReferenceQueryErrorCode> errorCode;
+    std::string errorMessage;
+  };
+
+  // Executes 'sql' and returns the results or the classified error. Throws if
+  // the Spark Connect server cannot be reached.
+  QueryResult executeQuery(const std::string& sql);
+
+  // Sets the session configs on the first call.
+  void ensureSessionConfigured();
+
+  // Interrupts all running operations of the session.
+  void interruptSession();
+
+  spark::connect::UserContext userContext() const;
+
   // Generates a random UUID string for Spark. It must be of the format
   // '00112233-4455-6677-8899-aabbccddeeff'.
-  std::string generateUUID();
+  static std::string generateUUID();
 
   velox::memory::MemoryPool* pool() {
     return pool_.get();
@@ -107,10 +152,12 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   // them into Velox RowVectors.
   std::vector<velox::RowVectorPtr> readArrowData(const std::string& data);
 
-  google::protobuf::Arena arena_;
   const std::string userId_;
   const std::string userName_;
   const std::string sessionId_;
+  const std::chrono::seconds queryTimeout_;
+  std::unordered_map<std::string, std::string> sessionConfigs_;
+  bool sessionConfigured_{false};
   // Used to make gRPC calls to the SparkConnectService.
   std::unique_ptr<spark::connect::SparkConnectService::Stub> stub_;
   std::shared_ptr<velox::memory::MemoryPool> pool_;

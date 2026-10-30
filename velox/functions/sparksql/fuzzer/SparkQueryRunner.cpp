@@ -13,8 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <cctype>
 #include <memory>
+#include <numeric>
 #include <string>
+#include <string_view>
+#include <unordered_set>
+
+#include <boost/algorithm/string.hpp>
+#include <google/protobuf/unknown_field_set.h>
 
 #include "velox/functions/sparksql/fuzzer/SparkQueryRunner.h"
 
@@ -27,7 +34,6 @@
 #include "grpc/grpc.h" // @manual
 #include "velox/common/base/Fs.h"
 #include "velox/common/testutil/TempFilePath.h"
-#include "velox/dwio/common/Arena.h"
 #include "velox/dwio/common/WriterFactory.h"
 #include "velox/dwio/parquet/writer/Writer.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
@@ -43,9 +49,65 @@ using namespace spark::connect;
 namespace facebook::velox::functions::sparksql::fuzzer {
 using namespace facebook::velox::common::testutil;
 
-using dwio::common::ArenaCreate;
-
 namespace {
+
+// Returns 'vector' with the children of null rows set to null recursively.
+// Velox leaves them undefined, e.g. uninitialized after flattening a
+// dictionary vector with nulls, but they are converted when exported to Arrow,
+// which fails for timestamps that cannot be converted to microseconds.
+// 'vector' must be flattened.
+VectorPtr setNullsOfChildren(const VectorPtr& vector) {
+  auto* pool = vector->pool();
+  switch (vector->encoding()) {
+    case VectorEncoding::Simple::ROW: {
+      auto* row = vector->asUnchecked<RowVector>();
+      BufferPtr indices;
+      if (row->mayHaveNulls()) {
+        indices = allocateIndices(row->size(), pool);
+        auto* rawIndices = indices->asMutable<vector_size_t>();
+        std::iota(rawIndices, rawIndices + row->size(), 0);
+      }
+      std::vector<VectorPtr> children;
+      children.reserve(row->childrenSize());
+      for (const auto& child : row->children()) {
+        VectorPtr newChild = child;
+        if (indices) {
+          newChild = BaseVector::wrapInDictionary(
+              row->nulls(), indices, row->size(), child);
+          BaseVector::flattenVector(newChild);
+        }
+        children.push_back(setNullsOfChildren(newChild));
+      }
+      return std::make_shared<RowVector>(
+          pool, row->type(), row->nulls(), row->size(), std::move(children));
+    }
+    case VectorEncoding::Simple::ARRAY: {
+      auto* array = vector->asUnchecked<ArrayVector>();
+      return std::make_shared<ArrayVector>(
+          pool,
+          array->type(),
+          array->nulls(),
+          array->size(),
+          array->offsets(),
+          array->sizes(),
+          setNullsOfChildren(array->elements()));
+    }
+    case VectorEncoding::Simple::MAP: {
+      auto* map = vector->asUnchecked<MapVector>();
+      return std::make_shared<MapVector>(
+          pool,
+          map->type(),
+          map->nulls(),
+          map->size(),
+          map->offsets(),
+          map->sizes(),
+          setNullsOfChildren(map->mapKeys()),
+          setNullsOfChildren(map->mapValues()));
+    }
+    default:
+      return vector;
+  }
+}
 
 void writeToFile(
     const std::string& path,
@@ -60,6 +122,10 @@ void writeToFile(
   // Parquet.
   auto parquetOptions = std::make_shared<parquet::ParquetWriterOptions>();
   parquetOptions->parquetWriteTimestampUnit = TimestampPrecision::kMicroseconds;
+  // Velox timestamps are relative to the UTC epoch like Spark TIMESTAMP values.
+  // Without a time zone, they are marked as not adjusted to UTC and Spark reads
+  // them as TIMESTAMP_NTZ.
+  parquetOptions->parquetWriteTimestampTimeZone = "UTC";
   options->formatSpecificOptions = parquetOptions;
 
   auto writeFile = std::make_unique<LocalWriteFile>(path, true, false);
@@ -75,12 +141,274 @@ void writeToFile(
     // https://github.com/facebookincubator/velox/issues/10397
     VectorPtr flattened = vector;
     BaseVector::flattenVector(flattened);
-    writer->write(flattened);
+    writer->write(setNullsOfChildren(flattened));
   }
   writer->close();
 }
 
+// Returns the length-delimited fields with field number 'number' in a
+// serialized protobuf message.
+std::vector<std::string> getLengthDelimitedFields(
+    const std::string& message,
+    int number) {
+  google::protobuf::UnknownFieldSet fields;
+  if (!fields.ParseFromString(message)) {
+    return {};
+  }
+  std::vector<std::string> values;
+  for (auto i = 0; i < fields.field_count(); ++i) {
+    const auto& field = fields.field(i);
+    if (field.number() == number &&
+        field.type() == google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED) {
+      values.push_back(field.length_delimited());
+    }
+  }
+  return values;
+}
+
+// Details of an error reported by Spark Connect.
+struct SparkError {
+  // JSON list with the names of the Java exception class and its superclasses.
+  std::string exceptionClasses;
+  // Name of the Java exception class.
+  std::string exceptionClass;
+  // Error condition, e.g. DIVIDE_BY_ZERO. Empty for legacy errors.
+  std::string condition;
+  std::string sqlState;
+};
+
+// Returns the condition at the start of 'message', which looks like
+// '[<condition>] <description>', or an empty string if there is none.
+std::string extractCondition(std::string_view message) {
+  const auto begin = message.find_first_not_of(" \t\r\n");
+  if (begin == std::string_view::npos || message[begin] != '[') {
+    return "";
+  }
+  const auto end = message.find(']', begin);
+  if (end == std::string_view::npos || end == begin + 1) {
+    return "";
+  }
+  const auto condition = message.substr(begin + 1, end - begin - 1);
+  for (const unsigned char c : condition) {
+    if (!std::isupper(c) && !std::isdigit(c) && c != '_' && c != '.') {
+      return "";
+    }
+  }
+  return std::string(condition);
+}
+
+// Returns the details of a failed Spark query. Spark Connect reports them in
+// the google.rpc.ErrorInfo in the status details. The details are decoded from
+// the wire format since the google.rpc protos are not compiled:
+// google.rpc.Status has the details as google.protobuf.Any in field 3, Any has
+// the type URL in field 1 and the value in field 2, ErrorInfo has the
+// exception class name in field 1 and metadata entries in field 3, and each
+// entry has a key in field 1 and a value in field 2. The condition and SQLSTATE
+// fall back to the status message, which looks like '[<condition>] ...
+// SQLSTATE: <state>' but might be truncated.
+SparkError extractSparkError(const grpc::Status& status) {
+  SparkError error;
+  for (const auto& detail :
+       getLengthDelimitedFields(status.error_details(), 3)) {
+    const auto typeUrls = getLengthDelimitedFields(detail, 1);
+    if (typeUrls.size() != 1 ||
+        typeUrls[0] != "type.googleapis.com/google.rpc.ErrorInfo") {
+      continue;
+    }
+    for (const auto& errorInfo : getLengthDelimitedFields(detail, 2)) {
+      const auto reasons = getLengthDelimitedFields(errorInfo, 1);
+      if (reasons.size() == 1) {
+        error.exceptionClass = reasons[0];
+      }
+      for (const auto& entry : getLengthDelimitedFields(errorInfo, 3)) {
+        const auto keys = getLengthDelimitedFields(entry, 1);
+        const auto values = getLengthDelimitedFields(entry, 2);
+        if (keys.size() != 1 || values.size() != 1) {
+          continue;
+        }
+        if (keys[0] == "classes") {
+          error.exceptionClasses = values[0];
+        } else if (keys[0] == "errorClass") {
+          error.condition = values[0];
+        } else if (keys[0] == "sqlState") {
+          error.sqlState = values[0];
+        }
+      }
+    }
+  }
+
+  const auto& message = status.error_message();
+  if (error.condition.empty()) {
+    error.condition = extractCondition(message);
+  }
+  if (error.sqlState.empty()) {
+    static constexpr std::string_view kSqlStatePrefix = "SQLSTATE: ";
+    static constexpr size_t kSqlStateLength = 5;
+    const auto pos = message.find(kSqlStatePrefix);
+    if (pos != std::string::npos &&
+        pos + kSqlStatePrefix.size() + kSqlStateLength <= message.size()) {
+      error.sqlState =
+          message.substr(pos + kSqlStatePrefix.size(), kSqlStateLength);
+    }
+  }
+  return error;
+}
+
+// Returns true if 'name' is a type name in function signatures that has a
+// Spark equivalent.
+bool isSupportedTypeName(const std::string& name) {
+  static const std::unordered_set<std::string> kTypeNames{
+      "boolean",
+      "tinyint",
+      "smallint",
+      "integer",
+      "bigint",
+      "real",
+      "double",
+      "varchar",
+      "varbinary",
+      "timestamp",
+      "date",
+      "decimal",
+      "array",
+      "map",
+      "row",
+      "function",
+      "interval year to month",
+      "any",
+  };
+  return kTypeNames.contains(boost::algorithm::to_lower_copy(name));
+}
+
+bool isSupportedType(
+    const exec::TypeSignature& type,
+    const std::unordered_set<std::string>& variables) {
+  if (!variables.contains(type.baseName()) &&
+      !isSupportedTypeName(type.baseName())) {
+    return false;
+  }
+  for (const auto& parameter : type.parameters()) {
+    if (!isSupportedType(parameter, variables)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
+
+SparkQueryRunner::SparkQueryRunner(
+    memory::MemoryPool* pool,
+    const std::string& coordinatorUri,
+    const std::string& userId,
+    const std::string& userName,
+    std::chrono::seconds queryTimeout,
+    const std::unordered_map<std::string, std::string>& sessionConfigs)
+    : ReferenceQueryRunner(pool),
+      userId_(userId),
+      userName_(userName),
+      sessionId_(generateUUID()),
+      queryTimeout_(queryTimeout),
+      sessionConfigs_(defaultSessionConfigs()) {
+  for (const auto& [key, value] : sessionConfigs) {
+    sessionConfigs_[key] = value;
+  }
+  grpc::ChannelArguments channelArguments;
+  // Query results may exceed the default limit of 4MB.
+  channelArguments.SetMaxReceiveMessageSize(-1);
+  // Error messages and details are sent in trailing metadata, which may exceed
+  // the default limit of 8KB.
+  channelArguments.SetInt(GRPC_ARG_MAX_METADATA_SIZE, 1 << 20);
+  stub_ = SparkConnectService::NewStub(
+      grpc::CreateCustomChannel(
+          coordinatorUri,
+          grpc::InsecureChannelCredentials(),
+          channelArguments));
+  pool_ = aggregatePool()->addLeafChild("leaf");
+  copyPool_ = aggregatePool()->addLeafChild("copy");
+}
+
+SparkQueryRunner::~SparkQueryRunner() {
+  if (!sessionConfigured_) {
+    return;
+  }
+  // Release the server-side session to free its resources.
+  ReleaseSessionRequest request;
+  request.set_session_id(sessionId_);
+  *request.mutable_user_context() = userContext();
+  ReleaseSessionResponse response;
+  grpc::ClientContext context;
+  context.set_deadline(
+      std::chrono::system_clock::now() + std::chrono::seconds(10));
+  const auto status = stub_->ReleaseSession(&context, request, &response);
+  if (!status.ok()) {
+    LOG(WARNING) << "Failed to release Spark session: "
+                 << status.error_message() << ". Session: " << sessionId_;
+  }
+}
+
+// static
+const std::unordered_map<std::string, std::string>&
+SparkQueryRunner::defaultSessionConfigs() {
+  static const std::unordered_map<std::string, std::string> kConfigs{
+      {"spark.sql.ansi.enabled", "false"},
+      {"spark.sql.session.timeZone", "America/Los_Angeles"},
+      {"spark.sql.legacy.timeParserPolicy", "CORRECTED"},
+      // Velox writes dates and timestamps in the proleptic Gregorian calendar.
+      {"spark.sql.parquet.datetimeRebaseModeInRead", "CORRECTED"},
+      {"spark.sql.parquet.int96RebaseModeInRead", "CORRECTED"},
+  };
+  return kConfigs;
+}
+
+// static
+exec::test::ReferenceQueryErrorCode SparkQueryRunner::classifyError(
+    const grpc::Status& status) {
+  const auto& errorMessage = status.error_message();
+  const auto error = extractSparkError(status);
+  if (error.condition == "PARSE_SYNTAX_ERROR" ||
+      error.exceptionClass ==
+          "org.apache.spark.sql.catalyst.parser.ParseException") {
+    // The SQL generated from the plan is invalid.
+    VELOX_FAIL("Spark failed to parse the query: {}", errorMessage);
+  }
+  if (errorMessage.find("stopped SparkContext") != std::string::npos) {
+    VELOX_FAIL("Spark Connect server is not usable: {}", errorMessage);
+  }
+
+  static constexpr auto kUnsupported =
+      exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported;
+  // Fatal JVM errors in the Spark driver, e.g. OutOfMemoryError, are reported
+  // without details.
+  if (status.error_code() == grpc::StatusCode::UNKNOWN &&
+      status.error_details().empty()) {
+    return kUnsupported;
+  }
+  // Fatal JVM errors in Spark executors, which make the executors exit.
+  for (const auto* fatalError :
+       {"java.lang.OutOfMemoryError",
+        "java.lang.StackOverflowError",
+        "ExecutorLostFailure"}) {
+    if (errorMessage.find(fatalError) != std::string::npos) {
+      return kUnsupported;
+    }
+  }
+  // Analysis errors mean that Spark cannot run the query, e.g. because of an
+  // unknown function or unexpected argument types, not that the query fails on
+  // the data. Legacy analysis errors have no SQLSTATE.
+  if (error.exceptionClasses.find(
+          "\"org.apache.spark.sql.AnalysisException\"") != std::string::npos) {
+    return kUnsupported;
+  }
+  // Syntax errors and access rule violations (42), unsupported features (0A),
+  // resource limits (53, 54) and internal errors (XX).
+  static const std::unordered_set<std::string> kUnsupportedClasses{
+      "42", "0A", "53", "54", "XX"};
+  if (kUnsupportedClasses.contains(error.sqlState.substr(0, 2))) {
+    return kUnsupported;
+  }
+  return exec::test::ReferenceQueryErrorCode::kReferenceQueryFail;
+}
 
 const std::vector<TypePtr>& SparkQueryRunner::supportedScalarTypes() const {
   static const std::vector<TypePtr> kScalarTypes{
@@ -107,11 +435,36 @@ SparkQueryRunner::aggregationFunctionDataSpecs() const {
   return kAggregationFunctionDataSpecs;
 }
 
+bool SparkQueryRunner::isSupported(const exec::FunctionSignature& signature) {
+  std::unordered_set<std::string> variables;
+  for (const auto& [name, _] : signature.variables()) {
+    variables.insert(name);
+  }
+  if (!isSupportedType(signature.returnType(), variables)) {
+    return false;
+  }
+  for (const auto& argument : signature.argumentTypes()) {
+    if (!isSupportedType(argument, variables)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::optional<std::string> SparkQueryRunner::toSql(
     const velox::core::PlanNodePtr& plan) {
   exec::test::PrestoSqlPlanNodeVisitorContext context;
   SparkQueryRunnerToSqlPlanNodeVisitor visitor;
-  plan->accept(visitor, context);
+  try {
+    plan->accept(visitor, context);
+  } catch (const VeloxException& e) {
+    if (e.errorCode() != error_code::kUnsupported &&
+        e.errorCode() != error_code::kNotImplemented) {
+      throw;
+    }
+    LOG(INFO) << "Spark query not supported: " << e.message();
+    return std::nullopt;
+  }
 
   return context.sql;
 }
@@ -135,90 +488,190 @@ std::pair<
     std::optional<std::vector<RowVectorPtr>>,
     exec::test::ReferenceQueryErrorCode>
 SparkQueryRunner::executeAndReturnVector(const core::PlanNodePtr& plan) {
-  if (std::optional<std::string> sql = toSql(plan)) {
-    try {
-      std::unordered_map<std::string, std::vector<RowVectorPtr>> inputMap =
-          getAllTables(plan);
-      for (const auto& [tableName, input] : inputMap) {
-        auto inputType = asRowType(input[0]->type());
-        if (inputType->size() == 0) {
-          inputMap[tableName] = {exec::test::makeNullRows(
-              input, fmt::format("{}x", tableName), pool())};
-        }
-      }
+  const std::optional<std::string> sql = toSql(plan);
+  if (!sql.has_value()) {
+    return std::make_pair(
+        std::nullopt,
+        exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported);
+  }
 
-      auto writerPool = aggregatePool()->addAggregateChild("writer");
-      std::vector<std::shared_ptr<TempFilePath>> tempFiles;
-      tempFiles.reserve(inputMap.size());
-      for (const auto& [tableName, input] : inputMap) {
-        auto tempFile = TempFilePath::create();
-        tempFiles.emplace_back(tempFile);
-        const auto& filePath = tempFile->getPath();
-        writeToFile(filePath, input, writerPool.get());
-        // Create temporary view for this table in Spark by reading the
-        // generated Parquet file.
-        execute(
-            fmt::format(
-                "CREATE OR REPLACE TEMPORARY VIEW {} AS (SELECT * from parquet.`file://{}`);",
-                tableName,
-                filePath));
-      }
-
-      // Run the query.
-      return std::make_pair(
-          execute(*sql), exec::test::ReferenceQueryErrorCode::kSuccess);
-    } catch (const VeloxRuntimeError&) {
-      throw;
-    } catch (...) {
-      LOG(WARNING) << "Query failed in Spark";
-      return std::make_pair(
-          std::nullopt,
-          exec::test::ReferenceQueryErrorCode::kReferenceQueryFail);
+  std::unordered_map<std::string, std::vector<RowVectorPtr>> inputMap =
+      getAllTables(plan);
+  for (const auto& [tableName, input] : inputMap) {
+    auto inputType = asRowType(input[0]->type());
+    if (inputType->size() == 0) {
+      inputMap[tableName] = {exec::test::makeNullRows(
+          input, fmt::format("{}x", tableName), pool())};
     }
   }
 
-  LOG(INFO) << "Query not supported in Spark";
-  return std::make_pair(
-      std::nullopt,
-      exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported);
+  // Temporary files must outlive the query.
+  auto writerPool = aggregatePool()->addAggregateChild("writer");
+  std::vector<std::shared_ptr<TempFilePath>> tempFiles;
+  tempFiles.reserve(inputMap.size());
+  for (const auto& [tableName, input] : inputMap) {
+    auto tempFile = TempFilePath::create();
+    tempFiles.emplace_back(tempFile);
+    const auto& filePath = tempFile->getPath();
+    try {
+      writeToFile(filePath, input, writerPool.get());
+    } catch (const VeloxException& e) {
+      LOG(WARNING) << "Spark query unsupported: Failed to write input to "
+                   << "Parquet: " << e.message();
+      return std::make_pair(
+          std::nullopt,
+          exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported);
+    }
+    // Create temporary view for this table in Spark by reading the generated
+    // Parquet file.
+    const auto viewSql = fmt::format(
+        "CREATE OR REPLACE TEMPORARY VIEW {} AS SELECT * FROM parquet.`file://{}`",
+        tableName,
+        filePath);
+    const auto viewResult = executeQuery(viewSql);
+    VELOX_CHECK(
+        !viewResult.errorCode.has_value(),
+        "Failed to create Spark view: {}. Query: {}",
+        viewResult.errorMessage,
+        viewSql);
+  }
+
+  auto result = executeQuery(*sql);
+  if (!result.errorCode.has_value()) {
+    return std::make_pair(
+        std::move(result.data), exec::test::ReferenceQueryErrorCode::kSuccess);
+  }
+
+  LOG(WARNING) << fmt::format(
+      "Spark query {}: {}\nQuery: {}",
+      result.errorCode ==
+              exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported
+          ? "unsupported"
+          : "failed",
+      result.errorMessage,
+      *sql);
+  return std::make_pair(std::nullopt, *result.errorCode);
 }
 
-std::vector<RowVectorPtr> SparkQueryRunner::execute(
-    const std::string& content) {
-  auto sql = ArenaCreate<SQL>(&arena_);
-  sql->set_query(content);
+std::vector<RowVectorPtr> SparkQueryRunner::execute(const std::string& sql) {
+  auto result = executeQuery(sql);
+  VELOX_USER_CHECK(
+      !result.errorCode.has_value(),
+      "Spark query failed: {}. Query: {}",
+      result.errorMessage,
+      sql);
+  return std::move(result.data);
+}
 
-  auto relation = ArenaCreate<Relation>(&arena_);
-  relation->set_allocated_sql(sql);
+UserContext SparkQueryRunner::userContext() const {
+  UserContext context;
+  context.set_user_id(userId_);
+  context.set_user_name(userName_);
+  return context;
+}
 
-  auto plan = ArenaCreate<Plan>(&arena_);
-  plan->set_allocated_root(relation);
+void SparkQueryRunner::ensureSessionConfigured() {
+  if (sessionConfigured_) {
+    return;
+  }
 
-  auto context = ArenaCreate<UserContext>(&arena_);
-  context->set_user_id(userId_);
-  context->set_user_name(userName_);
+  ConfigRequest request;
+  request.set_session_id(sessionId_);
+  *request.mutable_user_context() = userContext();
+  auto* set = request.mutable_operation()->mutable_set();
+  for (const auto& [key, value] : sessionConfigs_) {
+    auto* pair = set->add_pairs();
+    pair->set_key(key);
+    pair->set_value(value);
+  }
 
-  auto request = ArenaCreate<ExecutePlanRequest>(&arena_);
-  request->set_session_id(sessionId_);
-  request->set_allocated_user_context(context);
-  request->set_allocated_plan(plan);
+  ConfigResponse response;
+  grpc::ClientContext context;
+  context.set_deadline(std::chrono::system_clock::now() + queryTimeout_);
+  const auto status = stub_->Config(&context, request, &response);
+  VELOX_CHECK(
+      status.ok(),
+      "Failed to set Spark session configs: {}",
+      status.error_message());
+  sessionConfigured_ = true;
+}
+
+void SparkQueryRunner::interruptSession() {
+  InterruptRequest request;
+  request.set_session_id(sessionId_);
+  *request.mutable_user_context() = userContext();
+  request.set_interrupt_type(InterruptRequest::INTERRUPT_TYPE_ALL);
+
+  InterruptResponse response;
+  grpc::ClientContext context;
+  context.set_deadline(
+      std::chrono::system_clock::now() + std::chrono::seconds(30));
+  const auto status = stub_->Interrupt(&context, request, &response);
+  if (!status.ok()) {
+    LOG(WARNING) << "Failed to interrupt Spark session: "
+                 << status.error_message();
+  }
+}
+
+SparkQueryRunner::QueryResult SparkQueryRunner::executeQuery(
+    const std::string& sql) {
+  ensureSessionConfigured();
+
+  ExecutePlanRequest request;
+  request.set_session_id(sessionId_);
+  *request.mutable_user_context() = userContext();
+  request.mutable_plan()->mutable_root()->mutable_sql()->set_query(sql);
 
   grpc::ClientContext clientContext;
-  auto reader = stub_->ExecutePlan(&clientContext, *request);
+  clientContext.set_deadline(std::chrono::system_clock::now() + queryTimeout_);
+  auto reader = stub_->ExecutePlan(&clientContext, request);
   ExecutePlanResponse response;
-  std::vector<RowVectorPtr> results;
+  QueryResult result;
   while (reader->Read(&response)) {
     VELOX_CHECK_EQ(
         response.session_id(),
         sessionId_,
         "The session id of the response does not match that of the request.");
     if (response.has_arrow_batch()) {
-      const std::string& data = response.arrow_batch().data();
-      const auto batchResults = readArrowData(data);
-      results.insert(results.end(), batchResults.begin(), batchResults.end());
+      auto batchResults = readArrowData(response.arrow_batch().data());
+      result.data.insert(
+          result.data.end(),
+          std::make_move_iterator(batchResults.begin()),
+          std::make_move_iterator(batchResults.end()));
     }
   }
-  return results;
+
+  const auto status = reader->Finish();
+  if (status.ok()) {
+    return result;
+  }
+
+  result.data.clear();
+  result.errorMessage = status.error_message();
+  switch (status.error_code()) {
+    case grpc::StatusCode::DEADLINE_EXCEEDED:
+      interruptSession();
+      result.errorCode =
+          exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported;
+      result.errorMessage = fmt::format(
+          "Query timed out after {} seconds", queryTimeout_.count());
+      break;
+    case grpc::StatusCode::UNAVAILABLE:
+    case grpc::StatusCode::UNAUTHENTICATED:
+    case grpc::StatusCode::PERMISSION_DENIED:
+    case grpc::StatusCode::UNIMPLEMENTED:
+    case grpc::StatusCode::CANCELLED:
+      VELOX_FAIL(
+          "Failed to run query in Spark Connect server: {}",
+          status.error_message());
+    case grpc::StatusCode::RESOURCE_EXHAUSTED:
+      result.errorCode =
+          exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported;
+      break;
+    default:
+      result.errorCode = classifyError(status);
+  }
+  return result;
 }
 
 std::string SparkQueryRunner::generateUUID() {
@@ -249,14 +702,15 @@ std::vector<RowVectorPtr> SparkQueryRunner::readArrowData(
   std::shared_ptr<arrow::ipc::RecordBatchReader> reader = result.ValueUnsafe();
   std::shared_ptr<arrow::Schema> schema = reader->schema();
 
-  ArrowSchema arrowSchema;
-  auto status = arrow::ExportSchema(*schema, &arrowSchema);
-  VELOX_CHECK(status.ok(), "Failed to export schema: {}.", status.ToString());
-
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> batchResult;
   std::vector<RowVectorPtr> results;
   while ((batchResult = reader->Next()).ok() && batchResult.ValueUnsafe()) {
     std::shared_ptr<arrow::RecordBatch> batch = batchResult.ValueUnsafe();
+    // Export the schema for each batch because importFromArrowAsOwner takes
+    // ownership of it.
+    ArrowSchema arrowSchema;
+    auto status = arrow::ExportSchema(*schema, &arrowSchema);
+    VELOX_CHECK(status.ok(), "Failed to export schema: {}.", status.ToString());
     ArrowArray arrowArray;
     status = ExportRecordBatch(*batch, &arrowArray);
     VELOX_CHECK(status.ok(), "Failed to export array: {}.", status.ToString());
