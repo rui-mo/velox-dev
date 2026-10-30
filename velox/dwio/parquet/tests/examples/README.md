@@ -192,12 +192,30 @@ annotation, definition level, repetition level, and compression when useful.
 
 ### `flba_dictionary_string_binary.parquet`
 
-- Metadata: Manually generated minimal Parquet file, 6 rows, 1 row group,
-  required columns `flba_utf8: FIXED_LEN_BYTE_ARRAY UTF8` and
-  `flba_binary: FIXED_LEN_BYTE_ARRAY`, both uncompressed and
-  dictionary-encoded.
-- Purpose: Reader-compatibility fixture for dictionary-encoded
-  FIXED_LEN_BYTE_ARRAY pages projected as Velox VARCHAR and VARBINARY.
+- Metadata: `created_by=parquet-cpp-arrow version 25.0.1`, 8 rows, 1 row group,
+  optional column `value: FIXED_LEN_BYTE_ARRAY` (5-byte width) with no logical
+  annotation, dictionary-encoded (`RLE_DICTIONARY`), Snappy. Values are
+  `apple, null, b\0rry, cider, apple, null, cider, b\0rry`, where `\0` is a NUL
+  byte, so the dictionary page holds 3 distinct values.
+- Purpose: Tests dictionary-encoded FIXED_LEN_BYTE_ARRAY pages read as Velox
+  VARBINARY, as VARCHAR through the requested file schema, and with a filter on
+  the dictionary values.
+- Generator:
+
+  ```python
+  import pyarrow as pa
+  import pyarrow.parquet as pq
+
+  values = [b"apple", None, b"b\x00rry", b"cider",
+            b"apple", None, b"cider", b"b\x00rry"]
+  table = pa.table({"value": pa.array(values, type=pa.binary(5))})
+  pq.write_table(
+      table,
+      "flba_dictionary_string_binary.parquet",
+      use_dictionary=True,
+      compression="snappy",
+  )
+  ```
 
 ### `uuid.parquet`
 

@@ -1598,39 +1598,70 @@ TEST_F(ParquetReaderTest, fixedLenByteArraySkipWithFilter) {
   assertReadWithFilters(filename, fileSchema, std::move(filters), expected);
 }
 
+// Reads the dictionary-encoded FIXED_LEN_BYTE_ARRAY column of
+// flba_dictionary_string_binary.parquet. See examples/README.md for the
+// fixture.
 TEST_F(ParquetReaderTest, readDictFLBAStringBinary) {
   const std::string filename("flba_dictionary_string_binary.parquet");
-  auto rowType = ROW({"flba_utf8", "flba_binary"}, {VARCHAR(), VARBINARY()});
-  auto readerBundle =
-      readerBuilder(filename, rowType).withScanSpecOnly().build();
+  const std::string berry("b\0rry", 5);
+  const std::vector<std::optional<std::string>> values = {
+      "apple",
+      std::nullopt,
+      berry,
+      "cider",
+      "apple",
+      std::nullopt,
+      "cider",
+      berry,
+  };
 
-  EXPECT_EQ(readerBundle.reader->numberOfRows(), 6ULL);
+  // Without a file schema, the unannotated column reads as VARBINARY.
+  {
+    const auto rowType = ROW("value", VARBINARY());
+    auto readerBundle = readerBuilder(filename, rowType).build();
+    EXPECT_EQ(readerBundle.reader->numberOfRows(), 8ULL);
+    auto column = std::static_pointer_cast<const ParquetTypeWithId>(
+        readerBundle.reader->typeWithId()->childAt(0));
+    EXPECT_EQ(column->parquetType_, thrift::Type::FIXED_LEN_BYTE_ARRAY);
+    EXPECT_EQ(*column->type(), *VARBINARY());
 
-  auto type = readerBundle.reader->typeWithId();
-  EXPECT_EQ(type->size(), 2ULL);
-  auto utf8Column =
-      std::static_pointer_cast<const ParquetTypeWithId>(type->childAt(0));
-  auto binaryColumn =
-      std::static_pointer_cast<const ParquetTypeWithId>(type->childAt(1));
-  EXPECT_EQ(utf8Column->name_, "flba_utf8");
-  EXPECT_EQ(utf8Column->parquetType_, thrift::Type::FIXED_LEN_BYTE_ARRAY);
-  EXPECT_EQ(binaryColumn->name_, "flba_binary");
-  EXPECT_EQ(binaryColumn->parquetType_, thrift::Type::FIXED_LEN_BYTE_ARRAY);
+    auto expected = makeRowVector(
+        {"value"}, {makeNullableFlatVector<std::string>(values, VARBINARY())});
+    assertReadWithReaderAndExpected(
+        rowType, *readerBundle.rowReader, expected, *leafPool_);
+  }
 
-  auto expectedUtf8 = makeFlatVector<std::string>(
-      {"apple", "berry", "cider", "apple", "cider", "berry"});
-  auto expectedBinary = makeFlatVector<std::string>(
-      {"apple",
-       std::string("b\0rry", 5),
-       "cider",
-       "apple",
-       "cider",
-       std::string("b\0rry", 5)},
-      VARBINARY());
-  auto expected = makeRowVector({expectedUtf8, expectedBinary});
+  // A VARCHAR file schema reads the same bytes as VARCHAR.
+  {
+    const auto rowType = ROW("value", VARCHAR());
+    auto readerOptions = makeDefaultReaderOptions();
+    readerOptions.setFileSchema(rowType);
+    auto readerBundle =
+        readerBuilder(filename, rowType).options(readerOptions).build();
+    EXPECT_EQ(
+        *readerBundle.reader->typeWithId()->childAt(0)->type(), *VARCHAR());
 
-  assertReadWithReaderAndExpected(
-      rowType, *readerBundle.rowReader, expected, *leafPool_);
+    auto expected = makeRowVector(
+        {"value"}, {makeNullableFlatVector<std::string>(values, VARCHAR())});
+    assertReadWithReaderAndExpected(
+        rowType, *readerBundle.rowReader, expected, *leafPool_);
+  }
+
+  // A BytesValues filter selects rows by dictionary value and drops nulls.
+  {
+    FilterMap filters;
+    filters.insert(
+        {"value",
+         std::make_unique<common::BytesValues>(
+             std::vector<std::string>{"apple", berry},
+             /*nullAllowed=*/false)});
+    auto expected = makeRowVector(
+        {"value"},
+        {makeFlatVector<std::string>(
+            {"apple", berry, "apple", berry}, VARBINARY())});
+    assertReadWithFilters(
+        filename, ROW("value", VARBINARY()), std::move(filters), expected);
+  }
 }
 
 TEST_F(ParquetReaderTest, readBinaryAsStringFromNation) {
