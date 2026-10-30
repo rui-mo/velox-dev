@@ -32,6 +32,12 @@ namespace facebook::velox::exec {
 /// returns the matching result. If no conditions are true, the result from the
 /// ELSE clause is returned if it exists, otherwise null is returned.
 ///
+/// If a condition fails on a row, the row still gets a value when the THEN
+/// value of that condition equals the value of the following cases and ELSE.
+/// This is like 'x AND false' returning false even if 'x' fails. For example,
+/// 'if(1 / 0 = 5, c0, c0)' returns 'c0'. NULL equals NULL. Otherwise, the
+/// condition error is raised.
+///
 /// IF expression can be represented as a CASE expression with a single
 /// condition.
 class SwitchExpr : public SpecialForm {
@@ -59,6 +65,14 @@ class SwitchExpr : public SpecialForm {
 
  private:
   void computePropagatesNulls() override;
+
+  /// Evaluates cases starting at 'firstCase', followed by the ELSE clause, on
+  /// 'rows' and writes the values to 'result'.
+  void evalCases(
+      size_t firstCase,
+      const SelectivityVector& rows,
+      EvalCtx& context,
+      VectorPtr& result);
 
   const size_t numCases_;
   const bool hasElseClause_;

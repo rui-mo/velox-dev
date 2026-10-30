@@ -43,6 +43,13 @@ namespace facebook::velox::exec {
 /// directly) preserves dictionary peeling, the registered eq variant's
 /// semantic differences (e.g. Spark vs Presto null-handling), and per-row
 /// error reporting via TRY.
+///
+/// Like SwitchExpr, a row where the subject, a WHEN value or the comparison
+/// fails still gets a value when all results that row can select are equal.
+/// If the subject fails, that is every THEN and the ELSE. If the WHEN value of
+/// a case or its comparison fails, that is the THEN of that case and the value
+/// of the following cases and ELSE. For example, 'CASE 1 / 0 WHEN 5 THEN c0
+/// ELSE c0 END' returns 'c0'. NULL equals NULL. Otherwise, the error is raised.
 class CaseExpr : public SpecialForm {
  public:
   /// @param eqExpr Pre-built 'eq' Expr whose children are FieldReferences
@@ -90,6 +97,16 @@ class CaseExpr : public SpecialForm {
 
  private:
   void computePropagatesNulls() override;
+
+  /// Evaluates cases starting at 'firstCase', followed by the ELSE clause, on
+  /// 'rows' and writes the values to 'result'. 'subject' holds the subject
+  /// values for 'rows'.
+  void evalCases(
+      size_t firstCase,
+      const SelectivityVector& rows,
+      const VectorPtr& subject,
+      EvalCtx& context,
+      VectorPtr& result);
 
   const size_t numCases_;
   const bool hasElseClause_;

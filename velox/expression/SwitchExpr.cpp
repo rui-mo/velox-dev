@@ -15,6 +15,7 @@
  */
 #include "velox/expression/SwitchExpr.h"
 #include "velox/expression/BooleanMix.h"
+#include "velox/expression/ConditionErrors.h"
 #include "velox/expression/ExprConstants.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/type/TypeCoercer.h"
@@ -75,8 +76,6 @@ void SwitchExpr::evalSpecialForm(
   VectorPtr localResult;
   LocalSelectivityVector remainingRows(context, rows);
 
-  LocalSelectivityVector thenRows(context);
-
   // SWITCH: fix finalSelection at "rows" unless already fixed
   ScopedFinalSelectionSetter scopedFinalSelectionSetter(context, &rows);
   if (propagatesNulls_) {
@@ -96,73 +95,7 @@ void SwitchExpr::evalSpecialForm(
     }
   }
 
-  VectorPtr condition;
-  const uint64_t* values;
-
-  for (auto i = 0; i < numCases_; i++) {
-    context.releaseVector(condition);
-
-    if (!remainingRows.get()->hasSelections()) {
-      break;
-    }
-
-    // evaluate the case condition
-    inputs_[2 * i]->eval(*remainingRows.get(), context, condition);
-
-    if (context.errors()) {
-      context.deselectErrors(*remainingRows);
-      if (!remainingRows->hasSelections()) {
-        break;
-      }
-    }
-
-    const auto booleanMix = getFlatBool(
-        condition.get(),
-        *remainingRows.get(),
-        context,
-        &tempValues_,
-        nullptr,
-        true,
-        &values,
-        nullptr);
-    switch (booleanMix) {
-      case BooleanMix::kAllTrue:
-        inputs_[2 * i + 1]->eval(*remainingRows.get(), context, localResult);
-        remainingRows->clearAll();
-        continue;
-      case BooleanMix::kAllNull:
-      case BooleanMix::kAllFalse:
-        continue;
-      default: {
-        thenRows.get(remainingRows->end(), false);
-        bits::andBits(
-            thenRows.get()->asMutableRange().bits(),
-            remainingRows.get()->asRange().bits(),
-            values,
-            0,
-            remainingRows->end());
-        thenRows.get()->updateBounds();
-
-        if (thenRows.get()->hasSelections()) {
-          inputs_[2 * i + 1]->eval(*thenRows.get(), context, localResult);
-          remainingRows.get()->deselect(*thenRows.get());
-        }
-      }
-    }
-  }
-
-  // Evaluate the "else" clause.
-  if (remainingRows.get()->hasSelections()) {
-    if (hasElseClause_) {
-      inputs_.back()->eval(*remainingRows.get(), context, localResult);
-    } else {
-      context.ensureWritable(*remainingRows.get(), type(), localResult);
-
-      // fill in nulls for remainingRows
-      remainingRows.get()->applyToSelected(
-          [&](auto row) { localResult->setNull(row, true); });
-    }
-  }
+  evalCases(0, *remainingRows, context, localResult);
 
   // Some rows may have not been evaluated by any then or else clause because
   // a condition threw an error on these rows. We set those to nulls to make
@@ -182,6 +115,107 @@ void SwitchExpr::evalSpecialForm(
   }
 
   context.moveOrCopyResult(localResult, rows, finalResult);
+}
+
+void SwitchExpr::evalCases(
+    size_t firstCase,
+    const SelectivityVector& rows,
+    EvalCtx& context,
+    VectorPtr& result) {
+  LocalSelectivityVector remainingRows(context, rows);
+  LocalSelectivityVector thenRows(context);
+
+  VectorPtr condition;
+  const uint64_t* values;
+
+  for (auto i = firstCase; i < numCases_; i++) {
+    context.releaseVector(condition);
+
+    if (!remainingRows.get()->hasSelections()) {
+      break;
+    }
+
+    EvalErrorsPtr conditionErrors;
+    evalCollectingErrors(
+        *inputs_[2 * i],
+        *remainingRows.get(),
+        context,
+        condition,
+        conditionErrors);
+
+    if (context.errors()) {
+      context.deselectErrors(*remainingRows);
+    }
+
+    // A row where the condition failed can only get the value of this case or
+    // of the following cases. Must run before getFlatBool() because evaluating
+    // the following cases reuses 'tempValues_'.
+    if (conditionErrors) {
+      resolveConditionErrors(
+          type(),
+          {[&](const SelectivityVector& outcomeRows, VectorPtr& outcome) {
+             inputs_[2 * i + 1]->eval(outcomeRows, context, outcome);
+           },
+           [&](const SelectivityVector& outcomeRows, VectorPtr& outcome) {
+             evalCases(i + 1, outcomeRows, context, outcome);
+           }},
+          conditionErrors,
+          *remainingRows.get(),
+          context,
+          result);
+    }
+
+    if (!remainingRows->hasSelections()) {
+      break;
+    }
+
+    const auto booleanMix = getFlatBool(
+        condition.get(),
+        *remainingRows.get(),
+        context,
+        &tempValues_,
+        nullptr,
+        true,
+        &values,
+        nullptr);
+    switch (booleanMix) {
+      case BooleanMix::kAllTrue:
+        inputs_[2 * i + 1]->eval(*remainingRows.get(), context, result);
+        remainingRows->clearAll();
+        continue;
+      case BooleanMix::kAllNull:
+      case BooleanMix::kAllFalse:
+        continue;
+      default: {
+        thenRows.get(remainingRows->end(), false);
+        bits::andBits(
+            thenRows.get()->asMutableRange().bits(),
+            remainingRows.get()->asRange().bits(),
+            values,
+            0,
+            remainingRows->end());
+        thenRows.get()->updateBounds();
+
+        if (thenRows.get()->hasSelections()) {
+          inputs_[2 * i + 1]->eval(*thenRows.get(), context, result);
+          remainingRows.get()->deselect(*thenRows.get());
+        }
+      }
+    }
+  }
+
+  // Evaluate the "else" clause.
+  if (remainingRows.get()->hasSelections()) {
+    if (hasElseClause_) {
+      inputs_.back()->eval(*remainingRows.get(), context, result);
+    } else {
+      context.ensureWritable(*remainingRows.get(), type(), result);
+
+      // fill in nulls for remainingRows
+      remainingRows.get()->applyToSelected(
+          [&](auto row) { result->setNull(row, true); });
+    }
+  }
 }
 
 // This is safe to call only after all metadata is computed for input

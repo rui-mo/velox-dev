@@ -59,6 +59,10 @@ if
 	which do not pass the condition. When the else clause is specified, its
 	return type must be the same as the return type of the then clause.
 
+	If the condition generates an error for a row on which the then and else
+	clauses return the same value, the error is suppressed. Two nulls are
+	considered the same value.
+
 switch
 	SWITCH expression represents a generalization of the IF expression. It takes
 	one or more (condition, then clause) pairs and an optional else clause.
@@ -68,6 +72,10 @@ switch
 
 	The return types of all the then clauses and the else clause must be the
 	same.
+
+	If a condition generates an error for a row on which its then clause returns
+	the same value as the remaining pairs and the else clause, the error is
+	suppressed. Two nulls are considered the same value.
 
 cast
 	CAST expression. Takes a single input expression. The result type determines
@@ -412,8 +420,8 @@ Special forms support flat-no-nulls fast path in some cases, but not all.
 It is possible for some sub-expressions to take the fast path while others
 go through the regular path.
 
-Error Handling in AND, OR, TRY
-``````````````````````````````
+Error Handling in AND, OR, IF, SWITCH, TRY
+``````````````````````````````````````````
 
 When evaluating AND expression, If some input generates an error for a row on
 which another input returns false, the error is suppressed.
@@ -423,6 +431,12 @@ which another input returns true, the error is suppressed.
 
 The error suppression logic in the AND and OR expressions is designed to deliver
 consistent results regardless of the order of the conjuncts.
+
+When evaluating IF, SWITCH and simple CASE expressions, if a condition generates
+an error for a row, the error is suppressed when the row gets the same value
+whether the condition is true or not. Two nulls are considered the same value.
+For example, ``if(1 / 0 = 5, c0, c0)`` returns ``c0``. This keeps results
+consistent whether or not constant folding simplifies these expressions.
 
 TRY expression handles the exceptions by setting the result to null in the
 corresponding rows. Error handling in AND, OR and TRY expressions relies on all
@@ -448,6 +462,7 @@ Evaluation of IF, SWITCH
 SWITCH expression evaluation goes through the following steps:
 
 * Evaluate the first condition on all rows.
+* If the first condition generates errors, evaluate the first “then” clause and the remaining (condition, then clause) pairs with the else clause on the rows with errors. Keep the value on rows where both return the same value. Raise the error for other rows.
 * Evaluate the first “then” clause on a subset of rows where the first condition is true and produce a partially populated result vector.
 * Evaluate the second condition on rows where the first condition is not true.
 * Evaluate the second “then” clause on a subset of rows where the second condition. Pass the partially populated result vector to Expr::eval when evaluating the “then” clause and expect the expression to update the result vector with the calculated values for the specified rows while preserving the already calculated results.

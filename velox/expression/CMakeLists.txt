@@ -53,6 +53,7 @@ velox_add_library(
   CastExpr.cpp
   CastHooks.cpp
   CoalesceExpr.cpp
+  ConditionErrors.cpp
   ConjunctExpr.cpp
   ConstantExpr.cpp
   EvalCtx.cpp
@@ -90,6 +91,7 @@ velox_add_library(
   CoalesceRewrite.h
   ComplexViewTypes.h
   ComplexWriterTypes.h
+  ConditionErrors.h
   ConjunctExpr.h
   ConjunctRewrite.h
   ConstantExpr.h

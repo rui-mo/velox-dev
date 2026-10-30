@@ -236,6 +236,43 @@ class ExprTest : public testing::Test, public VectorTestBase {
     return result[0];
   }
 
+  // Evaluates 'sql' with and without constant folding, and with
+  // ExprSetSimplified. Verifies that each result matches 'expected'.
+  void assertEvaluateAllPaths(
+      const std::string& sql,
+      const RowVectorPtr& input,
+      const VectorPtr& expected) {
+    SCOPED_TRACE(sql);
+    const auto rowType = asRowType(input->type());
+    assertEqualVectors(expected, evaluate(sql, input));
+    assertEqualVectors(
+        expected,
+        evaluate(compileNoConstantFolding(sql, rowType).get(), input));
+    assertEqualVectors(
+        expected,
+        evaluate<exec::ExprSetSimplified>(
+            compileExpression<exec::ExprSetSimplified>(sql, rowType).get(),
+            input));
+  }
+
+  // Like assertEvaluateAllPaths, but verifies that each evaluation throws an
+  // error with 'message'.
+  void assertErrorAllPaths(
+      const std::string& sql,
+      const RowVectorPtr& input,
+      const std::string& message) {
+    SCOPED_TRACE(sql);
+    const auto rowType = asRowType(input->type());
+    VELOX_ASSERT_THROW(evaluate(sql, input), message);
+    VELOX_ASSERT_THROW(
+        evaluate(compileNoConstantFolding(sql, rowType).get(), input), message);
+    VELOX_ASSERT_THROW(
+        evaluate<exec::ExprSetSimplified>(
+            compileExpression<exec::ExprSetSimplified>(sql, rowType).get(),
+            input),
+        message);
+  }
+
   template <typename T = exec::ExprSet>
   void evalWithEmptyRows(
       const std::string& expr,
@@ -2035,7 +2072,7 @@ TEST_P(ParameterizedExprTest, caseExprExceptionHandling) {
   // before the subject, eq, and THEN/ELSE are ever evaluated, so the throwing
   // expression is never reached for null rows.
   //
-  // c0 = {0, null, 4}. THEN and ELSE are both c0 / 0.
+  // c0 = {0, null, 4}. THEN is c0 / 0 and ELSE is c0 % 0.
   // Non-null rows hit division by zero; null row is masked by propagation.
   {
     auto input = makeRowVector({makeFlatVector<int64_t>(
@@ -2043,13 +2080,13 @@ TEST_P(ParameterizedExprTest, caseExprExceptionHandling) {
         [](auto row) { return row * 2; },
         [](auto row) { return row == 1; })});
 
-    // Without try: non-null rows hit c0/0 → throws.
+    // Without try: non-null rows hit c0 % 0 → throws.
     VELOX_ASSERT_THROW(
-        evaluate("case c0 when 1 then c0 / 0 else c0 / 0 end", input), "");
+        evaluate("case c0 when 1 then c0 / 0 else c0 % 0 end", input), "");
 
     // With try: non-null rows → error → null; null row → propagation → null.
     auto result =
-        evaluate("try(case c0 when 1 then c0 / 0 else c0 / 0 end)", input);
+        evaluate("try(case c0 when 1 then c0 / 0 else c0 % 0 end)", input);
     EXPECT_TRUE(result->isNullAt(0));
     EXPECT_TRUE(result->isNullAt(1));
     EXPECT_TRUE(result->isNullAt(2));
@@ -2059,7 +2096,8 @@ TEST_P(ParameterizedExprTest, caseExprExceptionHandling) {
   // All THEN/ELSE reference c0, subject is c0, WHEN value uses c0 → subset
   // of THEN/ELSE fields → propagatesNulls_ is true.
   // Rows where c0 is null are pre-deselected so always_throws_bigint is never
-  // called for them, and they return null cleanly.
+  // called for them, and they return null cleanly. THEN and ELSE differ, so
+  // the WHEN-value error is kept on non-null rows.
   //
   // c0 = {0, null, 2}.
   {
@@ -2069,12 +2107,13 @@ TEST_P(ParameterizedExprTest, caseExprExceptionHandling) {
     // Without try: non-null rows call always_throws_bigint → throws.
     VELOX_ASSERT_THROW(
         evaluate(
-            "case c0 when always_throws_bigint(c0) then c0 else c0 end", input),
+            "case c0 when always_throws_bigint(c0) then c0 else c0 + 1 end",
+            input),
         "");
 
     // With try: non-null rows → error → null; null row → propagation → null.
     auto result = evaluate(
-        "try(case c0 when always_throws_bigint(c0) then c0 else c0 end)",
+        "try(case c0 when always_throws_bigint(c0) then c0 else c0 + 1 end)",
         input);
     EXPECT_TRUE(result->isNullAt(0));
     EXPECT_TRUE(result->isNullAt(1));
@@ -2094,14 +2133,14 @@ TEST_P(ParameterizedExprTest, caseExprExceptionHandling) {
     // Without try: row 0 matches → THEN always_throws_bigint(c1) → throws.
     VELOX_ASSERT_THROW(
         evaluate(
-            "case c0 when 1 then always_throws_bigint(c1) else always_throws_bigint(c1) end",
+            "case c0 when 1 then always_throws_bigint(c1) else always_throws_bigint(c1 + 1) end",
             input),
         "");
 
     // With try: row 0 → THEN errors → null; row 1 → c0 null, no match →
-    // ELSE always_throws_bigint(c1) → error → null.
+    // ELSE always_throws_bigint(c1 + 1) → error → null.
     auto result = evaluate(
-        "try(case c0 when 1 then always_throws_bigint(c1) else always_throws_bigint(c1) end)",
+        "try(case c0 when 1 then always_throws_bigint(c1) else always_throws_bigint(c1 + 1) end)",
         input);
     EXPECT_TRUE(result->isNullAt(0));
     EXPECT_TRUE(result->isNullAt(1));
@@ -2235,7 +2274,7 @@ TEST_P(ParameterizedExprTest, switchSetNullsForThrowIndices) {
   {
     auto input = vectorMaker_.flatVector<int64_t>({1, 1, 1, 4, 4});
     auto result = eval(
-        "if(always_throws(c0), row_constructor(1,2), row_constructor(1,2))",
+        "if(always_throws(c0), row_constructor(1,2), row_constructor(3,4))",
         vectorMaker_.rowVector({input}));
     EXPECT_EQ(result->size(), input->size());
     for (int i = 0; i < input->size(); i++) {
@@ -2257,13 +2296,87 @@ TEST_P(ParameterizedExprTest, switchSetNullsForThrowIndices) {
   {
     auto input = vectorMaker_.flatVector<int64_t>({1, 1, 1, 4, 4});
     auto result = eval(
-        "if(throw_at_odd(c0), array_constructor(1,2), array_constructor(1,2))",
+        "if(throw_at_odd(c0), array_constructor(1,2), array_constructor(3,4))",
         vectorMaker_.rowVector({input}));
     EXPECT_EQ(result->size(), input->size());
     for (int i = 0; i < input->size(); i++) {
       EXPECT_EQ(result->isNullAt(i), input->valueAt(i) % 2);
     }
   }
+}
+
+// A row where a condition fails still gets a value when all results the
+// condition can select are equal, like 'x AND false' is false even if 'x'
+// fails.
+TEST_P(ParameterizedExprTest, conditionErrorWithEqualResults) {
+  auto input = makeRowVector({
+      makeNullableFlatVector<int64_t>({1, -2, std::nullopt, 4}),
+      makeNullableFlatVector<bool>({true, false, true, std::nullopt}),
+  });
+  const auto c0 = input->childAt(0);
+
+  // IF.
+  assertEvaluateAllPaths("if(1 / 0 = 5 AND (c1 OR true), c0, c0)", input, c0);
+  assertErrorAllPaths("if(1 / 0 = 5, c0, abs(c0))", input, "division by zero");
+  assertEvaluateAllPaths(
+      "try(if(1 / 0 = 5, c0, abs(c0)))",
+      input,
+      makeNullableFlatVector<int64_t>({1, std::nullopt, std::nullopt, 4}));
+
+  // SWITCH. A failed condition compares the value of its case with the value
+  // of the following cases.
+  assertEvaluateAllPaths(
+      "case when c0 < 0 then negate(c0) when 1 / 0 = 5 then c0 "
+      "when c1 then abs(c0) else c0 end",
+      input,
+      makeNullableFlatVector<int64_t>({1, 2, std::nullopt, 4}));
+  assertErrorAllPaths(
+      "case when c0 < 0 then negate(c0) when 1 / 0 = 5 then c0 + 1 "
+      "else c0 end",
+      input,
+      "division by zero");
+  assertEvaluateAllPaths(
+      "try(case when c0 < 0 then negate(c0) when 1 / 0 = 5 then c0 + 1 "
+      "else c0 end)",
+      input,
+      makeNullableFlatVector<int64_t>(
+          {std::nullopt, 2, std::nullopt, std::nullopt}));
+  // Same results whether or not constant folding removes the false condition.
+  assertEvaluateAllPaths(
+      "try(case when 1 / 0 = 5 then c0 when false then c0 + 1 "
+      "else abs(c0) end)",
+      input,
+      makeNullableFlatVector<int64_t>({1, std::nullopt, std::nullopt, 4}));
+  // Without ELSE, rows that match no case get NULL.
+  assertEvaluateAllPaths(
+      "case when 1 / 0 = 5 then cast(null as bigint) when c0 > 5 then c0 end",
+      input,
+      makeNullConstant(TypeKind::BIGINT, input->size()));
+  assertErrorAllPaths(
+      "case when 1 / 0 = 5 then c0 when c0 > 5 then c0 end",
+      input,
+      "division by zero");
+
+  // Simple CASE. A failed subject compares the values of all cases and ELSE.
+  assertEvaluateAllPaths(
+      "case 1 / 0 when 5 then c0 when 6 then ceil(c0) else c0 end", input, c0);
+  assertErrorAllPaths(
+      "case 1 / 0 when 5 then c0 when 6 then abs(c0) else c0 end",
+      input,
+      "division by zero");
+  assertEvaluateAllPaths(
+      "try(case 1 / 0 when 5 then c0 when 6 then abs(c0) else c0 end)",
+      input,
+      makeNullableFlatVector<int64_t>({1, std::nullopt, std::nullopt, 4}));
+
+  // A failed WHEN value compares the value of its case with the value of the
+  // following cases.
+  assertEvaluateAllPaths(
+      "case c0 when 1 / 0 then c0 * 1 when 7 then c0 else c0 end", input, c0);
+  assertErrorAllPaths(
+      "case c0 when 1 / 0 then c0 + 1 when 7 then c0 else c0 end",
+      input,
+      "division by zero");
 }
 
 namespace {
@@ -4866,7 +4979,7 @@ TEST_P(ParameterizedExprTest, nullPropagation) {
   // Try will call propagateNulls on its child, that should not
   // redo the computation.
   auto switchInTry = parseExpression(
-      "try(switch(subscript(c0, array_min(c1)), FALSE, FALSE,"
+      "try(switch(subscript(c0, array_min(c1)), TRUE, FALSE,"
       "FALSE, is_null('6338838335202944843'::BIGINT)))",
       ROW({"c0", "c1"}, {ARRAY({BOOLEAN()}), ARRAY({BIGINT()})}));
   EXPECT_FALSE(propagatesNulls(switchInTry));

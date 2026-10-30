@@ -16,6 +16,7 @@
 #include "velox/expression/CaseExpr.h"
 #include "velox/expression/BooleanMix.h"
 #include "velox/expression/CastExpr.h"
+#include "velox/expression/ConditionErrors.h"
 #include "velox/expression/ExprConstants.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
@@ -174,7 +175,6 @@ void CaseExpr::evalSpecialForm(
     VectorPtr& finalResult) {
   VectorPtr localResult;
   LocalSelectivityVector remainingRows(context, rows);
-  LocalSelectivityVector thenRows(context);
 
   // Fix finalSelection at 'rows' unless already fixed by an outer expression.
   ScopedFinalSelectionSetter scopedFinalSelectionSetter(context, &rows);
@@ -198,62 +198,146 @@ void CaseExpr::evalSpecialForm(
     }
   }
 
-  // Step 1: Evaluate the subject expression exactly once.
-  VectorPtr subjectVector;
-  inputs_[0]->eval(rows, context, subjectVector);
+  if (remainingRows->hasSelections()) {
+    // Step 1: Evaluate the subject expression exactly once.
+    VectorPtr subjectVector;
+    EvalErrorsPtr subjectErrors;
+    evalCollectingErrors(
+        *inputs_[0], *remainingRows, context, subjectVector, subjectErrors);
 
-  // Rows where subject evaluation itself errored out are deselected so that
-  // subsequent WHEN checks do not observe stale data at those positions.
-  if (context.errors()) {
-    context.deselectErrors(*remainingRows);
+    if (context.errors()) {
+      context.deselectErrors(*remainingRows);
+    }
+
+    // A row where the subject failed can get the value of any case or of the
+    // ELSE clause.
+    if (subjectErrors) {
+      std::vector<ConditionalOutcome> outcomes;
+      outcomes.reserve(numCases_ + 1);
+      for (size_t i = 0; i < numCases_; ++i) {
+        outcomes.emplace_back(
+            [&, i](const SelectivityVector& outcomeRows, VectorPtr& outcome) {
+              inputs_[2 * i + 2]->eval(outcomeRows, context, outcome);
+            });
+      }
+      outcomes.emplace_back(
+          [&](const SelectivityVector& outcomeRows, VectorPtr& outcome) {
+            evalCases(numCases_, outcomeRows, subjectVector, context, outcome);
+          });
+      resolveConditionErrors(
+          type(),
+          outcomes,
+          subjectErrors,
+          *remainingRows,
+          context,
+          localResult);
+    }
+
+    if (remainingRows->hasSelections()) {
+      evalCases(0, *remainingRows, subjectVector, context, localResult);
+    }
   }
 
-  // Step 2: Build a reusable two-column RowVector for invoking eqExpr_.
-  // The RowVector is shared across WHEN iterations (only children()[1]
-  // changes); a fresh EvalCtx is created per iteration so no internal
-  // state (peeled fields, encodings, errors) leaks between clauses.
-  auto eqRow = std::make_shared<RowVector>(
-      context.pool(),
-      eqInputType_,
-      /*nulls=*/nullptr,
-      rows.end(),
-      std::vector<VectorPtr>{subjectVector, subjectVector});
+  // Null-fill rows that produced errors during evaluation.
+  // Some rows may have been deselected due to errors in subject, WHEN-value,
+  // or eq evaluation.  Ensure those positions are addressable in localResult.
+  if (context.errors()) {
+    // TODO: Fix decoding function vector issue #6269.
+    if (type()->kind() != TypeKind::FUNCTION) {
+      LocalSelectivityVector nonErrorRows(context, rows);
+      context.deselectErrors(*nonErrorRows);
+      addNulls(rows, nonErrorRows->asRange().bits(), context, localResult);
+    }
+  }
+
+  // TODO: Fix evaluate lambda expression return vector of size 0 issue #6270.
+  if (type()->kind() != TypeKind::FUNCTION) {
+    VELOX_CHECK_NOT_NULL(localResult);
+    VELOX_CHECK_GE(localResult->size(), rows.end());
+  }
+
+  context.moveOrCopyResult(localResult, rows, finalResult);
+}
+
+void CaseExpr::evalCases(
+    size_t firstCase,
+    const SelectivityVector& rows,
+    const VectorPtr& subject,
+    EvalCtx& context,
+    VectorPtr& result) {
+  LocalSelectivityVector remainingRows(context, rows);
+  LocalSelectivityVector thenRows(context);
+
+  // Two-column RowVector for invoking eqExpr_, created on first use. Only
+  // children()[1] changes between WHEN iterations. A fresh EvalCtx is created
+  // per iteration so no internal state (peeled fields, encodings, errors) leaks
+  // between clauses.
+  RowVectorPtr eqRow;
 
   VectorPtr condition;
   const uint64_t* values;
 
-  for (size_t i = 0; i < numCases_; i++) {
+  for (size_t i = firstCase; i < numCases_; i++) {
     context.releaseVector(condition);
 
     if (!remainingRows->hasSelections()) {
       break;
     }
 
+    // A row where the WHEN value or the comparison failed can only get the
+    // value of this case or of the following cases. Must run before
+    // getFlatBool() because evaluating the following cases reuses
+    // 'tempValues_'.
+    const auto resolveErrors = [&](const EvalErrorsPtr& errors) {
+      resolveConditionErrors(
+          type(),
+          {[&](const SelectivityVector& outcomeRows, VectorPtr& outcome) {
+             inputs_[2 * i + 2]->eval(outcomeRows, context, outcome);
+           },
+           [&](const SelectivityVector& outcomeRows, VectorPtr& outcome) {
+             evalCases(i + 1, outcomeRows, subject, context, outcome);
+           }},
+          errors,
+          *remainingRows,
+          context,
+          result);
+    };
+
     // Evaluate the WHEN value for the remaining (unmatched) rows.
     VectorPtr whenVector;
-    inputs_[2 * i + 1]->eval(*remainingRows.get(), context, whenVector);
+    EvalErrorsPtr whenErrors;
+    evalCollectingErrors(
+        *inputs_[2 * i + 1], *remainingRows, context, whenVector, whenErrors);
 
     if (context.errors()) {
       context.deselectErrors(*remainingRows);
-      if (!remainingRows->hasSelections()) {
-        break;
-      }
+    }
+    if (whenErrors) {
+      resolveErrors(whenErrors);
+    }
+    if (!remainingRows->hasSelections()) {
+      break;
     }
 
+    if (eqRow == nullptr) {
+      eqRow = std::make_shared<RowVector>(
+          context.pool(),
+          eqInputType_,
+          /*nulls=*/nullptr,
+          rows.end(),
+          std::vector<VectorPtr>{subject, subject});
+    }
     eqRow->children()[1] = whenVector;
     eqRow->unsafeResize(remainingRows->end());
     EvalCtx eqCtx{context.execCtx(), context.exprSet(), eqRow.get()};
-    *eqCtx.mutableThrowOnError() = context.throwOnError();
 
     eqExpr_->clearCache();
-    eqExpr_->eval(*remainingRows.get(), eqCtx, condition);
+    EvalErrorsPtr eqErrors;
+    evalCollectingErrors(
+        *eqExpr_, *remainingRows, eqCtx, condition, eqErrors);
 
-    // Surface eq errors through the parent context so the existing CASE
-    // error-handling deselects them and they fall through to the
-    // error-null-fill at the end.
-    if (eqCtx.errors()) {
-      eqCtx.moveAppendErrors(*context.errorsPtr());
-      context.deselectErrors(*remainingRows);
+    if (eqErrors) {
+      resolveErrors(eqErrors);
       if (!remainingRows->hasSelections()) {
         break;
       }
@@ -275,7 +359,7 @@ void CaseExpr::evalSpecialForm(
     switch (booleanMix) {
       case BooleanMix::kAllTrue:
         // Every remaining row matched — evaluate THEN for all of them and stop.
-        inputs_[2 * i + 2]->eval(*remainingRows.get(), context, localResult);
+        inputs_[2 * i + 2]->eval(*remainingRows.get(), context, result);
         remainingRows->clearAll();
         continue;
       case BooleanMix::kAllNull:
@@ -294,44 +378,24 @@ void CaseExpr::evalSpecialForm(
         thenRows.get()->updateBounds();
 
         if (thenRows.get()->hasSelections()) {
-          inputs_[2 * i + 2]->eval(*thenRows.get(), context, localResult);
+          inputs_[2 * i + 2]->eval(*thenRows.get(), context, result);
           remainingRows->deselect(*thenRows.get());
         }
       }
     }
   }
 
-  // Step 4: Handle rows that matched no WHEN branch.
+  // Handle rows that matched no WHEN branch.
   if (remainingRows->hasSelections()) {
     if (hasElseClause_) {
-      inputs_.back()->eval(*remainingRows.get(), context, localResult);
+      inputs_.back()->eval(*remainingRows.get(), context, result);
     } else {
       // No ELSE: write NULL for every unmatched row.
-      context.ensureWritable(*remainingRows.get(), type(), localResult);
+      context.ensureWritable(*remainingRows.get(), type(), result);
       remainingRows->applyToSelected(
-          [&](auto row) { localResult->setNull(row, true); });
+          [&](auto row) { result->setNull(row, true); });
     }
   }
-
-  // Step 5: Null-fill rows that produced errors during evaluation.
-  // Some rows may have been deselected due to errors in subject, WHEN-value,
-  // or eq evaluation.  Ensure those positions are addressable in localResult.
-  if (context.errors()) {
-    // TODO: Fix decoding function vector issue #6269.
-    if (type()->kind() != TypeKind::FUNCTION) {
-      LocalSelectivityVector nonErrorRows(context, rows);
-      context.deselectErrors(*nonErrorRows);
-      addNulls(rows, nonErrorRows->asRange().bits(), context, localResult);
-    }
-  }
-
-  // TODO: Fix evaluate lambda expression return vector of size 0 issue #6270.
-  if (type()->kind() != TypeKind::FUNCTION) {
-    VELOX_CHECK_NOT_NULL(localResult);
-    VELOX_CHECK_GE(localResult->size(), rows.end());
-  }
-
-  context.moveOrCopyResult(localResult, rows, finalResult);
 }
 
 std::string CaseExpr::toSql(std::vector<VectorPtr>* complexConstants) const {

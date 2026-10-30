@@ -39,5 +39,29 @@ TEST_F(SwitchRewriteTest, basic) {
       type);
 }
 
+TEST_F(SwitchRewriteTest, valuesEqualToElse) {
+  const auto type = ROW({"a"}, {BIGINT()});
+  testRewrite("if(a > 1, a, a)", "a", type);
+  testRewrite(
+      "case when a > 1 then 5 when a > 2 then 5 else 5 end", "5", type);
+  testRewrite(
+      "case when a > 1 then 1 when a > 2 then 2 when a > 3 then 5 else 5 end",
+      "case when a > 1 then 1 when a > 2 then 2 else 5 end",
+      type);
+  // Only trailing values equal to the else value are removed.
+  testRewrite(
+      "case when a > 1 then 5 when a > 2 then 1 else 5 end",
+      "case when a > 1 then 5 when a > 2 then 1 else 5 end",
+      type);
+  // A true condition makes its value the new else value.
+  testRewrite("case when a > 1 then a when true then a end", "a", type);
+
+  testRewrite("case a when 1 then 5 when 2 then 5 else 5 end", "5", type);
+  testRewrite(
+      "case a when 1 then 1 when 2 then 2 when 3 then 5 else 5 end",
+      "case a when 1 then 1 when 2 then 2 else 5 end",
+      type);
+}
+
 } // namespace
 } // namespace facebook::velox::expression
