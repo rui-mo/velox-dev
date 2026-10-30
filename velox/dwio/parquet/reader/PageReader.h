@@ -24,6 +24,7 @@
 #include "velox/dwio/common/SelectiveColumnReader.h"
 #include "velox/dwio/common/compression/Compression.h"
 #include "velox/dwio/parquet/common/RleEncodingInternal.h"
+#include "velox/dwio/parquet/reader/BigEndianDecimal.h"
 #include "velox/dwio/parquet/reader/BooleanDecoder.h"
 #include "velox/dwio/parquet/reader/ByteStreamSplitDecoder.h"
 #include "velox/dwio/parquet/reader/DeltaBpDecoder.h"
@@ -321,16 +322,8 @@ class PageReader {
         nullsFromFastPath = false;
         deltaBpDecoder_->readWithVisitor<true>(nulls, visitor);
       } else if (encoding_ == thrift::Encoding::DELTA_BYTE_ARRAY) {
-        if constexpr (
-            std::is_same_v<typename Visitor::DataType, int128_t> ||
-            std::is_same_v<typename Visitor::DataType, int64_t> ||
-            std::is_same_v<typename Visitor::DataType, int32_t>) {
-          nullsFromFastPath = false;
-          deltaByteArrDecoder_->readWithVisitor<true>(nulls, visitor);
-        } else {
-          VELOX_UNSUPPORTED(
-              "DELTA_BYTE_ARRAY decoder for non-string values only supports decimal type.");
-        }
+        nullsFromFastPath = false;
+        readDeltaByteArrayDecimals<true>(nulls, visitor);
       } else {
         directDecoder_->readWithVisitor<true>(
             nulls, visitor, nullsFromFastPath);
@@ -342,15 +335,7 @@ class PageReader {
       } else if (encoding_ == thrift::Encoding::DELTA_BINARY_PACKED) {
         deltaBpDecoder_->readWithVisitor<false>(nulls, visitor);
       } else if (encoding_ == thrift::Encoding::DELTA_BYTE_ARRAY) {
-        if constexpr (
-            std::is_same_v<typename Visitor::DataType, int128_t> ||
-            std::is_same_v<typename Visitor::DataType, int64_t> ||
-            std::is_same_v<typename Visitor::DataType, int32_t>) {
-          deltaByteArrDecoder_->readWithVisitor<false>(nulls, visitor);
-        } else {
-          VELOX_UNSUPPORTED(
-              "DELTA_BYTE_ARRAY decoder for non-string values only supports decimal type.");
-        }
+        readDeltaByteArrayDecimals<false>(nulls, visitor);
       } else {
         directDecoder_->readWithVisitor<false>(
             nulls,
@@ -358,6 +343,19 @@ class PageReader {
             !(this->type_->type()->isShortDecimal() &&
               type_->parquetType_ != thrift::Type::INT64));
       }
+    }
+  }
+
+  // Reads a DELTA_BYTE_ARRAY page with a non-string visitor. makeDecoder()
+  // rejects DELTA_BYTE_ARRAY pages of non-string columns other than
+  // FIXED_LEN_BYTE_ARRAY decimals, which are read as int64_t or int128_t.
+  template <bool hasNulls, typename Visitor>
+  void readDeltaByteArrayDecimals(const uint64_t* nulls, Visitor visitor) {
+    VELOX_DCHECK(type_->type()->isDecimal());
+    if constexpr (kIsDecimalValueType<typename Visitor::DataType>) {
+      deltaByteArrDecoder_->readWithVisitor<hasNulls>(nulls, visitor);
+    } else {
+      VELOX_UNREACHABLE();
     }
   }
 
