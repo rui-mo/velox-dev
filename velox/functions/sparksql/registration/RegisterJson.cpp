@@ -15,8 +15,8 @@
  */
 
 #include "velox/functions/lib/RegistrationHelpers.h"
-#include "velox/functions/prestosql/JsonFunctions.h"
 #include "velox/functions/sparksql/GetJsonObject.h"
+#include "velox/functions/sparksql/JsonArrayLength.h"
 #include "velox/functions/sparksql/JsonObjectKeys.h"
 #include "velox/functions/sparksql/ToJson.h"
 
