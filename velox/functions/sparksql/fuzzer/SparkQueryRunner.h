@@ -88,8 +88,14 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   /// e.g. UNKNOWN, TIME, HUGEINT or INTERVAL DAY TO SECOND.
   bool isSupported(const exec::FunctionSignature& signature) override;
 
-  /// Converts Velox query plan to Spark SQL. Supports Values -> Aggregation.
-  /// Values node is converted into reading from 'tmp' table.
+  /// Returns true if 'expr' can be converted to Spark SQL. The fuzzers call it
+  /// for constant expressions.
+  bool isConstantExprSupported(const core::TypedExprPtr& expr) override;
+
+  /// Converts Velox query plan to Spark SQL. Supports Project, Aggregation and
+  /// Window nodes over a Values node, which is converted into reading from a
+  /// temporary view of the input data. Velox Spark functions are mapped to the
+  /// Spark functions or operators they implement.
   /// @return std::nullopt for unsupported cases.
   std::optional<std::string> toSql(
       const velox::core::PlanNodePtr& plan) override;

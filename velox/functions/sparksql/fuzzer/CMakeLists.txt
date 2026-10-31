@@ -85,10 +85,12 @@ if(VELOX_ENABLE_PARQUET)
     ${GRPC_SRCS}
     SparkQueryRunner.cpp
     SparkQueryRunnerToSqlPlanNodeVisitor.cpp
+    SparkSql.cpp
     # Headers listed as sources (not FILE_SET) because they include generated
     # proto files that only exist after the custom_command runs.
     SparkQueryRunner.h
     SparkQueryRunnerToSqlPlanNodeVisitor.h
+    SparkSql.h
   )
 
   target_include_directories(velox_spark_query_runner PUBLIC ${PROJECT_BINARY_DIR}/spark/connect/)

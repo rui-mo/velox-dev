@@ -28,6 +28,8 @@
 #include "velox/functions/sparksql/aggregates/Register.h"
 #include "velox/functions/sparksql/fuzzer/SparkQueryRunner.h"
 #include "velox/functions/sparksql/registration/Register.h"
+#include "velox/functions/sparksql/window/WindowFunctionsRegistration.h"
+#include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
@@ -105,6 +107,7 @@ class SparkQueryRunnerTest : public ::testing::Test,
     velox::functions::sparksql::registerFunctions("");
     velox::aggregate::prestosql::registerAllAggregateFunctions();
     velox::functions::aggregate::sparksql::registerAggregateFunctions("");
+    velox::functions::window::sparksql::registerWindowFunctions("");
     velox::parse::registerTypeResolver();
     registerFunction<VeloxOnlyFunction, int64_t, int64_t>(
         {"velox_only_function"});
@@ -291,6 +294,126 @@ TEST_F(SparkQueryRunnerTest, DISABLED_nullRows) {
   exec::test::assertEqualResults(result.first.value(), {input});
 }
 
+// Verifies that Spark accepts the SQL generated for the expressions and returns
+// the same results as Velox. This test requires a Spark coordinator running at
+// localhost, so disable it by default.
+TEST_F(SparkQueryRunnerTest, DISABLED_expressions) {
+  auto aggregatePool = rootPool_->addAggregateChild("expressions");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(), "localhost:15002", "test", "expressions");
+
+  // Spark cannot read struct fields with empty or case-insensitively duplicate
+  // names, and reads intervals as integers from Parquet.
+  auto input = makeRowVector(
+      {"id", "c0", "c1", "b", "s", "arr", "r", "e", "iv", "dec", "a b"},
+      {makeFlatVector<int64_t>({0, 1, 2, 3, 4}),
+       makeNullableFlatVector<int32_t>(
+           {1, -2, std::nullopt, 4, std::numeric_limits<int32_t>::max()}),
+       makeNullableFlatVector<int32_t>({3, 0, 5, std::nullopt, 1}),
+       makeNullableFlatVector<bool>({true, false, std::nullopt, true, false}),
+       makeNullableFlatVector<std::string>(
+           {"abc", "a%c", std::nullopt, "x\u00e9x", " a "}),
+       makeNullableArrayVector<int32_t>(
+           {{{1, 2}}, {{}}, std::nullopt, {{3, std::nullopt}}, {{5}}}),
+       makeRowVector(
+           {"x", "X"},
+           {makeFlatVector<int32_t>({1, 2, 3, 4, 5}),
+            makeFlatVector<int32_t>({6, 7, 8, 9, 10})}),
+       makeRowVector(
+           {"", ""},
+           {makeFlatVector<int32_t>({1, 2, 3, 4, 5}),
+            makeFlatVector<std::string>({"a", "b", "c", "d", "e"})}),
+       makeNullableFlatVector<int32_t>(
+           {0, 14, std::nullopt, -3, 1'000}, INTERVAL_YEAR_MONTH()),
+       makeNullableFlatVector<int64_t>(
+           {12'345, -1, std::nullopt, 0, 99'999}, DECIMAL(10, 2)),
+       makeFlatVector<int64_t>({10, 20, 30, 40, 50})});
+
+  parse::ParseOptions options;
+  options.parseDecimalAsDouble = false;
+  options.parseIntegerAsBigint = false;
+  auto verify = [&](const core::PlanNodePtr& plan) {
+    SCOPED_TRACE(queryRunner->toSql(plan).value_or("<unsupported>"));
+    auto sparkResults = queryRunner->executeAndReturnVector(plan);
+    ASSERT_EQ(sparkResults.second, ReferenceQueryErrorCode::kSuccess);
+    auto veloxResults =
+        exec::test::AssertQueryBuilder(plan).copyResults(pool());
+    exec::test::assertEqualResults(sparkResults.first.value(), {veloxResults});
+  };
+
+  const std::vector<std::string> expressions = {
+      "add(c0, c1)",
+      "subtract(c0, -1)",
+      "c0 IN (1, 4)",
+      "if(b, c0, c1)",
+      "CASE WHEN b THEN s WHEN NOT b THEN 'it''s' END",
+      "coalesce(c0, c1, 2)",
+      "like(s, 'a#%c', '#')",
+      "like(s, 'a%')",
+      "size(arr, true)",
+      "size(arr, false)",
+      "array_insert(arr, 1, c0, false)",
+      "trim('a', s)",
+      "ltrim(' ', s)",
+      "transform(arr, x -> add(x, c0))",
+      "zip_with(arr, arr, (x, y) -> multiply(x, y))",
+      "\"a b\"",
+      "e",
+      "iv",
+      "dec",
+      "add(dec, 1.5)",
+      "cast(c0 as varchar)",
+      "try_cast(s as integer)",
+      "cast(null as integer)",
+      "concat(s, '\u00e9${x}')",
+      "array_contains(arr, -3)",
+  };
+  for (const auto& expression : expressions) {
+    verify(
+        exec::test::PlanBuilder(pool())
+            .setParseOptions(options)
+            .values({input})
+            .project({expression})
+            .planNode());
+  }
+
+  const auto rowType = asRowType(input->type());
+  const auto r = std::make_shared<core::FieldAccessTypedExpr>(
+      rowType->findChild("r"), "r");
+  verify(
+      exec::test::PlanBuilder(pool())
+          .values({input})
+          .projectExpressions(
+              {std::make_shared<core::FieldAccessTypedExpr>(INTEGER(), r, "X"),
+               std::make_shared<core::DereferenceTypedExpr>(INTEGER(), r, 0),
+               std::make_shared<core::ConstantTypedExpr>(
+                   VARBINARY(), Variant::binary(""))})
+          .planNode());
+
+  verify(
+      exec::test::PlanBuilder(pool())
+          .values({input})
+          .singleAggregation(
+              {"b"},
+              {"sum(c0)", "count(c1)", "max(s)", "sum(distinct c1)", "count()"},
+              {"", "b", "", "", ""})
+          .planNode());
+
+  verify(
+      exec::test::PlanBuilder(pool())
+          .setParseOptions(options)
+          .values({input})
+          .window(
+              {"row_number() over (partition by b order by id)",
+               "sum(c0) over (partition by b order by id "
+               "rows between 1 preceding and current row)",
+               "nth_value(c0, 2) over (partition by b order by id "
+               "rows between unbounded preceding and unbounded following)",
+               "first_ignore_null(c1) over (partition by b order by id "
+               "rows between unbounded preceding and current row)"})
+          .planNode());
+}
+
 TEST_F(SparkQueryRunnerTest, classifyError) {
   using fuzzer::SparkQueryRunner;
   // UNRESOLVED_ROUTINE.
@@ -447,7 +570,7 @@ TEST_F(SparkQueryRunnerTest, toSql) {
                   .planNode();
   EXPECT_EQ(
       queryRunner->toSql(plan),
-      "SELECT c1, avg(c0) as a0 FROM (tmp) GROUP BY c1");
+      "SELECT c1, avg(c0) AS a0 FROM (tmp) GROUP BY c1");
 
   plan = exec::test::PlanBuilder()
              .tableScan("tmp", dataType)
@@ -456,7 +579,7 @@ TEST_F(SparkQueryRunnerTest, toSql) {
              .planNode();
   EXPECT_EQ(
       queryRunner->toSql(plan),
-      "SELECT (a0 / c1) as p0 FROM (SELECT c1, sum(c0) as a0 FROM (tmp) GROUP BY c1)");
+      "SELECT (a0 / c1) AS p0 FROM (SELECT c1, sum(c0) AS a0 FROM (tmp) GROUP BY c1)");
 
   plan = exec::test::PlanBuilder()
              .tableScan("tmp", dataType)
@@ -464,7 +587,7 @@ TEST_F(SparkQueryRunnerTest, toSql) {
              .planNode();
   EXPECT_EQ(
       queryRunner->toSql(plan),
-      "SELECT avg(c0) filter (where c2) as a0, avg(c1) as a1 FROM (tmp)");
+      "SELECT avg(c0) FILTER (WHERE c2) AS a0, avg(c1) AS a1 FROM (tmp)");
 
   auto data =
       makeRowVector({makeFlatVector<int64_t>({}), makeFlatVector<int64_t>({})});
@@ -473,7 +596,67 @@ TEST_F(SparkQueryRunnerTest, toSql) {
              .singleAggregation({}, {"sum(distinct c0)"})
              .planNode();
   EXPECT_EQ(
-      queryRunner->toSql(plan), "SELECT sum(distinct c0) as a0 FROM (t_0)");
+      queryRunner->toSql(plan), "SELECT sum(DISTINCT c0) AS a0 FROM (t_0)");
+
+  plan = exec::test::PlanBuilder()
+             .values({data})
+             .partialAggregation({}, {"sum(c0)"})
+             .planNode();
+  EXPECT_EQ(queryRunner->toSql(plan), std::nullopt);
+
+  plan = exec::test::PlanBuilder()
+             .values({data})
+             .window(
+                 {"sum(c1) over (partition by c0 order by c1 desc nulls first "
+                  "rows between 1 preceding and current row)",
+                  "rank() over (partition by c0 order by c1 desc nulls first)"})
+             .planNode();
+  EXPECT_EQ(
+      queryRunner->toSql(plan),
+      "SELECT c0, c1, sum(c1) OVER (PARTITION BY c0 ORDER BY c1 DESC NULLS "
+      "FIRST ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS w0, rank() OVER "
+      "(PARTITION BY c0 ORDER BY c1 DESC NULLS FIRST) AS w1 FROM (t_0)");
+
+  // Intervals are read from Parquet as integers.
+  data = makeRowVector(
+      {"c0", "a b"},
+      {makeFlatVector<int32_t>({}, INTERVAL_YEAR_MONTH()),
+       makeFlatVector<int64_t>({})});
+  plan = exec::test::PlanBuilder().values({data}).project({"c0"}).planNode();
+  EXPECT_EQ(
+      queryRunner->toSql(plan),
+      "SELECT c0 AS c0 FROM (SELECT make_ym_interval(0, c0) AS c0, `a b` FROM t_0)");
+
+  data = makeRowVector({makeArrayVector<int32_t>({}, INTERVAL_YEAR_MONTH())});
+  plan = exec::test::PlanBuilder().values({data}).project({"c0"}).planNode();
+  EXPECT_EQ(queryRunner->toSql(plan), std::nullopt);
+
+  data = makeRowVector({makeFlatVector<int64_t>({}, INTERVAL_DAY_TIME())});
+  plan = exec::test::PlanBuilder().values({data}).project({"c0"}).planNode();
+  EXPECT_EQ(queryRunner->toSql(plan), std::nullopt);
+
+  data = makeRowVector({makeFlatVector<int64_t>({})});
+  plan =
+      exec::test::PlanBuilder().values({data}).project({"rand()"}).planNode();
+  EXPECT_EQ(queryRunner->toSql(plan), std::nullopt);
+}
+
+TEST_F(SparkQueryRunnerTest, isConstantExprSupported) {
+  auto aggregatePool = rootPool_->addAggregateChild("isConstantExprSupported");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(), "unused", "unused", "unused");
+  EXPECT_TRUE(queryRunner->isConstantExprSupported(
+      std::make_shared<core::ConstantTypedExpr>(
+          BIGINT(), Variant(int64_t{1}))));
+  EXPECT_TRUE(queryRunner->isConstantExprSupported(
+      std::make_shared<core::ConstantTypedExpr>(
+          makeArrayVector<int32_t>({{1, 2}}))));
+  EXPECT_FALSE(queryRunner->isConstantExprSupported(
+      std::make_shared<core::ConstantTypedExpr>(
+          TIMESTAMP(), Variant(Timestamp(0, 1)))));
+  EXPECT_FALSE(queryRunner->isConstantExprSupported(
+      std::make_shared<core::ConstantTypedExpr>(
+          HUGEINT(), Variant(int128_t{1}))));
 }
 
 } // namespace

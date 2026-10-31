@@ -40,6 +40,7 @@
 #include "velox/exec/fuzzer/PrestoSql.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/functions/sparksql/fuzzer/SparkQueryRunnerToSqlPlanNodeVisitor.h"
+#include "velox/functions/sparksql/fuzzer/SparkSql.h"
 #include "velox/functions/sparksql/fuzzer/spark/connect/base.pb.h"
 #include "velox/functions/sparksql/fuzzer/spark/connect/relations.pb.h"
 #include "velox/vector/arrow/Bridge.h"
@@ -51,12 +52,13 @@ using namespace facebook::velox::common::testutil;
 
 namespace {
 
-// Returns 'vector' with the children of null rows set to null recursively.
-// Velox leaves them undefined, e.g. uninitialized after flattening a
+// Returns 'vector' with the children of null rows set to null and the fields
+// of nested structs named by toSparkFieldNames recursively. Velox leaves the
+// children of null rows undefined, e.g. uninitialized after flattening a
 // dictionary vector with nulls, but they are converted when exported to Arrow,
-// which fails for timestamps that cannot be converted to microseconds.
-// 'vector' must be flattened.
-VectorPtr setNullsOfChildren(const VectorPtr& vector) {
+// which fails for timestamps that cannot be converted to microseconds. The
+// names of the top-level fields are kept. 'vector' must be flattened.
+VectorPtr toSparkVector(const VectorPtr& vector, bool topLevel = false) {
   auto* pool = vector->pool();
   switch (vector->encoding()) {
     case VectorEncoding::Simple::ROW: {
@@ -68,7 +70,9 @@ VectorPtr setNullsOfChildren(const VectorPtr& vector) {
         std::iota(rawIndices, rawIndices + row->size(), 0);
       }
       std::vector<VectorPtr> children;
+      std::vector<TypePtr> childTypes;
       children.reserve(row->childrenSize());
+      childTypes.reserve(row->childrenSize());
       for (const auto& child : row->children()) {
         VectorPtr newChild = child;
         if (indices) {
@@ -76,33 +80,58 @@ VectorPtr setNullsOfChildren(const VectorPtr& vector) {
               row->nulls(), indices, row->size(), child);
           BaseVector::flattenVector(newChild);
         }
-        children.push_back(setNullsOfChildren(newChild));
+        children.push_back(toSparkVector(newChild));
+        childTypes.push_back(children.back()->type());
       }
+      const auto& rowType = row->type()->asRow();
       return std::make_shared<RowVector>(
-          pool, row->type(), row->nulls(), row->size(), std::move(children));
+          pool,
+          ROW(topLevel ? rowType.names() : toSparkFieldNames(rowType),
+              std::move(childTypes)),
+          row->nulls(),
+          row->size(),
+          std::move(children));
     }
     case VectorEncoding::Simple::ARRAY: {
       auto* array = vector->asUnchecked<ArrayVector>();
+      auto elements = toSparkVector(array->elements());
       return std::make_shared<ArrayVector>(
           pool,
-          array->type(),
+          ARRAY(elements->type()),
           array->nulls(),
           array->size(),
           array->offsets(),
           array->sizes(),
-          setNullsOfChildren(array->elements()));
+          std::move(elements));
     }
     case VectorEncoding::Simple::MAP: {
       auto* map = vector->asUnchecked<MapVector>();
+      auto keys = toSparkVector(map->mapKeys());
+      auto values = toSparkVector(map->mapValues());
       return std::make_shared<MapVector>(
           pool,
-          map->type(),
+          MAP(keys->type(), values->type()),
           map->nulls(),
           map->size(),
           map->offsets(),
           map->sizes(),
-          setNullsOfChildren(map->mapKeys()),
-          setNullsOfChildren(map->mapValues()));
+          std::move(keys),
+          std::move(values));
+    }
+    case VectorEncoding::Simple::FLAT: {
+      // Parquet cannot store year-month intervals. Write the number of months
+      // as integers, which the generated SQL converts back to intervals.
+      if (vector->type()->isIntervalYearMonth()) {
+        auto* flat = vector->asUnchecked<FlatVector<int32_t>>();
+        return std::make_shared<FlatVector<int32_t>>(
+            pool,
+            INTEGER(),
+            flat->nulls(),
+            flat->size(),
+            flat->values(),
+            std::vector<BufferPtr>{});
+      }
+      return vector;
     }
     default:
       return vector;
@@ -115,8 +144,19 @@ void writeToFile(
     memory::MemoryPool* pool) {
   VELOX_CHECK_GT(data.size(), 0);
 
+  std::vector<VectorPtr> sparkData;
+  sparkData.reserve(data.size());
+  for (const auto& vector : data) {
+    // When vector is dictionary-encoded, complex types are not supported in
+    // exportFlattenedVector. Flatten the vector before writing to Parquet.
+    // https://github.com/facebookincubator/velox/issues/10397
+    VectorPtr flattened = vector;
+    BaseVector::flattenVector(flattened);
+    sparkData.push_back(toSparkVector(flattened, /*topLevel=*/true));
+  }
+
   auto options = std::make_shared<dwio::common::WriterOptions>();
-  options->schema = data[0]->type();
+  options->schema = asRowType(sparkData[0]->type());
   options->memoryPool = pool;
   // Spark does not recognize int64-timestamp written as nano precision in
   // Parquet.
@@ -135,13 +175,8 @@ void writeToFile(
       dwio::common::getWriterFactory(dwio::common::FileFormat::PARQUET)
           ->createWriter(std::move(sink), options);
 
-  for (const auto& vector : data) {
-    // When vector is dictionary-encoded, complex types are not supported in
-    // exportFlattenedVector. Flatten the vector before writing to Parquet.
-    // https://github.com/facebookincubator/velox/issues/10397
-    VectorPtr flattened = vector;
-    BaseVector::flattenVector(flattened);
-    writer->write(setNullsOfChildren(flattened));
+  for (const auto& vector : sparkData) {
+    writer->write(vector);
   }
   writer->close();
 }
@@ -451,6 +486,18 @@ bool SparkQueryRunner::isSupported(const exec::FunctionSignature& signature) {
   return true;
 }
 
+bool SparkQueryRunner::isConstantExprSupported(const core::TypedExprPtr& expr) {
+  try {
+    toSparkSql(expr);
+  } catch (const VeloxException& e) {
+    if (e.errorCode() != error_code::kUnsupported) {
+      throw;
+    }
+    return false;
+  }
+  return true;
+}
+
 std::optional<std::string> SparkQueryRunner::toSql(
     const velox::core::PlanNodePtr& plan) {
   exec::test::PrestoSqlPlanNodeVisitorContext context;
@@ -537,6 +584,7 @@ SparkQueryRunner::executeAndReturnVector(const core::PlanNodePtr& plan) {
   }
 
   auto result = executeQuery(*sql);
+  VLOG(1) << "Spark query: " << *sql;
   if (!result.errorCode.has_value()) {
     return std::make_pair(
         std::move(result.data), exec::test::ReferenceQueryErrorCode::kSuccess);

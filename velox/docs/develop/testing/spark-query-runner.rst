@@ -71,6 +71,28 @@ the image and run below command to start Spark connect server in it.
 You can then provide the Spark Query Runner with the SQL query and the data to run the
 query on. The tool will execute the query on Spark and return results as Velox data format.
 
+SQL Generation
+--------------
+
+The Spark Query Runner converts Velox plans that consist of Values, Project,
+single-step Aggregation and Window nodes to Spark SQL. Expressions are translated
+to the Spark SQL equivalents, e.g. ``add(a, b)`` becomes ``(a + b)``,
+``like(s, p, e)`` becomes ``(s LIKE p ESCAPE e)`` and ``first_ignore_null(x)``
+becomes ``first(x, true)``. Constants become literals of the same type, e.g.
+``CAST(-5 AS INT)`` and ``timestamp_micros(1000L)``. Other functions are called
+by their names. Plans, expressions, types and values that cannot be expressed in
+Spark SQL with the same semantics, e.g. nondeterministic functions, partial
+aggregations, sorted aggregations, RANGE frames with offsets, intervals day to
+second, HUGEINT and timestamps with nanoseconds, are reported as not supported by
+the reference DB. ``isConstantExprSupported`` returns false for such constants,
+so the expression fuzzer generates them as columns.
+
+The input data is written to Parquet files, which Spark reads as temporary views.
+Spark cannot read struct fields with empty or case-insensitively duplicate names,
+so the fields of such structs are named ``col1``, ``col2``, etc. in the files and
+in the generated SQL. Year-month intervals are written as the number of months and
+converted back by ``make_ym_interval``.
+
 Error Handling
 --------------
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_executable(velox_spark_query_runner_test SparkQueryRunnerTest.cpp)
+add_executable(velox_spark_query_runner_test SparkQueryRunnerTest.cpp SparkSqlTest.cpp)
 
 add_test(
   NAME velox_spark_query_runner_test
@@ -24,6 +24,7 @@ target_link_libraries(
   velox_spark_query_runner_test
   PRIVATE
     velox_functions_spark_aggregates
+    velox_functions_spark_window
     velox_spark_query_runner
     velox_functions_spark
     velox_exec_test_lib
