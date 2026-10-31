@@ -19,8 +19,11 @@
 #include <fmt/compile.h>
 #include <folly/Conv.h>
 #include <folly/Expected.h>
+#include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Status.h"
@@ -613,9 +616,9 @@ struct Converter<TypeKind::VARCHAR, void, TPolicy> {
         return str;
       }
 
-      // Implementation below is close to String.of(double) of Java. For
-      // example, for some rare cases the result differs in precision by
-      // the least significant bit.
+      // Implementation below matches Double.toString and Float.toString of
+      // Java 19 and later. Earlier Java versions sometimes use more digits
+      // than needed, e.g. 9.999999999999999E22 for 1.0E23 (JDK-4511638).
       if (FOLLY_UNLIKELY(std::isinf(val) || std::isnan(val))) {
         return folly::to<std::string>(val);
       }
@@ -625,16 +628,7 @@ struct Converter<TypeKind::VARCHAR, void, TPolicy> {
         normalizeStandardNotation(str);
         return str;
       }
-      // Precision of float is at most 8 significant decimal digits. Precision
-      // of double is at most 17 significant decimal digits.
-      std::string str;
-      if constexpr (std::is_same_v<T, float>) {
-        str = fmt::format(FMT_COMPILE("{:.7E}"), val);
-      } else {
-        str = fmt::format(FMT_COMPILE("{:.16E}"), val);
-      }
-      normalizeScientificNotation(str);
-      return str;
+      return toScientificNotation(val);
     }
 
     return folly::to<std::string>(val);
@@ -664,45 +658,81 @@ struct Converter<TypeKind::VARCHAR, void, TPolicy> {
     }
   }
 
-  /// Normalize the given floating-point scientific notation string in place, by
-  /// removing the trailing 0s of the coefficient as well as the leading '+' and
-  /// 0s of the exponent. For example, for the given string '3.0000000E+005',
-  /// replace it with '3.0E5'. For '-1.2340000E-010', replace it with
-  /// '-1.234E-10'.
-  static void normalizeScientificNotation(std::string& str) {
-    size_t idxE = str.find('E');
-    VELOX_DCHECK_NE(
-        idxE,
-        std::string::npos,
-        "Expect a character 'E' in scientific notation.");
-
-    int endCoef = idxE - 1;
-    while (endCoef >= 0 && str[endCoef] == '0') {
-      --endCoef;
+ private:
+  // Returns a finite non-zero 'val' in the computerized scientific notation of
+  // Java's Double.toString and Float.toString, e.g. '1.03220576E9' or
+  // '-1.0E-5'. Uses the shortest decimal that rounds to 'val'. Like Java, if
+  // that decimal has a single digit, uses the closest decimal with two digits
+  // instead, e.g. '4.9E-324' rather than '5.0E-324' for the smallest positive
+  // double.
+  template <typename T>
+  static std::string toScientificNotation(T val) {
+    std::string digits;
+    // The default format of fmt uses the shortest decimal that rounds to
+    // 'val', e.g. '1032205760' or '5e-324'.
+    auto exponent = parseDecimal(fmt::format(FMT_COMPILE("{}"), val), digits);
+    if (digits.size() == 1) {
+      // The closest decimal with two digits differs from the shortest one only
+      // for subnormal values. Then it is closer to 'val', so it rounds to 'val'
+      // as well.
+      exponent = parseDecimal(fmt::format(FMT_COMPILE("{:.1e}"), val), digits);
     }
-    VELOX_DCHECK_GT(endCoef, 0, "Coefficient should not be all zeros.");
 
-    int pos = endCoef + 1;
-    if (str[endCoef] == '.') {
-      pos++;
+    std::string result;
+    if (val < 0) {
+      result += '-';
     }
-    str[pos++] = 'E';
+    result += digits[0];
+    result += '.';
+    if (digits.size() == 1) {
+      result += '0';
+    } else {
+      result.append(digits, 1);
+    }
+    result += 'E';
+    result += std::to_string(exponent);
+    return result;
+  }
 
-    size_t startExp = idxE + 1;
-    if (str[startExp] == '-') {
-      str[pos++] = '-';
-      startExp++;
+  // Parses 'str', a finite non-zero floating-point value formatted by fmt,
+  // e.g. '-1032205760', '0.0001234' or '1.2e-05'. Stores its significant
+  // digits without leading and trailing zeros in 'digits' and returns the
+  // decimal exponent of the first one.
+  static int32_t parseDecimal(std::string_view str, std::string& digits) {
+    int32_t exponent = 0;
+    if (const auto ePos = str.find('e'); ePos != std::string_view::npos) {
+      auto exponentStr = str.substr(ePos + 1);
+      if (exponentStr.front() == '+') {
+        exponentStr.remove_prefix(1);
+      }
+      std::from_chars(
+          exponentStr.data(),
+          exponentStr.data() + exponentStr.size(),
+          exponent);
+      str = str.substr(0, ePos);
     }
-    while (startExp < str.length() &&
-           (str[startExp] == '0' || str[startExp] == '+')) {
-      startExp++;
+    if (str.front() == '-') {
+      str.remove_prefix(1);
     }
-    VELOX_DCHECK_LT(
-        startExp, str.length(), "Exponent should not be all zeros.");
-    str.replace(pos, str.length() - startExp, str, startExp);
-    pos += str.length() - startExp;
 
-    str.resize(pos);
+    // Decimal exponent of the first character of 'str'.
+    exponent += static_cast<int32_t>(std::min(str.find('.'), str.size())) - 1;
+    digits.clear();
+    for (const auto c : str) {
+      if (c == '.') {
+        continue;
+      }
+      if (digits.empty() && c == '0') {
+        --exponent;
+        continue;
+      }
+      digits += c;
+    }
+    VELOX_DCHECK(!digits.empty(), "Expect a non-zero value: {}", str);
+    while (digits.back() == '0') {
+      digits.pop_back();
+    }
+    return exponent;
   }
 };
 

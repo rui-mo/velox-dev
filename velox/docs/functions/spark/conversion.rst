@@ -260,6 +260,24 @@ Invalid examples
 
 Cast to String
 --------------
+From floating-point types
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Casting a REAL or DOUBLE to STRING returns plain notation if the absolute value is at least :math:`10^{-3}` and less
+than :math:`10^7`, and computerized scientific notation otherwise. The result has the fewest digits that round-trip to
+the input value, like Spark on Java 19 and later. On earlier Java versions, Spark sometimes returns more digits, e.g.
+'9.999999999999999E22' for 1.0E23.
+
+Valid examples
+
+::
+
+  SELECT cast(12345.0D as string); -- '12345.0'
+  SELECT cast(1.0E-5 as string); -- '1.0E-5'
+  SELECT cast(1.0E23 as string); -- '1.0E23'
+  SELECT cast(cast(1032205760 as float) as string); -- '1.03220576E9'
+  SELECT cast(cast('NaN' as double) as string); -- 'NaN'
+
 From DECIMAL
 ^^^^^^^^^^^^
 
