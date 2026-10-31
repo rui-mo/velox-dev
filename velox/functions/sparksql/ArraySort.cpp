@@ -27,14 +27,16 @@ std::shared_ptr<exec::VectorFunction> makeArraySortAsc(
   }
 
   VELOX_CHECK_EQ(inputArgs.size(), 1);
-  // Nulls are considered largest.
+  // Null elements are largest, while nulls nested in the elements are smallest
+  // as in Spark's ordering of arrays and structs.
   return facebook::velox::functions::makeArraySort(
       name,
       inputArgs,
       config,
       true /*ascending*/,
       false /*nullsFirst*/,
-      false /*throwOnNestedNull*/);
+      false /*throwOnNestedNull*/,
+      true /*nestedNullsFirst*/);
 }
 
 std::shared_ptr<exec::VectorFunction> makeArraySortDesc(

@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include <optional>
+
 #include "velox/expression/VectorFunction.h"
 #include "velox/functions/lib/SimpleComparisonMatcher.h"
 
@@ -28,13 +30,17 @@ namespace facebook::velox::functions {
 /// placed last.
 /// @param throwOnNestedNull If true, throw an exception if a nested null is
 /// encountered.
+/// @param nestedNullsFirst If true, nulls nested in the elements are ordered
+/// before non-null values when comparing the elements; otherwise, after them.
+/// Defaults to 'nullsFirst'. Ignored if 'throwOnNestedNull' is true.
 std::shared_ptr<exec::VectorFunction> makeArraySort(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config,
     bool ascending,
     bool nullsFirst,
-    bool throwOnNestedNull);
+    bool throwOnNestedNull,
+    std::optional<bool> nestedNullsFirst = std::nullopt);
 
 /// Creates array_sort with a lambda function.
 ///

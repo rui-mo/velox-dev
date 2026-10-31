@@ -31,6 +31,7 @@ BufferPtr sortElements(
     const BaseVector& inputElements,
     bool ascending,
     bool nullsFirst,
+    bool nestedNullsFirst,
     exec::EvalCtx& context,
     bool throwOnNestedNull) {
   const SelectivityVector inputElementRows =
@@ -43,7 +44,8 @@ BufferPtr sortElements(
   BufferPtr indices = allocateIndices(inputElements.size(), context.pool());
   vector_size_t* rawIndices = indices->asMutable<vector_size_t>();
 
-  CompareFlags flags{.nullsFirst = nullsFirst, .ascending = ascending};
+  // Null elements are handled below, so the flags only apply to nested nulls.
+  CompareFlags flags{.nullsFirst = nestedNullsFirst, .ascending = ascending};
   if (throwOnNestedNull) {
     flags.nullHandlingMode =
         CompareFlags::NullHandlingMode::kNullAsIndeterminate;
@@ -97,6 +99,7 @@ void applyComplexType(
     ArrayVector* inputArray,
     bool ascending,
     bool nullsFirst,
+    bool nestedNullsFirst,
     exec::EvalCtx& context,
     VectorPtr& resultElements,
     bool throwOnNestedNull) {
@@ -107,6 +110,7 @@ void applyComplexType(
       *inputElements,
       ascending,
       nullsFirst,
+      nestedNullsFirst,
       context,
       throwOnNestedNull);
   resultElements = BaseVector::transpose(indices, std::move(inputElements));
@@ -246,10 +250,12 @@ class ArraySortFunction : public exec::VectorFunction {
   explicit ArraySortFunction(
       bool ascending,
       bool nullsFirst,
-      bool throwOnNestedNull)
+      bool throwOnNestedNull,
+      bool nestedNullsFirst)
       : ascending_{ascending},
         nullsFirst_{nullsFirst},
-        throwOnNestedNull_{throwOnNestedNull} {}
+        throwOnNestedNull_{throwOnNestedNull},
+        nestedNullsFirst_{nestedNullsFirst} {}
 
   // Execute function.
   void apply(
@@ -308,6 +314,7 @@ class ArraySortFunction : public exec::VectorFunction {
           inputArray,
           ascending_,
           nullsFirst_,
+          nestedNullsFirst_,
           context,
           resultElements,
           throwOnNestedNull_);
@@ -327,6 +334,7 @@ class ArraySortFunction : public exec::VectorFunction {
   const bool ascending_;
   const bool nullsFirst_;
   const bool throwOnNestedNull_;
+  const bool nestedNullsFirst_;
 };
 
 class ArraySortLambdaFunction : public exec::VectorFunction {
@@ -370,6 +378,7 @@ class ArraySortLambdaFunction : public exec::VectorFunction {
         *newElements,
         ascending_,
         false /*nullsFirst*/,
+        false /*nestedNullsFirst*/,
         context,
         throwOnNestedNull_);
     auto sortedElements = BaseVector::wrapInDictionary(
@@ -403,9 +412,10 @@ std::shared_ptr<exec::VectorFunction> createTyped(
     const std::vector<exec::VectorFunctionArg>& /*inputArgs*/,
     bool ascending,
     bool nullsFirst,
-    bool throwOnNestedNull = true) {
+    bool throwOnNestedNull,
+    bool nestedNullsFirst) {
   return std::make_shared<ArraySortFunction<kind>>(
-      ascending, nullsFirst, throwOnNestedNull);
+      ascending, nullsFirst, throwOnNestedNull, nestedNullsFirst);
 }
 
 // Define function signature.
@@ -496,11 +506,16 @@ std::shared_ptr<exec::VectorFunction> makeArraySort(
     const core::QueryConfig& /*config*/,
     bool ascending,
     bool nullsFirst,
-    bool throwOnNestedNull) {
+    bool throwOnNestedNull,
+    std::optional<bool> nestedNullsFirst) {
   const auto elementType = inputArgs.front().type->childAt(0);
   if (elementType->isUnknown()) {
     return createTyped<TypeKind::UNKNOWN>(
-        inputArgs, ascending, nullsFirst, throwOnNestedNull);
+        inputArgs,
+        ascending,
+        nullsFirst,
+        throwOnNestedNull,
+        nestedNullsFirst.value_or(nullsFirst));
   }
 
   return VELOX_DYNAMIC_TYPE_DISPATCH(
@@ -509,7 +524,8 @@ std::shared_ptr<exec::VectorFunction> makeArraySort(
       inputArgs,
       ascending,
       nullsFirst,
-      throwOnNestedNull);
+      throwOnNestedNull,
+      nestedNullsFirst.value_or(nullsFirst));
 }
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> arraySortSignatures(

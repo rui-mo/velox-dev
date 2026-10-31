@@ -273,6 +273,8 @@ arrayAscNullSmallest() {
   };
 }
 
+// Null elements are largest, while nulls nested in the elements are smallest as
+// in Spark's ordering of arrays.
 inline std::vector<std::optional<
     std::vector<std::optional<std::vector<std::optional<int32_t>>>>>>
 arrayAscNullLargest() {
@@ -283,9 +285,9 @@ arrayAscNullLargest() {
       {{A({1, 3}), A({1, 3, 5}), A({2, 1})}},
       {{A({1, 3}), A({2, 1}), std::nullopt}},
       {{A({}),
-        A({3, std::nullopt}),
         A({std::nullopt, 6}),
         A({std::nullopt, 8}),
+        A({3, std::nullopt}),
         std::nullopt}},
   };
 }
@@ -353,6 +355,8 @@ inline NestedVector<variant> rowAscNullSmallest() {
   };
 }
 
+// Null rows are largest, while nulls nested in the rows are smallest as in
+// Spark's ordering of structs.
 inline NestedVector<variant> rowAscNullLargest() {
   variant nullRow = variant(TypeKind::ROW);
   variant nullInt = variant(TypeKind::INTEGER);
@@ -360,7 +364,7 @@ inline NestedVector<variant> rowAscNullLargest() {
       {},
       {nullRow, nullRow},
       {variant::row({1, "blue"}), variant::row({2, "red"}), nullRow},
-      {variant::row({1, "green"}), variant::row({nullInt, "red"})},
+      {variant::row({nullInt, "red"}), variant::row({1, "green"})},
   };
 }
 } // namespace facebook::velox::functions::sparksql

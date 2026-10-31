@@ -171,7 +171,8 @@ Array Functions
 .. spark:function:: array_sort(array(E)) -> array(E)
 
     Returns an array which has the sorted order of the input array(E). The elements of array(E) must
-    be orderable. NULL and NaN elements will be placed at the end of the returned array, with NaN elements appearing before NULL elements for floating-point types. ::
+    be orderable. NULL and NaN elements will be placed at the end of the returned array, with NaN elements appearing before NULL elements for floating-point types.
+    When comparing elements of complex types, NULL values nested in the elements are smaller than non-NULL values. ::
 
         SELECT array_sort(array(1, 2, 3)); -- [1, 2, 3]
         SELECT array_sort(array(3, 2, 1)); -- [1, 2, 3]
