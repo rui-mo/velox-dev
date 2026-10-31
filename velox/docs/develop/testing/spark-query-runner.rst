@@ -49,6 +49,13 @@ bundled in the Spark distribution, so no extra jar is needed.
 
     "$SPARK_HOME"/sbin/start-connect-server.sh
 
+Spark 4.3 runs on Java 17, 21 and 25. Run it on Java 21 to test casts of REAL and DOUBLE to
+VARCHAR. Like Velox, ``Float.toString`` and ``Double.toString`` of Java 19 and later return
+the shortest digits that round-trip, while Java 17 sometimes returns more digits, e.g.
+``9.999999999999999E22`` for ``1.0E23``. ``scripts/spark-fuzzer/setup.sh`` installs Java 21,
+Spark and the configs for the Velox fuzzers, and ``scripts/spark-fuzzer/spark-server.sh start``
+starts the server. See ``scripts/spark-fuzzer/README.md``.
+
 The Spark Query Runner sets the Spark SQL configs that match the configuration used by
 the Velox fuzzers for its session, e.g. ANSI mode disabled and the session timezone set
 to ``America/Los_Angeles``. It also disables Spark's generated code, i.e. sets
