@@ -191,6 +191,38 @@ struct RegexpReplaceFunction {
   detail::ReCache cache_;
 };
 
+// Calls 'function' with a constant group id of 1 appended to the arguments.
+// Spark extracts group 1 if the group id is omitted.
+class DefaultGroupIdFunction final : public exec::VectorFunction {
+ public:
+  explicit DefaultGroupIdFunction(
+      std::shared_ptr<exec::VectorFunction> function)
+      : function_(std::move(function)) {}
+
+  void apply(
+      const SelectivityVector& rows,
+      std::vector<VectorPtr>& args,
+      const TypePtr& outputType,
+      exec::EvalCtx& context,
+      VectorPtr& result) const final {
+    std::vector<VectorPtr> argsWithGroupId{args};
+    argsWithGroupId.push_back(
+        BaseVector::createConstant(INTEGER(), 1, rows.end(), context.pool()));
+    function_->apply(rows, argsWithGroupId, outputType, context, result);
+  }
+
+ private:
+  const std::shared_ptr<exec::VectorFunction> function_;
+};
+
+// Returns 'inputArgs' with an INTEGER group id argument appended.
+std::vector<exec::VectorFunctionArg> withGroupIdArg(
+    const std::vector<exec::VectorFunctionArg>& inputArgs) {
+  auto argsWithGroupId = inputArgs;
+  argsWithGroupId.push_back({INTEGER(), nullptr});
+  return argsWithGroupId;
+}
+
 } // namespace
 
 // These functions delegate to the RE2-based implementations in
@@ -225,6 +257,10 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config) {
+  if (inputArgs.size() == 2) {
+    return std::make_shared<DefaultGroupIdFunction>(
+        makeRegexExtractAll(name, withGroupIdArg(inputArgs), config));
+  }
   return makeRe2ExtractAll(
       name,
       inputArgs,

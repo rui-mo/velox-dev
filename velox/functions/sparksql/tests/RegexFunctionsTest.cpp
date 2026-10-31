@@ -289,6 +289,29 @@ TEST_F(RegexFunctionsTest, regexpExtractAllGroupId) {
       "No group -1 in regex 'b'");
 }
 
+TEST_F(RegexFunctionsTest, regexpExtractAllDefaultGroupId) {
+  // The group id defaults to 1.
+  auto data = makeRowVector({
+      makeFlatVector<std::string>({"100-200, 300-400", "abcb", "xyz"}),
+      makeFlatVector<std::string>({"([0-9]+)-([0-9]+)", "(b)(c)?", "b"}),
+  });
+
+  auto expected =
+      makeArrayVectorFromJson<std::string>({"[\"100\", \"300\"]", "[]", "[]"});
+  assertEqualVectors(
+      expected, evaluate("regexp_extract_all(c0, '([0-9]+)-([0-9]+)')", data));
+
+  expected = makeArrayVectorFromJson<std::string>(
+      {"[\"100\", \"300\"]", "[\"b\", \"b\"]", "[]"});
+  assertEqualVectors(expected, evaluate("regexp_extract_all(c0, c1)", data));
+
+  expected = makeArrayVectorFromJson<std::string>({"[]", "null", "[]"});
+  assertEqualVectors(
+      expected, evaluate("try(regexp_extract_all(c0, 'b'))", data));
+  VELOX_ASSERT_USER_THROW(
+      evaluate("regexp_extract_all(c0, 'b')", data), "No group 1 in regex 'b'");
+}
+
 TEST_F(RegexFunctionsTest, regexpExtractAllUnmatchedGroup) {
   // A group that does not participate in a match produces an empty string.
   auto data = makeRowVector({

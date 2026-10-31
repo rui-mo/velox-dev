@@ -62,7 +62,7 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
 
 /// Returns empty strings for matches in which the group does not participate,
 /// and throws for an out-of-range group id only if the pattern matches the
-/// string.
+/// string. The group id defaults to 1.
 std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
