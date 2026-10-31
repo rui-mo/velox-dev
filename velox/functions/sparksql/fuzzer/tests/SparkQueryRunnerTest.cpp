@@ -466,6 +466,57 @@ TEST_F(SparkQueryRunnerTest, DISABLED_simplifyConditionals) {
       "The value of 'pos' argument must not exceed the number of bits");
 }
 
+// Verifies that with the projection session configs, Spark evaluates
+// expressions whose results its optimizer can infer without evaluating them, so
+// that errors in them fail the query as in Velox. This test requires a Spark
+// coordinator running at localhost, so disable it by default.
+TEST_F(SparkQueryRunnerTest, DISABLED_unevaluatedExpressions) {
+  auto aggregatePool = rootPool_->addAggregateChild("unevaluatedExpressions");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(),
+      "localhost:15002",
+      "test",
+      "unevaluatedExpressions",
+      fuzzer::SparkQueryRunner::kDefaultQueryTimeout,
+      fuzzer::SparkQueryRunner::projectionSessionConfigs());
+  auto input = makeRowVector({makeFlatVector<int32_t>({1})});
+
+  const auto integerLiteral = [](int32_t value) {
+    return std::make_shared<core::ConstantTypedExpr>(INTEGER(), value);
+  };
+  // bit_get(1, 100) throws on position 100.
+  const auto bitGet = [&](int32_t position) {
+    return std::make_shared<core::CallTypedExpr>(
+        TINYINT(), "bit_get", integerLiteral(1), integerLiteral(position));
+  };
+  // Spark's NullPropagation, SimplifyBinaryComparison and
+  // SimplifyExtractValueOps optimizer rules replace these expressions with
+  // false, true and bit_get(1, 0).
+  const std::vector<core::TypedExprPtr> expressions = {
+      std::make_shared<core::CallTypedExpr>(BOOLEAN(), "isnull", bitGet(100)),
+      std::make_shared<core::CallTypedExpr>(
+          BOOLEAN(), "equalto", bitGet(100), bitGet(100)),
+      std::make_shared<core::CallTypedExpr>(
+          TINYINT(),
+          "get",
+          std::make_shared<core::CallTypedExpr>(
+              ARRAY(TINYINT()), "array", bitGet(0), bitGet(100)),
+          integerLiteral(0)),
+  };
+  for (const auto& expression : expressions) {
+    SCOPED_TRACE(expression->toString());
+    auto plan = exec::test::PlanBuilder(pool())
+                    .values({input})
+                    .projectExpressions({expression})
+                    .planNode();
+    auto result = queryRunner->executeAndReturnVector(plan);
+    EXPECT_EQ(result.second, ReferenceQueryErrorCode::kReferenceQueryFail);
+    VELOX_ASSERT_USER_THROW(
+        exec::test::AssertQueryBuilder(plan).copyResults(pool()),
+        "The value of 'pos' argument must not exceed the number of bits");
+  }
+}
+
 // Verifies that Spark accepts the SQL generated for the expressions and returns
 // the same results as Velox. This test requires a Spark coordinator running at
 // localhost, so disable it by default.
