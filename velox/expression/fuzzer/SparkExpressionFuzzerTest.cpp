@@ -96,6 +96,10 @@ std::unordered_set<std::string> sparkSkippedFunctions() {
       "sequence",
       // Spark's array_sort only accepts comparator lambdas.
       "array_sort(array(T),constant function(T,U)) -> array(T)",
+      // Spark's interpreted levenshtein treats a null threshold as 0, while
+      // its generated code returns null, as Velox does. SparkQueryRunner
+      // evaluates expressions without generated code.
+      "levenshtein(varchar,varchar,integer) -> integer",
   };
   for (const auto& [name, _] : facebook::velox::getFunctionSignatures()) {
     if (!isSupportedFunction(name)) {
