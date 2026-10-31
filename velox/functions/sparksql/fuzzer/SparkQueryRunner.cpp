@@ -408,11 +408,17 @@ SparkQueryRunner::projectionSessionConfigs() {
       // Multiply, e.g. it evaluates 1 + try_add(c0, 2) as c0 + (1 + 2), which
       // doesn't return null on overflow. SimplifyConditionals removes the
       // condition of an if whose branches are the same, so errors in the
-      // condition are lost.
+      // condition are lost. NullPropagation, SimplifyBinaryComparison and
+      // SimplifyExtractValueOps replace isnull(e) and e = e with false and
+      // true if e is not nullable, and get(array(e0, e1), 0) with e0, without
+      // evaluating e and e1, so errors in them are lost too.
       {"spark.sql.optimizer.excludedRules",
        "org.apache.spark.sql.catalyst.optimizer.ConstantFolding,"
        "org.apache.spark.sql.catalyst.optimizer.ReorderAssociativeOperator,"
-       "org.apache.spark.sql.catalyst.optimizer.SimplifyConditionals"},
+       "org.apache.spark.sql.catalyst.optimizer.SimplifyConditionals,"
+       "org.apache.spark.sql.catalyst.optimizer.NullPropagation,"
+       "org.apache.spark.sql.catalyst.optimizer.SimplifyBinaryComparison,"
+       "org.apache.spark.sql.catalyst.optimizer.SimplifyExtractValueOps"},
       {"spark.sql.subexpressionElimination.enabled", "false"},
   };
   return kConfigs;

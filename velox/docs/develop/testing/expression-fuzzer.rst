@@ -207,7 +207,11 @@ rows whose results are already null. The configs also exclude Spark's ``ReorderA
 optimizer rule, which ignores the evaluation mode of nested additions and multiplications, e.g.
 it evaluates ``1 + try_add(c0, 2)`` as ``c0 + (1 + 2)``, which does not return null on overflow,
 and Spark's ``SimplifyConditionals`` optimizer rule, which removes the condition of an ``if``
-whose branches are the same even if the condition throws.
+whose branches are the same even if the condition throws. For the same reason, they exclude
+Spark's ``NullPropagation``, ``SimplifyBinaryComparison`` and ``SimplifyExtractValueOps``
+optimizer rules, which replace e.g. ``isnull(e)`` and ``e = e`` with ``false`` and ``true`` if
+``e`` is not nullable, and ``get(array(e0, e1), 0)`` with ``e0``, without evaluating ``e`` and
+``e1``.
 
 Velox does not evaluate the arguments of a function with default null behavior on rows where
 another argument is null, and ignores errors in conjuncts whose result is determined by other
