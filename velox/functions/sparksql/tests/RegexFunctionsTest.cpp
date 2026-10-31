@@ -237,6 +237,27 @@ TEST_F(RegexFunctionsTest, regexMatchRegistration) {
   EXPECT_EQ(regexp_extract("abc", "a."), "ab");
 }
 
+TEST_F(RegexFunctionsTest, regexpExtractGroupId) {
+  auto data = makeRowVector({
+      makeFlatVector<std::string>({"abcb", "xyz"}),
+      makeFlatVector<int32_t>({0, 5}),
+  });
+
+  // The group id is checked only if the pattern matches the string.
+  auto expected = makeFlatVector<std::string>({"", ""});
+  assertEqualVectors(expected, evaluate("regexp_extract(c0, 'q', 1)", data));
+  assertEqualVectors(expected, evaluate("regexp_extract(c0, 'q', -1)", data));
+
+  expected = makeFlatVector<std::string>({"b", ""});
+  assertEqualVectors(expected, evaluate("regexp_extract(c0, 'b', c1)", data));
+
+  expected = makeNullableFlatVector<std::string>({std::nullopt, ""});
+  assertEqualVectors(
+      expected, evaluate("try(regexp_extract(c0, 'b', 1))", data));
+  VELOX_ASSERT_USER_THROW(
+      evaluate("regexp_extract(c0, 'b', 1)", data), "No group 1 in regex 'b'");
+}
+
 TEST_F(RegexFunctionsTest, regexpExtractAllGroupId) {
   auto data = makeRowVector({
       makeFlatVector<std::string>({"abcb", "xyz"}),

@@ -31,7 +31,12 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config) {
-  return makeRe2Extract(name, inputArgs, config, /*emptyNoMatch=*/false);
+  return makeRe2Extract(
+      name,
+      inputArgs,
+      config,
+      /*emptyNoMatch=*/false,
+      /*checkGroupIdOnMatch=*/false);
 }
 
 std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
