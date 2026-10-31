@@ -75,6 +75,18 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtractEmptyNoMatch(
   return makeRe2Extract(name, inputArgs, config, /*emptyNoMatch=*/true);
 }
 
+std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config) {
+  return makeRe2ExtractAll(
+      name,
+      inputArgs,
+      config,
+      /*emptyNoMatch=*/false,
+      /*checkGroupIdOnMatch=*/false);
+}
+
 class Re2FunctionsTest : public test::FunctionBaseTest {
  public:
   static void SetUpTestCase() {
@@ -90,7 +102,7 @@ class Re2FunctionsTest : public test::FunctionBaseTest {
         re2ExtractSignatures(),
         makeRegexExtractEmptyNoMatch);
     exec::registerStatefulVectorFunction(
-        "re2_extract_all", re2ExtractAllSignatures(), makeRe2ExtractAll);
+        "re2_extract_all", re2ExtractAllSignatures(), makeRegexExtractAll);
     exec::registerStatefulVectorFunction("like", likeSignatures(), makeLike);
   }
 
