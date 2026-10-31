@@ -349,6 +349,7 @@ String Functions
     Third part is rest of ``input`` from indices pos + len which is 1-based,
     if ``len`` is negative, it will be set to size of ``replace``,
     if pos + len is negative, it refers to -(pos + len)th element before the end of ``input``.
+    pos - 1 and pos + len are clamped to the range of 32-bit integers on overflow.
     ::
 
         SELECT overlay('Spark SQL', '_', 6, -1); -- "Spark_SQL"
@@ -356,6 +357,8 @@ String Functions
         SELECT overlay('Spark SQL', 'ANSI ', 7, 0); -- "Spark ANSI SQL"
         SELECT overlay('Spark SQL', 'tructured', 2, 4); -- "Structured SQL"
         SELECT overlay('Spark SQL', '_', -6, 3); -- "_Sql"
+        SELECT overlay('abc', 'xyz', 2147483647, 1); -- "abcxyz"
+        SELECT overlay('abc', 'xyz', -2147483648, 0); -- "xyzabc"
 
 .. spark:function:: printf(format, arguments...) -> varchar
 

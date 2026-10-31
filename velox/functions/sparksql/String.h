@@ -700,8 +700,14 @@ struct OverlayFunctionBase {
       StringView replace,
       int32_t pos,
       int32_t len) {
+    // Spark computes 'pos - 1' and 'pos + length' as 64-bit integers and clamps
+    // them to the 32-bit range. It clamps 'pos + length' to at least
+    // INT32_MIN + 1 because 'substring' of length INT32_MAX from INT32_MIN ends
+    // one character before the end of the input.
+    const int64_t firstLength = std::clamp<int64_t>(
+        static_cast<int64_t>(pos) - 1, INT32_MIN, INT32_MAX);
     // Calculate and append first part.
-    auto startAndLength = substring<isAscii, isVarchar>(input, 1, pos - 1);
+    auto startAndLength = substring<isAscii, isVarchar>(input, 1, firstLength);
     append<isAscii, isVarchar>(result, input, startAndLength);
 
     // Append second part.
@@ -718,7 +724,8 @@ struct OverlayFunctionBase {
         length = replace.size();
       }
     }
-    int64_t start = (int64_t)pos + (int64_t)length;
+    const int64_t start = std::clamp<int64_t>(
+        static_cast<int64_t>(pos) + length, INT32_MIN + 1LL, INT32_MAX);
     startAndLength = substring<isAscii, isVarchar>(input, start, INT32_MAX);
     append<isAscii, isVarchar>(result, input, startAndLength);
   }

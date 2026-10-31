@@ -893,6 +893,16 @@ TEST_F(StringTest, overlayVarchar) {
   EXPECT_EQ(overlay("Spark SQL", "##", 0, 4), "##rk SQL");
   EXPECT_EQ(overlay("Spark SQL", "##", -10, -1), "##park SQL");
   EXPECT_EQ(overlay("Spark SQL", "##", -10, 4), "##rk SQL");
+
+  // 'pos - 1' and 'pos + len' are clamped to the 32-bit range on overflow.
+  constexpr auto kMax = std::numeric_limits<int32_t>::max();
+  constexpr auto kMin = std::numeric_limits<int32_t>::min();
+  EXPECT_EQ(overlay("abc", "xyz", kMax, 1), "abcxyz");
+  EXPECT_EQ(overlay("abc", "xyz", kMax, -1), "abcxyz");
+  EXPECT_EQ(overlay("abc", "xyz", kMin, 0), "xyzabc");
+  EXPECT_EQ(overlay("abc", "xyz", kMin, -1), "xyzabc");
+  EXPECT_EQ(overlay("abc", "xyz", kMin, kMax), "xyzc");
+  EXPECT_EQ(overlay("abc", "xyz", 2, kMax), "axyz");
 }
 
 TEST_F(StringTest, overlayVarbinary) {
@@ -923,6 +933,16 @@ TEST_F(StringTest, overlayVarbinary) {
   EXPECT_EQ(overlay("Spark SQL", "##", 0, 4), "##rk SQL");
   EXPECT_EQ(overlay("Spark SQL", "##", -10, -1), "##park SQL");
   EXPECT_EQ(overlay("Spark SQL", "##", -10, 4), "##rk SQL");
+
+  // 'pos - 1' and 'pos + len' are clamped to the 32-bit range on overflow.
+  constexpr auto kMax = std::numeric_limits<int32_t>::max();
+  constexpr auto kMin = std::numeric_limits<int32_t>::min();
+  EXPECT_EQ(overlay("abc", "xyz", kMax, 1), "abcxyz");
+  EXPECT_EQ(overlay("abc", "xyz", kMax, -1), "abcxyz");
+  EXPECT_EQ(overlay("abc", "xyz", kMin, 0), "xyzabc");
+  EXPECT_EQ(overlay("abc", "xyz", kMin, -1), "xyzabc");
+  EXPECT_EQ(overlay("abc", "xyz", kMin, kMax), "xyzc");
+  EXPECT_EQ(overlay("abc", "xyz", 2, kMax), "axyz");
 }
 
 TEST_F(StringTest, repeat) {
