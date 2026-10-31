@@ -141,6 +141,15 @@ mismatch is a bug in a Velox function: the expression fuzzer documentation
 describes the known differences that the framework handles, e.g. errors that
 Velox suppresses.
 
+Floating-point results are compared with a tolerance, but differences in the
+last bit change the results of discontinuous functions, e.g. `width_bucket`,
+remainder, `floor` and casts to strings. Velox uses glibc's math functions, while Java's
+`Math` uses the fdlibm algorithms or HotSpot intrinsics. With glibc 2.35 and
+Java 21, they differ for 55% of random inputs of `cbrt`, 14% for `atan2`, 12%
+for `hypot`, 11% for `log10`, 7% for `cosh`, 6% for `acos`, 5% for `asin`, 3%
+for `atan` and less than 1% for `sin`, `cos`, `tan`, `sinh`, `tanh`, `exp`,
+`expm1`, `log`, `log1p` and `pow`.
+
 ## Known issues
 
 `known-issues.txt` lists functions with known, unfixed issues. `run` passes
