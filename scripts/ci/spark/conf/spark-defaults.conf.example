@@ -13,4 +13,8 @@ spark.sql.parquet.int96RebaseModeInRead CORRECTED
 # Velox keeps the last value of duplicate map keys by default
 # ('throw_exception_on_duplicate_map_keys').
 spark.sql.mapKeyDedupPolicy LAST_WIN
+# Velox matches the interpreted evaluation of Spark expressions, which differs
+# from the generated code of some expressions.
+spark.sql.codegen.wholeStage false
+spark.sql.codegen.factoryMode NO_CODEGEN
 spark.ui.enabled false

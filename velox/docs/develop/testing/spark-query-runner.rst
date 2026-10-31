@@ -51,7 +51,12 @@ bundled in the Spark distribution, so no extra jar is needed.
 
 The Spark Query Runner sets the Spark SQL configs that match the configuration used by
 the Velox fuzzers for its session, e.g. ANSI mode disabled and the session timezone set
-to ``America/Los_Angeles``. The settings in
+to ``America/Los_Angeles``. It also disables Spark's generated code, i.e. sets
+``spark.sql.codegen.wholeStage`` to ``false`` and ``spark.sql.codegen.factoryMode`` to
+``NO_CODEGEN``, because the generated code of some expressions differs from their
+interpreted evaluation, which Velox matches. For example, it validates constant arguments,
+e.g. the time zone of ``from_utc_timestamp``, even if no row needs them, and
+``map_concat`` skips the arguments after a null one. The settings in
 ``scripts/ci/spark/conf/spark-defaults.conf.example`` apply the same configs to the
 whole server. If Spark Connect server is started successfully, you can see log as
 below. The server will be started at `localhost:15002`.
@@ -102,8 +107,8 @@ class 42), unsupported features (class 0A), resource limit errors (classes 53 an
 Spark internal errors (class XX) and fatal JVM errors, e.g. ``OutOfMemoryError``, mean
 Spark cannot run the query, so the query is reported as not supported by the reference
 DB and the results are not verified. Other errors, e.g. division by zero with ANSI mode
-enabled, are reported as a reference query failure. A syntax error means the SQL
-generated from the Velox plan is invalid and fails the test. A stopped SparkContext
+enabled, are reported as a reference query failure. A syntax
+error means the SQL generated from the Velox plan is invalid and fails the test. A stopped SparkContext
 fails the test as well because all following queries would fail. A query that runs
 longer than the timeout, 5 minutes by default, is interrupted and reported as not
 supported. Each failed query is logged with the ``Spark query`` prefix.
