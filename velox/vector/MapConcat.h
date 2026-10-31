@@ -34,7 +34,9 @@ struct MapConcatConfig {
 /// Merge multiple map vectors into a single MapVector.  All inputs are provided
 /// as DecodedVectors.  For each selected row, entries from all inputs are
 /// merged.  When duplicate keys exist across inputs, the entry from the last
-/// input wins.  Only rows selected in 'rows' are processed; unselected rows
+/// input wins.  Output entries follow the order in which their keys first
+/// appear in the inputs, so a duplicate key keeps the position of its first
+/// occurrence.  Only rows selected in 'rows' are processed; unselected rows
 /// get size 0 in the output.
 MapVectorPtr mapConcat(
     memory::MemoryPool* pool,

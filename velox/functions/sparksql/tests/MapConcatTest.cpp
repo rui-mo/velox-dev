@@ -108,6 +108,38 @@ TEST_F(MapConcatTest, duplicateKeys) {
       "Duplicate map key a2 was found");
 }
 
+TEST_F(MapConcatTest, duplicateKeysOrder) {
+  // A duplicate key keeps the position of its first occurrence and takes the
+  // value of its last occurrence.
+  auto data = makeRowVector({
+      SparkFunctionBaseTest::makeMapVector<int32_t, int32_t>({
+          {{1, 10}, {2, 20}, {3, 30}},
+          {{5, 50}, {6, 60}, {7, 70}, {8, 80}},
+      }),
+      SparkFunctionBaseTest::makeMapVector<int32_t, int32_t>({
+          {{4, 40}, {2, 21}, {1, 11}},
+          {{8, 81}, {9, 90}, {5, 51}},
+      }),
+  });
+
+  auto result = evaluate("map_keys(map_concat(c0, c1, c0))", data);
+  velox::test::assertEqualVectors(
+      makeArrayVectorFromJson<int32_t>({"[1, 2, 3, 4]", "[5, 6, 7, 8, 9]"}),
+      result);
+
+  result = evaluate("map_values(map_concat(c0, c1, c0))", data);
+  velox::test::assertEqualVectors(
+      makeArrayVectorFromJson<int32_t>(
+          {"[10, 20, 30, 40]", "[50, 60, 70, 80, 90]"}),
+      result);
+
+  result = evaluate("map_values(map_concat(c0, c1))", data);
+  velox::test::assertEqualVectors(
+      makeArrayVectorFromJson<int32_t>(
+          {"[11, 21, 30, 40]", "[51, 60, 70, 81, 90]"}),
+      result);
+}
+
 TEST_F(MapConcatTest, singleArg) {
   vector_size_t size = 1'000;
 

@@ -22,7 +22,8 @@ Map Functions
 .. spark:function:: map_concat(map1(K,V), map2(K,V), ..., mapN(K,V)) -> map(K,V)
 
     Returns the union of all the given maps. If a key is found in multiple given maps,
-    by default that key's value in the resulting map comes from the last one of those maps.
+    by default that key's value in the resulting map comes from the last one of those maps,
+    and the key keeps the position of its first occurrence.
     If configuration `throw_exception_on_duplicate_map_keys` is set true, throws exception
     for duplicate keys. Allows single map input.  ::
 

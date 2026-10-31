@@ -27,6 +27,8 @@ struct UpdateSource {
   int8_t sourceIndex;
 };
 
+// Merges the entries of one map row. Visits the distinct keys in the order of
+// their first occurrence, each with the source of its last occurrence.
 template <typename T>
 class UpdateMapRow {
  public:
@@ -36,32 +38,41 @@ class UpdateMapRow {
       const DecodedVector* decoded,
       vector_size_t entryIndex,
       int8_t sourceIndex) {
-    auto [iter, inserted] = values_.insert_or_assign(
-        decoded->valueAt<T>(entryIndex), UpdateSource{entryIndex, sourceIndex});
+    auto [iter, inserted] = positions_.try_emplace(
+        decoded->valueAt<T>(entryIndex), sources_.size());
+    if (inserted) {
+      sources_.push_back(UpdateSource{entryIndex, sourceIndex});
+    } else {
+      sources_[iter->second] = UpdateSource{entryIndex, sourceIndex};
+    }
     return inserted;
   }
 
   template <typename F>
   void forEachEntry(F&& func) const {
-    for (auto& [_, source] : values_) {
+    for (const auto& source : sources_) {
       func(source);
     }
   }
 
   size_t size() const {
-    return values_.size();
+    return sources_.size();
   }
 
   void reserve(size_t capacity) {
-    values_.reserve(capacity);
+    positions_.reserve(capacity);
+    sources_.reserve(capacity);
   }
 
   void clear() {
-    values_.clear();
+    positions_.clear();
+    sources_.clear();
   }
 
  private:
-  folly::F14FastMap<T, UpdateSource> values_;
+  // Maps each key to the position of its entry in 'sources_'.
+  folly::F14FastMap<T, vector_size_t> positions_;
+  std::vector<UpdateSource> sources_;
 };
 
 template <>
@@ -71,29 +82,36 @@ class UpdateMapRow<void> {
       const DecodedVector* decoded,
       vector_size_t entryIndex,
       int8_t sourceIndex) {
-    auto [iter, inserted] = references_.insert_or_assign(
+    auto [iter, inserted] = positions_.try_emplace(
         Reference{decoded->base(), decoded->index(entryIndex)},
-        UpdateSource{entryIndex, sourceIndex});
+        sources_.size());
+    if (inserted) {
+      sources_.push_back(UpdateSource{entryIndex, sourceIndex});
+    } else {
+      sources_[iter->second] = UpdateSource{entryIndex, sourceIndex};
+    }
     return inserted;
   }
 
   template <typename F>
   void forEachEntry(F&& func) const {
-    for (auto& [_, source] : references_) {
+    for (const auto& source : sources_) {
       func(source);
     }
   }
 
   size_t size() const {
-    return references_.size();
+    return sources_.size();
   }
 
   void reserve(size_t capacity) {
-    references_.reserve(capacity);
+    positions_.reserve(capacity);
+    sources_.reserve(capacity);
   }
 
   void clear() {
-    references_.clear();
+    positions_.clear();
+    sources_.clear();
   }
 
  private:
@@ -112,7 +130,8 @@ class UpdateMapRow<void> {
     }
   };
 
-  folly::F14FastMap<Reference, UpdateSource, ReferenceHasher> references_;
+  folly::F14FastMap<Reference, vector_size_t, ReferenceHasher> positions_;
+  std::vector<UpdateSource> sources_;
 };
 
 // Returns the error message string for a duplicate key.
