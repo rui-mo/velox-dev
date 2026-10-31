@@ -46,6 +46,16 @@ using facebook::velox::fuzzer::DataSpec;
 /// the generated SQL is invalid and throws, as does a stopped SparkContext.
 /// Each error is logged with the 'Spark query' prefix to help with triaging
 /// fuzzer runs.
+///
+/// Spark evaluates queries without generated code, i.e. with
+/// spark.sql.codegen.wholeStage=false and spark.sql.codegen.factoryMode set to
+/// NO_CODEGEN, because the generated code of some expressions differs from
+/// their interpreted evaluation, which defines their semantics. For example,
+/// it validates constant arguments, e.g. the time zone of from_utc_timestamp
+/// or the pattern of date_format, before it evaluates any row, so the query
+/// fails even if no row needs them, e.g. because the other arguments are null
+/// in all rows. The generated code of map_concat skips the arguments after a
+/// null one. Velox matches the interpreted evaluation.
 class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
  public:
   static constexpr std::chrono::seconds kDefaultQueryTimeout{300};
@@ -67,7 +77,8 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
 
   /// Spark SQL configs that make Spark match the default behavior of Velox
   /// Spark functions: ANSI mode off, America/Los_Angeles session time zone and
-  /// the last value of duplicate map keys wins.
+  /// the last value of duplicate map keys wins. They also disable generated
+  /// code.
   static const std::unordered_map<std::string, std::string>&
   defaultSessionConfigs();
 
@@ -157,6 +168,13 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
 
   // Sets the session configs on the first call.
   void ensureSessionConfigured();
+
+  // Sets 'configs' for the session.
+  void setSessionConfigs(
+      const std::unordered_map<std::string, std::string>& configs);
+
+  void updateSessionConfigs(
+      const spark::connect::ConfigRequest::Operation& operation);
 
   // Interrupts all running operations of the session.
   void interruptSession();

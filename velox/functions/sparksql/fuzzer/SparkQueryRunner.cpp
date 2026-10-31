@@ -396,6 +396,10 @@ SparkQueryRunner::defaultSessionConfigs() {
       // Velox keeps the last value of duplicate map keys unless
       // 'throw_exception_on_duplicate_map_keys' is enabled.
       {"spark.sql.mapKeyDedupPolicy", "LAST_WIN"},
+      // Spark's generated code differs from the interpreted evaluation of
+      // some expressions. See the comment of the class.
+      {"spark.sql.codegen.wholeStage", "false"},
+      {"spark.sql.codegen.factoryMode", "NO_CODEGEN"},
   };
   return kConfigs;
 }
@@ -677,16 +681,28 @@ void SparkQueryRunner::ensureSessionConfigured() {
   if (sessionConfigured_) {
     return;
   }
+  setSessionConfigs(sessionConfigs_);
+  sessionConfigured_ = true;
+}
 
-  ConfigRequest request;
-  request.set_session_id(sessionId_);
-  *request.mutable_user_context() = userContext();
-  auto* set = request.mutable_operation()->mutable_set();
-  for (const auto& [key, value] : sessionConfigs_) {
+void SparkQueryRunner::setSessionConfigs(
+    const std::unordered_map<std::string, std::string>& configs) {
+  ConfigRequest::Operation operation;
+  auto* set = operation.mutable_set();
+  for (const auto& [key, value] : configs) {
     auto* pair = set->add_pairs();
     pair->set_key(key);
     pair->set_value(value);
   }
+  updateSessionConfigs(operation);
+}
+
+void SparkQueryRunner::updateSessionConfigs(
+    const ConfigRequest::Operation& operation) {
+  ConfigRequest request;
+  request.set_session_id(sessionId_);
+  *request.mutable_user_context() = userContext();
+  *request.mutable_operation() = operation;
 
   ConfigResponse response;
   grpc::ClientContext context;
@@ -694,9 +710,8 @@ void SparkQueryRunner::ensureSessionConfigured() {
   const auto status = stub_->Config(&context, request, &response);
   VELOX_CHECK(
       status.ok(),
-      "Failed to set Spark session configs: {}",
+      "Failed to update Spark session configs: {}",
       status.error_message());
-  sessionConfigured_ = true;
 }
 
 void SparkQueryRunner::interruptSession() {

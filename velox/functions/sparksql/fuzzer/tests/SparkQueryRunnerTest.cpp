@@ -330,7 +330,7 @@ TEST_F(SparkQueryRunnerTest, DISABLED_constantFolding) {
       fuzzer::SparkQueryRunner::projectionSessionConfigs());
   const auto mapType = MAP(VARCHAR(), BIGINT());
   auto input = makeRowVector({
-      makeNullableMapVector<std::string, int64_t>({std::nullopt, std::nullopt}),
+      makeNullableFlatVector<int32_t>({std::nullopt, std::nullopt}),
   });
 
   // map_from_entries throws on the null key. Velox skips it since 'c0' is null
@@ -343,14 +343,19 @@ TEST_F(SparkQueryRunnerTest, DISABLED_constantFolding) {
       "map_from_entries",
       std::make_shared<core::ConstantTypedExpr>(
           BaseVector::wrapInConstant(1, 0, entries)));
+  const auto size = std::make_shared<core::CallTypedExpr>(
+      INTEGER(),
+      "size",
+      mapFromEntries,
+      std::make_shared<core::ConstantTypedExpr>(BOOLEAN(), Variant(true)));
   auto plan =
       exec::test::PlanBuilder(pool())
           .values({input})
           .projectExpressions({std::make_shared<core::CallTypedExpr>(
-              mapType,
-              "map_concat",
-              std::make_shared<core::FieldAccessTypedExpr>(mapType, "c0"),
-              mapFromEntries)})
+              INTEGER(),
+              "add",
+              std::make_shared<core::FieldAccessTypedExpr>(INTEGER(), "c0"),
+              size)})
           .planNode();
   auto result = queryRunner->executeAndReturnVector(plan);
   ASSERT_EQ(result.second, ReferenceQueryErrorCode::kSuccess);
@@ -515,6 +520,47 @@ TEST_F(SparkQueryRunnerTest, DISABLED_unevaluatedExpressions) {
         exec::test::AssertQueryBuilder(plan).copyResults(pool()),
         "The value of 'pos' argument must not exceed the number of bits");
   }
+}
+
+// Verifies that Spark evaluates expressions without generated code, which
+// differs from the interpreted evaluation of some expressions. This test
+// requires a Spark coordinator running at localhost, so disable it by default.
+TEST_F(SparkQueryRunnerTest, DISABLED_interpretedEvaluation) {
+  auto aggregatePool = rootPool_->addAggregateChild("interpretedEvaluation");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(),
+      "localhost:15002",
+      "test",
+      "interpretedEvaluation",
+      fuzzer::SparkQueryRunner::kDefaultQueryTimeout,
+      fuzzer::SparkQueryRunner::projectionSessionConfigs());
+  const auto verify = [&](const core::PlanNodePtr& plan) {
+    auto result = queryRunner->executeAndReturnVector(plan);
+    ASSERT_EQ(result.second, ReferenceQueryErrorCode::kSuccess);
+    exec::test::assertEqualResults(
+        result.first.value(),
+        {exec::test::AssertQueryBuilder(plan).copyResults(pool())});
+  };
+  const auto makePlan = [&](const std::optional<Timestamp>& timestamp) {
+    return exec::test::PlanBuilder()
+        .values({makeRowVector(
+            {makeNullableFlatVector<Timestamp>({timestamp, std::nullopt})})})
+        .project({"from_utc_timestamp(c0, 'invalid')"})
+        .planNode();
+  };
+
+  // The time zone is invalid. Generated code validates it before evaluating
+  // any row. Velox doesn't validate it since 'c0' is null in all rows.
+  verify(makePlan(std::nullopt));
+
+  // The query fails if a row needs the time zone.
+  auto plan = makePlan(Timestamp(0, 0));
+  EXPECT_EQ(
+      queryRunner->executeAndReturnVector(plan).second,
+      ReferenceQueryErrorCode::kReferenceQueryFail);
+  VELOX_ASSERT_USER_THROW(
+      exec::test::AssertQueryBuilder(plan).copyResults(pool()),
+      "Unknown time zone: 'invalid'");
 }
 
 // Verifies that Spark accepts the SQL generated for the expressions and returns

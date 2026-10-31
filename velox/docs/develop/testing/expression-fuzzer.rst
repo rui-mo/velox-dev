@@ -213,6 +213,13 @@ optimizer rules, which replace e.g. ``isnull(e)`` and ``e = e`` with ``false`` a
 ``e`` is not nullable, and ``get(array(e0, e1), 0)`` with ``e0``, without evaluating ``e`` and
 ``e1``.
 
+Spark's generated code validates constant arguments before it evaluates any row, e.g. the time
+zone of ``from_utc_timestamp`` and the pattern of ``date_format``, so it throws even if no row
+needs them, e.g. because the other arguments are null in all rows. Velox validates them only for
+the rows that need them, as Spark does without generated code. The generated code of other
+expressions returns different results, e.g. ``map_concat`` skips the arguments after a null one.
+So Spark Query Runner disables generated code.
+
 Velox does not evaluate the arguments of a function with default null behavior on rows where
 another argument is null, and ignores errors in conjuncts whose result is determined by other
 conjuncts, while Spark evaluates the arguments and throws. When only Spark throws, the fuzzer
