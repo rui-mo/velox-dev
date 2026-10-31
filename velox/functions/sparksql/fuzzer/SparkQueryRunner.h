@@ -71,6 +71,15 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   static const std::unordered_map<std::string, std::string>&
   defaultSessionConfigs();
 
+  /// Spark SQL configs for queries that only project expressions, such as
+  /// those of the expression fuzzer. Spark evaluates constant expressions when
+  /// it optimizes a query, so an error fails the query even if no row needs
+  /// the expression, e.g. when another argument of the function is null. Velox
+  /// evaluates them like other expressions. These configs disable constant
+  /// folding, which window frames with offsets need.
+  static const std::unordered_map<std::string, std::string>&
+  projectionSessionConfigs();
+
   /// Returns how a Spark query that failed with 'status' should be reported.
   /// Throws if it is a parse error or the Spark Connect server is not usable.
   static exec::test::ReferenceQueryErrorCode classifyError(

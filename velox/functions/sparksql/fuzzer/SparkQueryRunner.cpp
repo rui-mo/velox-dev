@@ -401,6 +401,16 @@ SparkQueryRunner::defaultSessionConfigs() {
 }
 
 // static
+const std::unordered_map<std::string, std::string>&
+SparkQueryRunner::projectionSessionConfigs() {
+  static const std::unordered_map<std::string, std::string> kConfigs{
+      {"spark.sql.optimizer.excludedRules",
+       "org.apache.spark.sql.catalyst.optimizer.ConstantFolding"},
+  };
+  return kConfigs;
+}
+
+// static
 exec::test::ReferenceQueryErrorCode SparkQueryRunner::classifyError(
     const grpc::Status& status) {
   const auto& errorMessage = status.error_message();

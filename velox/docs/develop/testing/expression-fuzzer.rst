@@ -198,6 +198,12 @@ the following command line arguments:
 
 * ``--skip_functions``: Comma separated list of function names to skip in addition to the built-in skip list of Spark Expression Fuzzer, e.g. to exclude functions with known issues.
 
+The Spark queries run with the session configs of ``SparkQueryRunner::projectionSessionConfigs()``,
+which exclude Spark's ``ConstantFolding`` optimizer rule. Spark evaluates constant expressions
+when it optimizes a query, so an error in a constant expression would fail the whole query even
+if no row needs the expression, while Velox does not evaluate expressions on rows whose results
+are already null.
+
 If running from CLion IDE, add ``--logtostderr=1`` to see the full output.
 
 An example set of arguments to run the expression fuzzer with all features enabled is as follows:

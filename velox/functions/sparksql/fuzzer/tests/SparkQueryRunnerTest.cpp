@@ -304,6 +304,49 @@ TEST_F(SparkQueryRunnerTest, DISABLED_nullRows) {
   exec::test::assertEqualResults(result.first.value(), {input});
 }
 
+// Verifies that with the projection session configs, Spark doesn't fail the
+// query when a constant argument throws on rows that default null behavior
+// skips, as in Velox. This test requires a Spark coordinator running at
+// localhost, so disable it by default.
+TEST_F(SparkQueryRunnerTest, DISABLED_constantFolding) {
+  auto aggregatePool = rootPool_->addAggregateChild("constantFolding");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(),
+      "localhost:15002",
+      "test",
+      "constantFolding",
+      fuzzer::SparkQueryRunner::kDefaultQueryTimeout,
+      fuzzer::SparkQueryRunner::projectionSessionConfigs());
+  const auto mapType = MAP(VARCHAR(), BIGINT());
+  auto input = makeRowVector({
+      makeNullableMapVector<std::string, int64_t>({std::nullopt, std::nullopt}),
+  });
+
+  // map_from_entries throws on the null key. Velox skips it since 'c0' is null
+  // in all rows.
+  const auto entries = makeArrayOfRowVector(
+      ROW({VARCHAR(), BIGINT()}),
+      {{Variant::row({Variant::null(TypeKind::VARCHAR), 1LL})}});
+  const auto mapFromEntries = std::make_shared<core::CallTypedExpr>(
+      mapType,
+      "map_from_entries",
+      std::make_shared<core::ConstantTypedExpr>(
+          BaseVector::wrapInConstant(1, 0, entries)));
+  auto plan =
+      exec::test::PlanBuilder(pool())
+          .values({input})
+          .projectExpressions({std::make_shared<core::CallTypedExpr>(
+              mapType,
+              "map_concat",
+              std::make_shared<core::FieldAccessTypedExpr>(mapType, "c0"),
+              mapFromEntries)})
+          .planNode();
+  auto result = queryRunner->executeAndReturnVector(plan);
+  ASSERT_EQ(result.second, ReferenceQueryErrorCode::kSuccess);
+  auto veloxResults = exec::test::AssertQueryBuilder(plan).copyResults(pool());
+  exec::test::assertEqualResults(result.first.value(), {veloxResults});
+}
+
 // Verifies that Spark accepts the SQL generated for the expressions and returns
 // the same results as Velox. This test requires a Spark coordinator running at
 // localhost, so disable it by default.
