@@ -23,6 +23,7 @@
 #include "velox/core/Expressions.h"
 #include "velox/functions/prestosql/S2CellOperations.h"
 #include "velox/functions/prestosql/types/JsonType.h"
+#include "velox/type/DecimalUtil.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 namespace facebook::velox::fuzzer {
@@ -805,23 +806,35 @@ std::vector<core::TypedExprPtr> RoundArgValuesGenerator::generate(
 
 namespace {
 
-// Adds an input column of 'type' with values in [min, max] and returns an
+// Adds an input column of 'type' with values of 'generator' and returns an
 // expression that reads it.
-core::TypedExprPtr addRangeConstrainedColumn(
+core::TypedExprPtr addColumn(
     const TypePtr& type,
-    int32_t min,
-    int32_t max,
-    const VectorFuzzer::Options& options,
-    FuzzerGenerator& rng,
+    AbstractInputGeneratorPtr generator,
     ExpressionFuzzerState& state) {
   state.inputRowTypes_.emplace_back(type);
   state.inputRowNames_.emplace_back(
       fmt::format("c{}", state.inputRowTypes_.size() - 1));
-  state.customInputGenerators_.emplace_back(
-      std::make_shared<RangeConstrainedGenerator<int32_t>>(
-          rand<uint32_t>(rng), type, options.nullRatio, min, max));
+  state.customInputGenerators_.emplace_back(std::move(generator));
   return std::make_shared<core::FieldAccessTypedExpr>(
       type, state.inputRowNames_.back());
+}
+
+// Adds an input column of 'type' with values in [min, max] and returns an
+// expression that reads it.
+template <typename T>
+core::TypedExprPtr addRangeConstrainedColumn(
+    const TypePtr& type,
+    T min,
+    T max,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  return addColumn(
+      type,
+      std::make_shared<RangeConstrainedGenerator<T>>(
+          rand<uint32_t>(rng), type, options.nullRatio, min, max),
+      state);
 }
 
 } // namespace
@@ -864,6 +877,84 @@ std::vector<core::TypedExprPtr> RepeatArgValuesGenerator::generate(
   return {
       nullptr,
       addRangeConstrainedColumn(countType, -5, maxCount, options, rng, state)};
+}
+
+std::vector<core::TypedExprPtr> MakeTimestampArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_GE(signature.args.size(), 6);
+  VELOX_CHECK_LE(signature.args.size(), 7);
+  const auto& args = signature.args;
+  for (auto i = 0; i < 5; ++i) {
+    VELOX_CHECK_EQ(args[i]->kind(), TypeKind::INTEGER);
+  }
+  VELOX_CHECK(args[5]->isShortDecimal());
+  const auto [precision, scale] = getDecimalPrecisionScale(*args[5]);
+  VELOX_CHECK_EQ(scale, 6);
+
+  // Year, month, day, hour and minute.
+  std::vector<core::TypedExprPtr> inputExpressions{
+      addRangeConstrainedColumn(args[0], 1800, 2200, options, rng, state),
+      addRangeConstrainedColumn(args[1], 0, 13, options, rng, state),
+      addRangeConstrainedColumn(args[2], 0, 32, options, rng, state),
+      addRangeConstrainedColumn(args[3], -1, 24, options, rng, state),
+      addRangeConstrainedColumn(args[4], -1, 60, options, rng, state)};
+
+  // Seconds with microseconds in [-1, 61), as far as the precision allows.
+  const auto maxSeconds = std::min<int64_t>(
+      60'999'999,
+      static_cast<int64_t>(DecimalUtil::kPowersOfTen[precision]) - 1);
+  inputExpressions.push_back(
+      addRangeConstrainedColumn<int64_t>(
+          args[5], -1'000'000, maxSeconds, options, rng, state));
+
+  if (args.size() == 7) {
+    // Zones with DST, offsets that are not whole hours, and a zone that
+    // skipped a day.
+    static const std::vector<std::string> kTimeZones{
+        "UTC",
+        "America/Los_Angeles",
+        "America/New_York",
+        "America/Sao_Paulo",
+        "America/St_Johns",
+        "Europe/London",
+        "Europe/Berlin",
+        "Europe/Moscow",
+        "Asia/Shanghai",
+        "Asia/Kolkata",
+        "Asia/Kathmandu",
+        "Asia/Tokyo",
+        "Australia/Lord_Howe",
+        "Pacific/Apia",
+        "Pacific/Chatham",
+        "Pacific/Kiritimati",
+        "+00:00",
+        "-03:30",
+        "+05:45",
+        "+08:00",
+        "-12:00",
+        "+14:00"};
+    if (coinToss(rng, 0.5)) {
+      inputExpressions.push_back(
+          std::make_shared<core::ConstantTypedExpr>(
+              args[6],
+              variant(
+                  kTimeZones[rand<size_t>(rng, 0, kTimeZones.size() - 1)])));
+    } else {
+      std::vector<variant> timeZones{variant::null(TypeKind::VARCHAR)};
+      for (const auto& timeZone : kTimeZones) {
+        timeZones.emplace_back(timeZone);
+      }
+      inputExpressions.push_back(addColumn(
+          args[6],
+          std::make_shared<SetConstrainedGenerator>(
+              rand<uint32_t>(rng), args[6], timeZones),
+          state));
+    }
+  }
+  return inputExpressions;
 }
 
 } // namespace facebook::velox::fuzzer

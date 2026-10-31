@@ -313,4 +313,24 @@ class RepeatArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark make_timestamp, make_timestamp_ntz,
+/// try_make_timestamp and try_make_timestamp_ntz. Reads the fields from input
+/// columns with years in [1800, 2200] and other fields within or just outside
+/// their valid ranges, so that most rows make a timestamp. Random 32-bit
+/// fields almost always make the result null. The optional time zone is a
+/// constant or an input column of region IDs and offsets that both Velox and
+/// Spark support. Random strings are invalid time zones, for which Spark's
+/// interpreted make_timestamp throws INVALID_TIMEZONE even if ANSI mode is off,
+/// while its generated code and Velox return null.
+class MakeTimestampArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~MakeTimestampArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer
