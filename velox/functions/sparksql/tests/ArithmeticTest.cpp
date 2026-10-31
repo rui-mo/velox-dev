@@ -458,6 +458,10 @@ TEST_F(ArithmeticTest, atanh) {
   EXPECT_TRUE(std::isnan(atanh(-1.1).value_or(0)));
   EXPECT_EQ(atanh(std::nullopt), std::nullopt);
   EXPECT_TRUE(std::isnan(atanh(kNan).value_or(0)));
+
+  // Same results as Spark, which computes (ln(1 + x) - ln(1 - x)) / 2.
+  EXPECT_EQ(atanh(0.43354084359446876), 0.4642488987016947);
+  EXPECT_EQ(atanh(0.0038188250072895146), 0.0038188435713005942);
 }
 
 TEST_F(ArithmeticTest, sec) {

@@ -291,9 +291,10 @@ struct AsinhFunction {
 
 template <typename T>
 struct AtanhFunction {
-  template <typename TInput>
-  FOLLY_ALWAYS_INLINE void call(TInput& result, TInput a) {
-    result = std::atanh(a);
+  FOLLY_ALWAYS_INLINE void call(double& result, double a) {
+    // Spark computes (ln(1 + a) - ln(1 - a)) / 2 with log1p, whose result
+    // differs from std::atanh in the last bits for many inputs.
+    result = 0.5 * (std::log1p(a) - std::log1p(-a));
   }
 };
 
