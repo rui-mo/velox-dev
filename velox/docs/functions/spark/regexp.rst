@@ -39,13 +39,16 @@ See https://github.com/google/re2/wiki/Syntax for more information.
 
 .. spark:function:: regexp_extract(string, pattern) -> varchar
 
-    Returns the first substring matched by the regular expression ``pattern``
-    in ``string``.
+    Finds the first occurrence of the regular expression ``pattern`` in
+    ``string`` and returns the first capturing group. Same as
+    ``regexp_extract(string, pattern, 1)``. Throws if ``pattern`` has no
+    capturing group and matches ``string``.
 
     regexp_extract does not support column references for the ``pattern`` argument.
     Patterns must be constant values. ::
 
-        SELECT regexp_extract('1a 2b 14m', '\d+'); -- 1
+        SELECT regexp_extract('1a 2b 14m', '(\d+)([a-z]+)'); -- '1'
+        SELECT regexp_extract('1a 2b 14m', '\d+'); -- error
 
 .. spark:function:: regexp_extract(string, pattern, group) -> varchar
     :noindex:
