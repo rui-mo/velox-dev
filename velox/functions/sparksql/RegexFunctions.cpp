@@ -216,6 +216,18 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
   return result;
 }
 
+std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config) {
+  return makeRe2ExtractAll(
+      name,
+      inputArgs,
+      config,
+      /*emptyNoMatch=*/true,
+      /*checkGroupIdOnMatch=*/true);
+}
+
 void registerRegexpReplace(const std::string& prefix) {
   registerFunction<RegexpReplaceFunction, Varchar, Varchar, Varchar, Varchar>(
       {prefix + "regexp_replace"});

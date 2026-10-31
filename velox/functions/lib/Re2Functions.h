@@ -239,14 +239,21 @@ std::vector<std::shared_ptr<exec::FunctionSignature>> likeSignatures();
 /// captured.
 ///
 /// If the pattern is invalid or the group id is out of range, throws an
-/// exception. If the pattern does not match, returns null.
+/// exception. If the pattern does not match, returns an empty array.
+///
+/// If 'emptyNoMatch' is true, returns empty strings instead of nulls for
+/// matches in which the group does not participate. If 'checkGroupIdOnMatch'
+/// is true, throws for an out-of-range group id only if the pattern matches
+/// the string.
 ///
 /// If group_id parameter is not specified, extracts and returns the entire
 /// match.
 std::shared_ptr<exec::VectorFunction> makeRe2ExtractAll(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
-    const core::QueryConfig& config);
+    const core::QueryConfig& config,
+    bool emptyNoMatch,
+    bool checkGroupIdOnMatch);
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> re2ExtractAllSignatures();
 

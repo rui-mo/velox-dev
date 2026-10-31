@@ -69,9 +69,13 @@ See https://github.com/google/re2/wiki/Syntax for more information.
     :noindex:
 
     Finds all occurrences of the regular expression ``pattern`` in
-    ``string`` and returns the capturing group number ``group``::
+    ``string`` and returns the capturing group number ``group``. Returns an
+    empty string for each match in which the group does not participate.
+    Throws if ``group`` is out of range and ``pattern`` matches ``string``::
 
         SELECT regexp_extract_all('1a 2b 14m', '(\d+)([a-z]+)', 2); -- ['a', 'b', 'm']
+        SELECT regexp_extract_all('1a 2b', '([0-9]+)(x)?', 2); -- ['', '']
+        SELECT regexp_extract_all('1a 2b', 'x', 1); -- []
 
 .. spark:function:: regexp_instr(string, pattern) -> integer
 

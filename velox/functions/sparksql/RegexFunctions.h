@@ -60,6 +60,14 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config);
 
+/// Returns empty strings for matches in which the group does not participate,
+/// and throws for an out-of-range group id only if the pattern matches the
+/// string.
+std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config);
+
 /// Full implementation of RegexReplace found in SparkSQL only,
 /// due to semantic mismatches between Spark and Presto
 /// regexp_replace(string, pattern, overwrite) → string

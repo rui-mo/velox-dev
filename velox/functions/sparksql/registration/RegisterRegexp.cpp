@@ -25,7 +25,7 @@ void registerRegexpFunctions(const std::string& prefix) {
   exec::registerStatefulVectorFunction(
       prefix + "regexp_extract_all",
       re2ExtractAllSignatures(),
-      makeRe2ExtractAll);
+      makeRegexExtractAll);
   exec::registerStatefulVectorFunction(
       prefix + "rlike", re2SearchSignatures(), makeRLike);
   exec::registerStatefulVectorFunction(

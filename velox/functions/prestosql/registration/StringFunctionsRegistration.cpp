@@ -34,6 +34,18 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
   return makeRe2Extract(name, inputArgs, config, /*emptyNoMatch=*/false);
 }
 
+std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config) {
+  return makeRe2ExtractAll(
+      name,
+      inputArgs,
+      config,
+      /*emptyNoMatch=*/false,
+      /*checkGroupIdOnMatch=*/false);
+}
+
 void registerSimpleFunctions(
     const std::string& prefix,
     std::string_view defaultOwner) {
@@ -265,7 +277,7 @@ void registerStringFunctions(
   exec::registerStatefulVectorFunction(
       prefix + "regexp_extract_all",
       re2ExtractAllSignatures(),
-      makeRe2ExtractAll,
+      makeRegexExtractAll,
       {},
       /*overwrite=*/true,
       defaultOwner);

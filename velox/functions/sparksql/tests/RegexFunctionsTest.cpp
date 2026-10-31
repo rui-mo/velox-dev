@@ -237,6 +237,49 @@ TEST_F(RegexFunctionsTest, regexMatchRegistration) {
   EXPECT_EQ(regexp_extract("abc", "a."), "ab");
 }
 
+TEST_F(RegexFunctionsTest, regexpExtractAllGroupId) {
+  auto data = makeRowVector({
+      makeFlatVector<std::string>({"abcb", "xyz"}),
+      makeFlatVector<int32_t>({0, 5}),
+      makeFlatVector<std::string>({"b", "q"}),
+  });
+
+  // The group id is checked only if the pattern matches the string.
+  auto expected = makeArrayVectorFromJson<std::string>({"[]", "[]"});
+  assertEqualVectors(
+      expected, evaluate("regexp_extract_all(c0, 'q', 1)", data));
+  assertEqualVectors(
+      expected, evaluate("regexp_extract_all(c0, 'q', -1)", data));
+
+  expected = makeArrayVectorFromJson<std::string>({"[\"b\", \"b\"]", "[]"});
+  assertEqualVectors(
+      expected, evaluate("regexp_extract_all(c0, 'b', c1)", data));
+
+  expected = makeArrayVectorFromJson<std::string>({"null", "[]"});
+  assertEqualVectors(
+      expected, evaluate("try(regexp_extract_all(c0, 'b', 1))", data));
+  assertEqualVectors(
+      expected, evaluate("try(regexp_extract_all(c0, c2, 1))", data));
+  VELOX_ASSERT_USER_THROW(
+      evaluate("regexp_extract_all(c0, 'b', 1)", data),
+      "No group 1 in regex 'b'");
+  VELOX_ASSERT_USER_THROW(
+      evaluate("regexp_extract_all(c0, c2, -1)", data),
+      "No group -1 in regex 'b'");
+}
+
+TEST_F(RegexFunctionsTest, regexpExtractAllUnmatchedGroup) {
+  // A group that does not participate in a match produces an empty string.
+  auto data = makeRowVector({
+      makeFlatVector<std::string>({"abcb"}),
+      makeFlatVector<std::string>({"(x)?b"}),
+  });
+  auto expected = makeArrayVectorFromJson<std::string>({"[\"\", \"\"]"});
+  assertEqualVectors(
+      expected, evaluate("regexp_extract_all(c0, '(x)?b', 1)", data));
+  assertEqualVectors(expected, evaluate("regexp_extract_all(c0, c1, 1)", data));
+}
+
 TEST_F(RegexFunctionsTest, regexpReplaceRegistration) {
   std::string output = "teeheebc";
   auto result = testRegexpReplace("abc", "a", "teehee");
