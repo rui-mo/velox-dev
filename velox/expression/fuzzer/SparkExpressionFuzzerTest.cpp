@@ -82,6 +82,8 @@ std::unordered_set<std::string> sparkSkippedFunctions() {
       // Velox limits the number of elements by
       // 'max_elements_size_in_repeat_and_sequence', while Spark doesn't.
       "sequence",
+      // Spark's array_sort only accepts comparator lambdas.
+      "array_sort(array(T),constant function(T,U)) -> array(T)",
   };
   for (const auto& [name, _] : facebook::velox::getFunctionSignatures()) {
     if (!isSupportedFunction(name)) {
@@ -129,6 +131,8 @@ int main(int argc, char** argv) {
       // timestamp_millis(bigint) can generate timestamps out of the supported
       // range that make other functions throw VeloxRuntimeErrors.
       "timestamp_millis(bigint) -> timestamp",
+      // Fuzzer cannot generate valid 'comparator' lambda.
+      "array_sort(array(T),constant function(T,T,integer)) -> array(T)",
   };
 
   // Required by spark_partition_id function.
