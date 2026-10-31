@@ -133,6 +133,7 @@ velox_add_library(
   velox_spark_aggregation_fuzzer_lib
   INTERFACE
   HEADERS
+  AbsUnaryMinusArgTypesGenerator.h
   AddSubtractArgTypesGenerator.h
   DivideArgTypesGenerator.h
   MakeTimestampArgTypesGenerator.h

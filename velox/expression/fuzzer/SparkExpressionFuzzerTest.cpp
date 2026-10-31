@@ -32,6 +32,7 @@
 #include "velox/expression/signature_parser/ParseUtil.h"
 #include "velox/functions/prestosql/fuzzer/FloorCeilRoundArgTypesGenerator.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
+#include "velox/functions/sparksql/fuzzer/AbsUnaryMinusArgTypesGenerator.h"
 #include "velox/functions/sparksql/fuzzer/AddSubtractArgTypesGenerator.h"
 #include "velox/functions/sparksql/fuzzer/DivideArgTypesGenerator.h"
 #include "velox/functions/sparksql/fuzzer/MakeTimestampArgTypesGenerator.h"
@@ -206,6 +207,12 @@ int main(int argc, char** argv) {
     facebook::velox::parquet::registerParquetWriterFactory();
     const auto sparkSkipped = sparkSkippedFunctions();
     skipFunctions.insert(sparkSkipped.begin(), sparkSkipped.end());
+    // Spark rounds the results of abs and unaryminus to 34 significant digits
+    // for decimals.
+    const auto absUnaryMinus =
+        std::make_shared<AbsUnaryMinusArgTypesGenerator>();
+    argTypesGenerators.emplace("abs", absUnaryMinus);
+    argTypesGenerators.emplace("unaryminus", absUnaryMinus);
     // Spark interprets timestamps in the session time zone.
     queryConfigs.emplace(
         facebook::velox::core::QueryConfig::kAdjustTimestampToTimezone, "true");

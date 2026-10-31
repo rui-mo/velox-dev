@@ -15,6 +15,7 @@
  */
 #include "velox/expression/fuzzer/tests/ArgTypesGeneratorTestUtils.h"
 #include "velox/functions/FunctionRegistry.h"
+#include "velox/functions/sparksql/fuzzer/AbsUnaryMinusArgTypesGenerator.h"
 #include "velox/functions/sparksql/fuzzer/AddSubtractArgTypesGenerator.h"
 #include "velox/functions/sparksql/fuzzer/DivideArgTypesGenerator.h"
 #include "velox/functions/sparksql/fuzzer/MakeTimestampArgTypesGenerator.h"
@@ -51,6 +52,23 @@ class ArgTypesGeneratorTest : public SparkFunctionBaseTest {
     return *signatures[0];
   }
 };
+
+TEST_F(ArgTypesGeneratorTest, absUnaryMinus) {
+  const auto generator =
+      std::make_shared<fuzzer::AbsUnaryMinusArgTypesGenerator>();
+  for (const auto* name : {"abs", "unaryminus"}) {
+    SCOPED_TRACE(name);
+    const auto signatures = getSignatures(name, "decimal");
+    ASSERT_FALSE(signatures.empty());
+    for (const auto* signature : signatures) {
+      assertReturnType(generator, *signature, DECIMAL(10, 2));
+      assertReturnType(generator, *signature, DECIMAL(34, 0));
+      assertReturnType(generator, *signature, DECIMAL(34, 34));
+      assertEmptyArgs(generator, *signature, DECIMAL(35, 0));
+      assertEmptyArgs(generator, *signature, DECIMAL(38, 10));
+    }
+  }
+}
 
 TEST_F(ArgTypesGeneratorTest, add) {
   const auto& signature = getOnlySignature("add");
