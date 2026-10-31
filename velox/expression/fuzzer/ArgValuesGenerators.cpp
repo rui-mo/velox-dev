@@ -803,4 +803,31 @@ std::vector<core::TypedExprPtr> RoundArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+std::vector<core::TypedExprPtr> PadArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_GE(signature.args.size(), 2);
+  VELOX_CHECK_LE(signature.args.size(), 3);
+  const auto& sizeType = signature.args[1];
+  VELOX_CHECK_EQ(sizeType->kind(), TypeKind::INTEGER);
+
+  // Mostly sizes close to the lengths of fuzzed strings.
+  const int32_t maxSize = coinToss(rng, 0.9) ? 100 : 10'000;
+  state.inputRowTypes_.emplace_back(sizeType);
+  state.inputRowNames_.emplace_back(
+      fmt::format("c{}", state.inputRowTypes_.size() - 1));
+  state.customInputGenerators_.emplace_back(
+      std::make_shared<RangeConstrainedGenerator<int32_t>>(
+          rand<uint32_t>(rng), sizeType, options.nullRatio, -10, maxSize));
+
+  // The fuzzer generates the string and the pad string.
+  std::vector<core::TypedExprPtr> inputExpressions(
+      signature.args.size(), nullptr);
+  inputExpressions[1] = std::make_shared<core::FieldAccessTypedExpr>(
+      sizeType, state.inputRowNames_.back());
+  return inputExpressions;
+}
+
 } // namespace facebook::velox::fuzzer
