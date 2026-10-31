@@ -763,6 +763,9 @@ From Floating-Point Types
 By default, casting a real or double to string returns standard notation if the magnitude of input value is greater than
 or equal to 10 :superscript:`-3` but less than 10 :superscript:`7`, and returns scientific notation otherwise.
 
+The result has the fewest digits that round-trip to the input value, like Double.toString and Float.toString of
+Java 19 and later. Earlier Java versions sometimes return more digits, e.g. '9.999999999999999E22' for 1.0E23.
+
 Positive zero returns '0.0' and negative zero returns '-0.0'. Positive infinity returns 'Infinity' and negative infinity
 returns '-Infinity'. Positive and negative NaN returns 'NaN'.
 
@@ -777,6 +780,8 @@ Valid examples if legacy_cast = false,
   SELECT cast(double '12345.0' as varchar); -- '12345.0'
   SELECT cast(double '-0.001' as varchar); -- '-0.001'
   SELECT cast(double '-0.00012' as varchar); -- '-1.2E-4'
+  SELECT cast(double '0.00001' as varchar); -- '1.0E-5'
+  SELECT cast(double '1.0E23' as varchar); -- '1.0E23'
   SELECT cast(double '0.0' as varchar); -- '0.0'
   SELECT cast(double '-0.0' as varchar); -- '-0.0'
   SELECT cast(infinity() as varchar); -- 'Infinity'
@@ -789,6 +794,7 @@ Valid examples if legacy_cast = false,
   SELECT cast(real '12345.0' as varchar); -- '12345.0'
   SELECT cast(real '-0.001' as varchar); -- '-0.001'
   SELECT cast(real '-0.00012' as varchar); -- '-1.2E-4'
+  SELECT cast(real '1032205760.0' as varchar); -- '1.03220576E9'
   SELECT cast(real '0.0' as varchar); -- '0.0'
   SELECT cast(real '-0.0' as varchar); -- '-0.0'
 

@@ -626,6 +626,22 @@ TEST_F(CastExprTest, realAndDoubleToString) {
       });
 }
 
+TEST_F(CastExprTest, realAndDoubleToStringShortestDigits) {
+  setLegacyCast(false);
+  // Uses the fewest digits that round-trip. If one digit is enough, uses the
+  // closest decimal with one or two digits, like Java's Double.toString.
+  constexpr auto kMinDouble = std::numeric_limits<double>::denorm_min();
+  testCast<double, std::string>(
+      "string",
+      {0.00001, 6.789311300963163E-4, -1.0E23, kMinDouble, 2 * kMinDouble},
+      {"1.0E-5", "6.789311300963163E-4", "-1.0E23", "4.9E-324", "9.9E-324"});
+  constexpr auto kMinReal = std::numeric_limits<float>::denorm_min();
+  testCast<float, std::string>(
+      "string",
+      {1032205760.0f, -0.00001f, 3.0E-7f, kMinReal, 7 * kMinReal},
+      {"1.03220576E9", "-1.0E-5", "3.0E-7", "1.4E-45", "9.8E-45"});
+}
+
 TEST_F(CastExprTest, stringToTimestamp) {
   std::vector<std::optional<std::string>> input{
       "1970-01-01",
