@@ -342,10 +342,15 @@ TEST_F(DateTimeFunctionsTest, unixTimestampCustomFormat) {
       unixTimestamp("2022-12-12 asd 07:45:31", "yyyy-MM-dd 'asd HH:mm:ss"),
       "No closing single quote for literal");
 
+  // Empty format only parses empty strings.
+  EXPECT_EQ(0, unixTimestamp("", ""));
+  EXPECT_EQ(std::nullopt, unixTimestamp("1970", ""));
+
   setQueryTimeZone("America/Chicago");
   // Verify the gap time 2024-03-10 02:01:58 is correctly handled.
   EXPECT_EQ(
       1710057718, unixTimestamp("2024-03-10 02:01:58", "yyyy-MM-dd HH:mm:ss"));
+  EXPECT_EQ(21600, unixTimestamp("", ""));
 }
 
 TEST_F(DateTimeFunctionsTest, unixTimestampTimestampInput) {
@@ -1032,6 +1037,10 @@ TEST_F(DateTimeFunctionsTest, getTimestamp) {
       getTimestampString("2023/12/08 08:20:19", "yyyy/MM/dd HH:mm:ss"),
       "2023-12-08T16:20:19.000000000");
 
+  // Empty format only parses empty strings.
+  EXPECT_EQ(getTimestampString("", ""), "1970-01-01T08:00:00.000000000");
+  EXPECT_EQ(getTimestamp("0", ""), std::nullopt);
+
   // Parsing error.
   EXPECT_EQ(
       getTimestamp("1970-01-01 06:10:59.019", "HH:mm:ss.SSS"), std::nullopt);
@@ -1238,6 +1247,9 @@ TEST_F(DateTimeFunctionsTest, fromUnixtime) {
       fromUnixTime(0, "FF/MM/dd"), "Specifier F is not supported");
   VELOX_ASSERT_THROW(
       fromUnixTime(0, "yyyy-MM-dd HH:II"), "Specifier I is not supported");
+
+  // Empty format.
+  EXPECT_EQ(fromUnixTime(0, ""), "");
 
   // Returns null for invalid datetime format when legacy date formatter is
   // used.
@@ -2174,6 +2186,9 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_THROW(dateFormat(parseTimestamp("1970-01-01"), "u"), VeloxUserError);
   EXPECT_THROW(
       dateFormat(parseTimestamp("1970-01-01"), "'abcd"), VeloxUserError);
+
+  // Empty format.
+  EXPECT_EQ("", dateFormat(parseTimestamp("1970-01-01"), ""));
 
   // Check Simple tests.
   EXPECT_EQ("AD", dateFormat(parseTimestamp("1970-01-01"), "G"));

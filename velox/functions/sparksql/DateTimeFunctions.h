@@ -19,6 +19,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include "velox/functions/lib/DateTimeFormatter.h"
+#include "velox/functions/lib/DateTimeFormatterBuilder.h"
 #include "velox/functions/lib/TimeUtils.h"
 #include "velox/functions/sparksql/AnsiMode.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
@@ -54,6 +55,13 @@ Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
 inline std::shared_ptr<DateTimeFormatter> initializeFormatter(
     const std::string_view format,
     bool legacyFormatter) {
+  if (format.empty() && !legacyFormatter) {
+    // Unlike Joda, Spark accepts an empty pattern, which formats datetimes to
+    // empty strings and only parses empty strings.
+    return DateTimeFormatterBuilder(0)
+        .setType(DateTimeFormatterType::JODA)
+        .build();
+  }
   auto formatter = detail::getDateTimeFormatter(
       std::string_view(format),
       legacyFormatter ? DateTimeFormatterType::STRICT_SIMPLE

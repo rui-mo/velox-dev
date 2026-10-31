@@ -52,9 +52,11 @@ These functions support TIMESTAMP and DATE input types.
     The format follows Spark's
     `Datetime patterns
     <https://spark.apache.org/docs/latest/sql-ref-datetime-pattern.html>`_.
+    An empty ``dateFormat`` returns an empty string when the legacy formatter is disabled.
 
         SELECT date_format('2020-01-29', 'yyyy'); -- '2020'
         SELECT date_format('2024-05-30 08:00:00', 'yyyy-MM-dd'); -- '2024-05-30'
+        SELECT date_format('2020-01-29', ''); -- ''
 
 .. spark:function:: date_from_unix_date(integer) -> date
 
@@ -581,10 +583,13 @@ These functions support TIMESTAMP and DATE input types.
     An invalid ``format`` returns NULL when the legacy formatter is enabled;
     otherwise it throws an error, regardless of ANSI mode. When
     ``spark.ansi_enabled`` is true, a ``string`` that does not match a valid
-    ``format`` throws an error; otherwise it returns NULL. ::
+    ``format`` throws an error; otherwise it returns NULL. When the legacy
+    formatter is disabled, an empty ``format`` only matches an empty ``string``,
+    which is parsed as the UNIX epoch in the session time zone. ::
 
         SELECT unix_timestamp('invalid', 'yyyy-MM-dd'); -- NULL (ANSI OFF) / ERROR (ANSI ON)
         SELECT unix_timestamp('2024-10-01', 'invalid-format'); -- ERROR (non-legacy formatter)
+        SELECT unix_timestamp('', ''); -- 0 (UTC session time zone)
 
 .. spark:function:: unix_timestamp(timestamp) -> bigint
 
