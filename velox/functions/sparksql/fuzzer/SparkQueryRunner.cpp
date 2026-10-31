@@ -393,6 +393,9 @@ SparkQueryRunner::defaultSessionConfigs() {
       // Velox writes dates and timestamps in the proleptic Gregorian calendar.
       {"spark.sql.parquet.datetimeRebaseModeInRead", "CORRECTED"},
       {"spark.sql.parquet.int96RebaseModeInRead", "CORRECTED"},
+      // Velox keeps the last value of duplicate map keys unless
+      // 'throw_exception_on_duplicate_map_keys' is enabled.
+      {"spark.sql.mapKeyDedupPolicy", "LAST_WIN"},
   };
   return kConfigs;
 }

@@ -377,6 +377,8 @@ TEST_F(SparkQueryRunnerTest, DISABLED_expressions) {
       "cast(null as integer)",
       "concat(s, '\u00e9${x}')",
       "array_contains(arr, -3)",
+      // Duplicate map keys.
+      "str_to_map(concat(s, ',', s), ',', ':')",
   };
   for (const auto& expression : expressions) {
     verify(

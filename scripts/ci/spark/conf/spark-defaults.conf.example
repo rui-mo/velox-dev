@@ -10,4 +10,7 @@ spark.sql.session.timeZone America/Los_Angeles
 # ancient dates and timestamps as-is instead of failing.
 spark.sql.parquet.datetimeRebaseModeInRead CORRECTED
 spark.sql.parquet.int96RebaseModeInRead CORRECTED
+# Velox keeps the last value of duplicate map keys by default
+# ('throw_exception_on_duplicate_map_keys').
+spark.sql.mapKeyDedupPolicy LAST_WIN
 spark.ui.enabled false

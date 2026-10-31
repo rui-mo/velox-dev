@@ -66,7 +66,8 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   ~SparkQueryRunner() override;
 
   /// Spark SQL configs that make Spark match the default behavior of Velox
-  /// Spark functions: ANSI mode off and America/Los_Angeles session time zone.
+  /// Spark functions: ANSI mode off, America/Los_Angeles session time zone and
+  /// the last value of duplicate map keys wins.
   static const std::unordered_map<std::string, std::string>&
   defaultSessionConfigs();
 
