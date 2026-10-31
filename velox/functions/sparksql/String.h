@@ -38,14 +38,14 @@ struct PadFunctionBase {
       const arg_type<Varchar>& string,
       const arg_type<int64_t>& size,
       const arg_type<Varchar>& padString) {
-    stringImpl::pad<lpad, false /*isAscii*/>(result, string, size, padString);
+    doCall<false /*isAscii*/>(result, string, size, padString);
   }
 
   FOLLY_ALWAYS_INLINE void call(
       out_type<Varchar>& result,
       const arg_type<Varchar>& string,
       const arg_type<int64_t>& size) {
-    stringImpl::pad<lpad, false /*isAscii*/>(result, string, size, {" "});
+    doCall<false /*isAscii*/>(result, string, size, {" "});
   }
 
   FOLLY_ALWAYS_INLINE void callAscii(
@@ -53,14 +53,41 @@ struct PadFunctionBase {
       const arg_type<Varchar>& string,
       const arg_type<int64_t>& size,
       const arg_type<Varchar>& padString) {
-    stringImpl::pad<lpad, true /*isAscii*/>(result, string, size, padString);
+    doCall<true /*isAscii*/>(result, string, size, padString);
   }
 
   FOLLY_ALWAYS_INLINE void callAscii(
       out_type<Varchar>& result,
       const arg_type<Varchar>& string,
       const arg_type<int64_t>& size) {
-    stringImpl::pad<lpad, true /*isAscii*/>(result, string, size, {" "});
+    doCall<true /*isAscii*/>(result, string, size, {" "});
+  }
+
+ private:
+  // Unlike Presto, Spark returns an empty string for a negative size, and
+  // truncates the string to the size without padding for an empty padString.
+  template <bool isAscii>
+  FOLLY_ALWAYS_INLINE static void doCall(
+      out_type<Varchar>& result,
+      const arg_type<Varchar>& string,
+      int64_t size,
+      const arg_type<Varchar>& padString) {
+    if (size < 0) {
+      result.setEmpty();
+      return;
+    }
+    if (padString.empty()) {
+      if (stringImpl::length<isAscii>(string) <= size) {
+        result.copy_from(string);
+      } else {
+        const auto prefixByteSize = stringCore::getByteRange<isAscii>(
+                                        string.data(), string.size(), 1, size)
+                                        .second;
+        result.copy_from(StringView(string.data(), prefixByteSize));
+      }
+      return;
+    }
+    stringImpl::pad<lpad, isAscii>(result, string, size, padString);
   }
 };
 

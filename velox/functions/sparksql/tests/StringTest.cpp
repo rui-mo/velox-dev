@@ -815,6 +815,21 @@ TEST_F(StringTest, lpad) {
   EXPECT_EQ("x" + invalidString, lpadWithPadString(invalidString, 8, "x"));
   EXPECT_EQ(
       invalidPadString + "abc", lpadWithPadString("abc", 6, invalidPadString));
+
+  // Negative size returns an empty string.
+  EXPECT_EQ("", lpad("text", -1));
+  EXPECT_EQ("", lpadWithPadString("text", -3, "xy"));
+  EXPECT_EQ("", lpadWithPadString("text", -1, ""));
+
+  // Empty padString truncates the string without padding.
+  EXPECT_EQ("text", lpadWithPadString("text", 6, ""));
+  EXPECT_EQ("te", lpadWithPadString("text", 2, ""));
+  EXPECT_EQ("\u4FE1\u5FF5", lpadWithPadString("\u4FE1\u5FF5 \u7231", 2, ""));
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231", lpadWithPadString("\u4FE1\u5FF5 \u7231", 8, ""));
+
+  VELOX_ASSERT_THROW(
+      lpad("text", 1'048'577), "pad size must be in the range [0..1048576)");
 }
 
 TEST_F(StringTest, ltrim) {
@@ -1039,6 +1054,21 @@ TEST_F(StringTest, rpad) {
   EXPECT_EQ(invalidString + "x", rpadWithPadString(invalidString, 8, "x"));
   EXPECT_EQ(
       "abc" + invalidPadString, rpadWithPadString("abc", 6, invalidPadString));
+
+  // Negative size returns an empty string.
+  EXPECT_EQ("", rpad("text", -1));
+  EXPECT_EQ("", rpadWithPadString("text", -3, "xy"));
+  EXPECT_EQ("", rpadWithPadString("text", -1, ""));
+
+  // Empty padString truncates the string without padding.
+  EXPECT_EQ("text", rpadWithPadString("text", 6, ""));
+  EXPECT_EQ("te", rpadWithPadString("text", 2, ""));
+  EXPECT_EQ("\u4FE1\u5FF5", rpadWithPadString("\u4FE1\u5FF5 \u7231", 2, ""));
+  EXPECT_EQ(
+      "\u4FE1\u5FF5 \u7231", rpadWithPadString("\u4FE1\u5FF5 \u7231", 8, ""));
+
+  VELOX_ASSERT_THROW(
+      rpad("text", 1'048'577), "pad size must be in the range [0..1048576)");
 }
 
 TEST_F(StringTest, rtrim) {
