@@ -168,5 +168,57 @@ TEST(ArgValuesGeneratorsTest, round) {
   EXPECT_TRUE(hasLargeScale);
 }
 
+TEST(ArgValuesGeneratorsTest, pad) {
+  VectorFuzzer::Options options;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  PadArgValuesGenerator generator;
+
+  for (const auto& args : std::vector<std::vector<TypePtr>>{
+           {VARCHAR(), INTEGER()},
+           {VARCHAR(), INTEGER(), VARCHAR()},
+       }) {
+    const CallableSignature signature{
+        .name = "lpad",
+        .args = args,
+        .returnType = VARCHAR(),
+        .constantArgs = std::vector<bool>(args.size(), false),
+    };
+
+    bool hasNegativeSize = false;
+    bool hasLargeSize = false;
+    for (auto i = 0; i < 100; ++i) {
+      state.reset();
+      const auto inputs = generator.generate(signature, options, rng, state);
+
+      // The fuzzer generates the strings, and the size reads an input column.
+      ASSERT_EQ(inputs.size(), args.size());
+      EXPECT_EQ(inputs[0], nullptr);
+      EXPECT_EQ(inputs.back() == nullptr, args.size() == 3);
+      const auto size =
+          std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+              inputs[1]);
+      ASSERT_NE(size, nullptr);
+      ASSERT_EQ(state.inputRowNames_.size(), 1);
+      EXPECT_EQ(size->name(), state.inputRowNames_[0]);
+      ASSERT_EQ(*state.inputRowTypes_[0], *INTEGER());
+
+      // Velox throws for sizes greater than 1048576.
+      ASSERT_EQ(state.customInputGenerators_.size(), 1);
+      ASSERT_NE(state.customInputGenerators_[0], nullptr);
+      for (auto j = 0; j < 20; ++j) {
+        const auto value =
+            state.customInputGenerators_[0]->generate().value<int32_t>();
+        EXPECT_GE(value, -10);
+        EXPECT_LE(value, 10'000);
+        hasNegativeSize |= value < 0;
+        hasLargeSize |= value > 100;
+      }
+    }
+    EXPECT_TRUE(hasNegativeSize);
+    EXPECT_TRUE(hasLargeSize);
+  }
+}
+
 } // namespace
 } // namespace facebook::velox::fuzzer::test

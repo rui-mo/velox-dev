@@ -282,4 +282,20 @@ class RoundArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark lpad and rpad. Reads the size from an input
+/// column with values in [-10, 100], and sometimes in [-10, 10'000], which
+/// covers negative sizes, truncation and padding. Random 32-bit sizes almost
+/// always exceed the limit of 1048576 in Velox, while Spark pads to any size
+/// that fits in memory.
+class PadArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~PadArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer
