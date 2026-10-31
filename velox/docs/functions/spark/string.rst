@@ -165,12 +165,15 @@ String Functions
 
    Unlike ``CAST(number AS VARCHAR)``, this adds thousands separators and
    fixed decimal places. Supports tinyint, smallint, integer, bigint, float,
-   and double. ::
+   and double. Like Java's ``DecimalFormat``, a floating-point ``number`` is
+   formatted from the decimal digits Java derives for it rather than from its
+   exact binary value, so any further decimal places are zeros. ::
 
         SELECT format_number(12345.678, 2); -- '12,345.68'
         SELECT format_number(12345, 0); -- '12,345'
         SELECT format_number(-1234567.89, 1); -- '-1,234,567.9'
         SELECT format_number(2.5, 0); -- '2' (HALF_EVEN rounds to even)
+        SELECT format_number(1D / 3, 20); -- '0.33333333333333330000'
         SELECT format_number(123, -1); -- NULL
 
 .. spark:function:: format_string(format, arguments...) -> varchar

@@ -117,6 +117,25 @@ TEST_F(FormatNumberTest, binaryTieRounding) {
   EXPECT_EQ(formatDouble(-2.675, 2), "-2.67");
 }
 
+TEST_F(FormatNumberTest, decimalDigitsOfDouble) {
+  // Java's DecimalFormat pads the decimal digits of a double with zeros rather
+  // than printing its exact binary value. Verified against Spark 4.3.
+  EXPECT_EQ(formatDouble(0.1, 20), "0.10000000000000000000");
+  EXPECT_EQ(formatDouble(1.0 / 3, 20), "0.33333333333333330000");
+  EXPECT_EQ(formatFloat(0.1f, 20), "0.10000000149011612000");
+  EXPECT_EQ(
+      formatDouble(-1.2345e25, 2), "-12,345,000,000,000,000,000,000,000.00");
+  EXPECT_EQ(
+      formatDouble(-9223372036854775808.0, 0), "-9,223,372,036,854,776,000");
+
+  // Integral values below 2^63 keep the digits of the integer, except that
+  // the last digit is rounded off from 2^58 and the last two from 2^61.
+  EXPECT_EQ(
+      formatDouble(1234567890123456768.0, 0), "1,234,567,890,123,456,770");
+  EXPECT_EQ(
+      formatDouble(6917529027641081856.0, 0), "6,917,529,027,641,081,900");
+}
+
 TEST_F(FormatNumberTest, negativeDecimalPlaces) {
   // d < 0 returns null per Spark semantics.
   EXPECT_EQ(

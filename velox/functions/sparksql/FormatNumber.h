@@ -33,6 +33,8 @@ void formatInteger(
     int32_t decimalPlaces,
     exec::StringWriter& out);
 
+// Formats a double like Java DecimalFormat, which formats the decimal digits
+// Java derives for the double rather than its exact binary value.
 void formatFloatingPoint(
     double value,
     int32_t decimalPlaces,
