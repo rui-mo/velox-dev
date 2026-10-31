@@ -420,11 +420,24 @@ Mathematical Functions
 
         SELECT rint(12.3456); -- 12.0
 
-.. spark:function:: round(x, d) -> [same as x]
+.. spark:function:: round(x, d) -> [same as x] (ANSI compliant)
 
     Returns ``x`` rounded to ``d`` decimal places using HALF_UP rounding mode.
     In HALF_UP rounding, the digit 5 is rounded up.
     Supported types for ``x`` are integral and floating point types.
+    When ``d`` is negative, ``x`` is rounded to a multiple of 10 raised to the
+    power of ``-d``. For integral types, a result that overflows wraps around
+    when Spark ANSI mode is disabled, and throws an exception when Spark ANSI
+    mode is enabled. For floating point types, a zero result is positive zero. ::
+
+        SELECT round(2.5D); -- 3.0
+        SELECT round(-0.4D); -- 0.0
+        SELECT round(1.5D, 400); -- 1.5
+        SELECT round(1.5D, -400); -- 0.0
+        SELECT round(15, -1); -- 20
+        SELECT round(-15, -1); -- -20
+        SELECT round(2147483647, -1); -- -2147483646 (with ANSI mode disabled)
+        SELECT round(2147483647, -1); -- Overflow exception (with ANSI mode enabled)
 
 .. spark:function:: sec(x) -> double
 

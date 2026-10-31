@@ -327,6 +327,15 @@ class ArithmeticTest : public SparkFunctionBaseTest {
     assertErrorForCheckedArithmetic("checked_div", a, b, errorMessage);
   }
 
+  // Spark requires 'decimals' to be a constant.
+  template <typename T>
+  T round(T number, int32_t decimals) {
+    return evaluateOnce<T>(
+               fmt::format("round(c0, cast({} as integer))", decimals),
+               std::optional(number))
+        .value();
+  }
+
   static constexpr float kNan = std::numeric_limits<float>::quiet_NaN();
   static constexpr double kNanDouble = std::numeric_limits<double>::quiet_NaN();
   static constexpr float kInf = std::numeric_limits<float>::infinity();
@@ -504,6 +513,96 @@ TEST_F(ArithmeticTest, rint) {
   EXPECT_EQ(rint(std::nextafter(1.0, 0.0)), 1.0);
   EXPECT_EQ(rint(std::nextafter(1.0, 2.0)), 1.0);
   EXPECT_EQ(rint(std::nextafter(1e+16, kInfDouble)), 1e+16 + 2);
+}
+
+TEST_F(ArithmeticTest, roundIntegral) {
+  EXPECT_EQ(round<int32_t>(15, 1), 15);
+  EXPECT_EQ(round<int32_t>(15, 0), 15);
+  EXPECT_EQ(round<int32_t>(15, -1), 20);
+  EXPECT_EQ(round<int32_t>(14, -1), 10);
+  EXPECT_EQ(round<int32_t>(-15, -1), -20);
+  EXPECT_EQ(round<int32_t>(-14, -1), -10);
+  EXPECT_EQ(round<int8_t>(15, -1), 20);
+  EXPECT_EQ(round<int16_t>(-32'768, -4), -30'000);
+  EXPECT_EQ(round<int64_t>(15, -100), 0);
+  EXPECT_EQ(round<int32_t>(15, -100'000), 0);
+  EXPECT_EQ(round<int64_t>(4'999'999'999'999'999'999, -19), 0);
+
+  // Results that overflow wrap around.
+  EXPECT_EQ(round<int8_t>(125, -1), -126);
+  EXPECT_EQ(
+      round<int32_t>(std::numeric_limits<int32_t>::max(), -1), -2'147'483'646);
+  EXPECT_EQ(
+      round<int64_t>(std::numeric_limits<int64_t>::max(), -19),
+      -8'446'744'073'709'551'616);
+  EXPECT_EQ(
+      round<int64_t>(std::numeric_limits<int64_t>::min(), -19),
+      8'446'744'073'709'551'616);
+}
+
+TEST_F(ArithmeticTest, roundIntegralAnsi) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  EXPECT_EQ(round<int32_t>(15, -1), 20);
+  EXPECT_EQ(
+      round<int64_t>(std::numeric_limits<int64_t>::max(), -18),
+      9'000'000'000'000'000'000);
+  VELOX_ASSERT_THROW(
+      round<int8_t>(125, -1), "Arithmetic overflow: round(125, -1)");
+  VELOX_ASSERT_THROW(
+      round<int32_t>(std::numeric_limits<int32_t>::max(), -1),
+      "Arithmetic overflow");
+  VELOX_ASSERT_THROW(
+      round<int64_t>(std::numeric_limits<int64_t>::min(), -19),
+      "Arithmetic overflow");
+}
+
+TEST_F(ArithmeticTest, roundFloatingPoint) {
+  constexpr auto kMaxDouble = std::numeric_limits<double>::max();
+  constexpr auto kMaxFloat = std::numeric_limits<float>::max();
+  EXPECT_EQ(round<double>(1.23456789, 4), 1.2346);
+  EXPECT_EQ(round<double>(0.15, 1), 0.2);
+  EXPECT_EQ(round<double>(-1.5, 0), -2.0);
+  EXPECT_EQ(round<double>(15.0, -1), 20.0);
+  EXPECT_EQ(round<float>(2.5f, 0), 3.0f);
+  EXPECT_TRUE(std::isnan(round<double>(kNanDouble, 2)));
+  EXPECT_EQ(round<double>(-kInfDouble, 2), -kInfDouble);
+
+  // Rounds to more decimal places than the input has.
+  EXPECT_EQ(round<double>(1.5, 309), 1.5);
+  EXPECT_EQ(round<double>(1.5, 400), 1.5);
+  EXPECT_EQ(round<double>(2.5, 308), 2.5);
+  EXPECT_EQ(round<double>(kMaxDouble, 2), kMaxDouble);
+  EXPECT_EQ(round<float>(1.5f, 309), 1.5f);
+  EXPECT_EQ(round<float>(kMaxFloat, 300), kMaxFloat);
+  EXPECT_EQ(round<double>(1.5, 100'000), 1.5);
+  EXPECT_EQ(
+      evaluateOnce<double>(
+          "round(c0, c1)", std::optional(1.5), std::optional<int32_t>(400)),
+      1.5);
+
+  // Rounds subnormal numbers to more than 308 decimal places.
+  constexpr auto kMinDouble = std::numeric_limits<double>::denorm_min();
+  EXPECT_EQ(round<double>(1.26e-310, 311), 1.3e-310);
+  EXPECT_EQ(round<double>(-1.26e-310, 311), -1.3e-310);
+  EXPECT_EQ(round<double>(kMinDouble, 323), 0.0);
+  EXPECT_EQ(round<double>(-kMinDouble, 324), -kMinDouble);
+  EXPECT_EQ(round<double>(0.5, 700), 0.5);
+
+  // Rounds to a multiple of a power of 10 that is greater than the input.
+  EXPECT_EQ(round<double>(1.5, -400), 0.0);
+  EXPECT_EQ(round<float>(1.5f, -400), 0.0f);
+  EXPECT_EQ(round<double>(1.5, -100'000), 0.0);
+  EXPECT_EQ(round<double>(kMaxDouble, -308), kInfDouble);
+
+  // Zero results are positive.
+  EXPECT_FALSE(std::signbit(round<double>(-0.4, 0)));
+  EXPECT_FALSE(std::signbit(round<double>(-0.0, 1)));
+  EXPECT_FALSE(std::signbit(round<double>(-1.5, -1)));
+  EXPECT_FALSE(std::signbit(round<float>(-0.4f, 0)));
+  EXPECT_FALSE(
+      std::signbit(
+          evaluateOnce<double>("round(c0)", std::optional(-0.4)).value()));
 }
 
 TEST_F(ArithmeticTest, unhex) {
