@@ -234,7 +234,23 @@ TEST_F(RegexFunctionsTest, regexMatchRegistration) {
       evaluateOnce<std::string>(
           "regexp_extract('a', c0)", std::optional<std::string>("a*")),
       VeloxUserError);
-  EXPECT_EQ(regexp_extract("abc", "a."), "ab");
+  EXPECT_EQ(regexp_extract("abc", "a(.)"), "b");
+}
+
+TEST_F(RegexFunctionsTest, regexpExtractDefaultGroupId) {
+  // The group id defaults to 1.
+  auto data = makeRowVector({
+      makeFlatVector<std::string>({"100-200, 300-400", "abcb", "xyz"}),
+  });
+
+  auto expected = makeFlatVector<std::string>({"100", "", ""});
+  assertEqualVectors(
+      expected, evaluate("regexp_extract(c0, '([0-9]+)-([0-9]+)')", data));
+
+  expected = makeNullableFlatVector<std::string>({"", std::nullopt, ""});
+  assertEqualVectors(expected, evaluate("try(regexp_extract(c0, 'b'))", data));
+  VELOX_ASSERT_USER_THROW(
+      evaluate("regexp_extract(c0, 'b')", data), "No group 1 in regex 'b'");
 }
 
 TEST_F(RegexFunctionsTest, regexpExtractGroupId) {

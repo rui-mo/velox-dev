@@ -55,6 +55,9 @@ std::shared_ptr<exec::VectorFunction> makeRLike(
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config);
 
+/// Returns an empty string if the pattern does not match the string, and
+/// throws for an out-of-range group id only if it does. The group id defaults
+/// to 1.
 std::shared_ptr<exec::VectorFunction> makeRegexExtract(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,

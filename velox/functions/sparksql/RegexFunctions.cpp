@@ -243,6 +243,10 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config) {
+  if (inputArgs.size() == 2) {
+    return std::make_shared<DefaultGroupIdFunction>(
+        makeRegexExtract(name, withGroupIdArg(inputArgs), config));
+  }
   auto result = makeRe2Extract(
       name,
       inputArgs,
