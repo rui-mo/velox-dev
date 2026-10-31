@@ -80,6 +80,7 @@ DEFINE_string(
 using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
+using facebook::velox::fuzzer::RoundArgValuesGenerator;
 
 namespace {
 
@@ -193,7 +194,8 @@ int main(int argc, char** argv) {
 
   std::unordered_map<std::string, std::shared_ptr<ArgValuesGenerator>>
       argValuesGenerators = {
-          {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()}};
+          {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()},
+          {"round", std::make_shared<RoundArgValuesGenerator>()}};
 
   std::shared_ptr<facebook::velox::memory::MemoryPool> rootPool{
       facebook::velox::memory::memoryManager()->addRootPool()};

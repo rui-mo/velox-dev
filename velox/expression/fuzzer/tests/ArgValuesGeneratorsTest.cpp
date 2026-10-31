@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 #include "velox/core/Expressions.h"
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
@@ -122,6 +123,49 @@ TEST(ArgValuesGeneratorsTest, levenshtein) {
       }
     }
   }
+}
+
+TEST(ArgValuesGeneratorsTest, round) {
+  VectorFuzzer::Options options;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  RoundArgValuesGenerator generator;
+
+  const CallableSignature unary{
+      .name = "round",
+      .args = {DOUBLE()},
+      .returnType = DOUBLE(),
+      .constantArgs = {false},
+  };
+  const auto inputs = generator.generate(unary, options, rng, state);
+  ASSERT_EQ(inputs.size(), 1);
+  EXPECT_EQ(inputs[0], nullptr);
+
+  const CallableSignature binary{
+      .name = "round",
+      .args = {DOUBLE(), INTEGER()},
+      .returnType = DOUBLE(),
+      .constantArgs = {false, false},
+  };
+  bool hasLargeScale = false;
+  for (auto i = 0; i < 1'000; ++i) {
+    state.reset();
+    const auto inputs = generator.generate(binary, options, rng, state);
+
+    // The fuzzer generates the number. Spark requires the scale to be a
+    // constant, and fails for scales of large magnitude.
+    ASSERT_EQ(inputs.size(), 2);
+    EXPECT_EQ(inputs[0], nullptr);
+    const auto scale =
+        std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[1]);
+    ASSERT_NE(scale, nullptr);
+    ASSERT_EQ(*scale->type(), *INTEGER());
+    const auto value = std::abs(scale->value().value<int32_t>());
+    EXPECT_LE(value, 400);
+    hasLargeScale |= value > 308;
+  }
+  // Covers scales whose power of 10 does not fit in a double.
+  EXPECT_TRUE(hasLargeScale);
 }
 
 } // namespace
