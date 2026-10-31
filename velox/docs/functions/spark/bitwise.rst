@@ -29,7 +29,10 @@ Bitwise Functions
 .. spark:function:: bit_count(x) -> integer
 
     Returns the number of bits that are set in the argument ``x`` as an unsigned 64-bit integer,
-    or NULL if the argument is NULL.
+    or NULL if the argument is NULL. Negative values are sign-extended to 64 bits. ::
+
+        SELECT bit_count(CAST(-1 AS TINYINT)); -- 64
+
     Supported types are: BOOLEAN, TINYINT, SMALLINT, INTEGER and BIGINT.
 
 .. spark:function:: bit_get(x, pos) -> tinyint
