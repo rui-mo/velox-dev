@@ -106,6 +106,16 @@ target_link_libraries(
   GTest::gtest_main
 )
 
+# Spark is used as the reference DB through the Spark query runner, which
+# requires Parquet support.
+if(VELOX_ENABLE_PARQUET)
+  target_link_libraries(
+    spark_expression_fuzzer_test
+    velox_dwio_parquet_writer
+    velox_spark_query_runner
+  )
+endif()
+
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
 endif()

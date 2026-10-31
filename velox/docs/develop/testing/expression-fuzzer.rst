@@ -188,6 +188,14 @@ If you would like to run Expression Fuzzer with Presto as the source of truth, t
 
 * ``--req_timeout_ms``: Timeout in milliseconds for HTTP requests made to the reference DB, such as Presto.
 
+If you would like to run Spark Expression Fuzzer with Spark as the source of truth, start a
+Spark Connect server as described in :doc:`Spark Query Runner <spark-query-runner>` and use
+the following command line arguments:
+
+* ``--spark_url``: Spark Connect server address along with port, e.g. ``localhost:15002``.
+
+* ``--spark_query_timeout_sec``: Timeout in seconds for queries run in Spark. Queries that time out are treated as not supported by Spark. Default is 60.
+
 If running from CLion IDE, add ``--logtostderr=1`` to see the full output.
 
 An example set of arguments to run the expression fuzzer with all features enabled is as follows:

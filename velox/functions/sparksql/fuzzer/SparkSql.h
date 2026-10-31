@@ -47,6 +47,12 @@ std::string toSparkConstantSql(const core::ConstantTypedExpr& constant);
 /// functions are mapped to the Spark functions or operators they implement.
 std::string toSparkSql(const core::TypedExprPtr& expr);
 
+/// Returns false if calls to the Velox scalar function 'name' cannot be
+/// expressed in Spark SQL, e.g. calls to nondeterministic functions and to
+/// functions that only Gluten uses internally. toSparkSql throws
+/// VELOX_UNSUPPORTED for such calls.
+bool isSupportedFunction(const std::string& name);
+
 /// Returns a Spark SQL aggregate function call that is equivalent to
 /// 'aggregate', including DISTINCT and the FILTER clause for the mask.
 std::string toSparkAggregateSql(

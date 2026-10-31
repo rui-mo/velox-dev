@@ -113,8 +113,14 @@ Running Spark in local-cluster mode, e.g. with ``spark.master local-cluster[1,4,
 and ``spark.executor.memory 2g``, runs the tasks in a separate executor JVM, which is
 relaunched after such a failure.
 
-Currently to use Spark as reference DB is only supported in aggregate fuzzer test, in which
-the results from Velox and Spark are compared to check for any differences. If the results
-match, it indicates that Velox is producing the correct output. If the results differ, it
-suggests a potential issue in Velox that needs to be investigated. You can trigger its test
-referring to :doc:`Fuzzer <fuzzer>`.
+Spark is used as the reference DB in the aggregation fuzzer test and in the Spark
+expression fuzzer test, in which the results from Velox and Spark are compared to check
+for any differences. If the results match, it indicates that Velox is producing the
+correct output. If the results differ, it suggests a potential issue in Velox that needs
+to be investigated. The aggregation fuzzer test connects to the Spark Connect server at
+``localhost:15002``. The Spark expression fuzzer test connects to the server specified by
+``--spark_url``, e.g. ``--spark_url=localhost:15002``, and uses
+``--spark_query_timeout_sec`` as the query timeout, 60 seconds by default. Functions that
+have no equivalent in Spark SQL, e.g. nondeterministic functions, are not tested when
+Spark is the reference DB. You can trigger the tests referring to :doc:`Fuzzer <fuzzer>`
+and :doc:`Expression Fuzzer <expression-fuzzer>`.

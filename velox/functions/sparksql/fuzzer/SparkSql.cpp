@@ -917,6 +917,10 @@ std::string toSparkSql(const core::TypedExprPtr& expr) {
   }
 }
 
+bool isSupportedFunction(const std::string& name) {
+  return !isUnsupportedFunction(name);
+}
+
 std::string toSparkAggregateSql(
     const core::AggregationNode::Aggregate& aggregate) {
   if (!aggregate.sortingKeys.empty()) {

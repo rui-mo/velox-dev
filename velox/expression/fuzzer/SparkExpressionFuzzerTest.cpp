@@ -17,12 +17,15 @@
 #include <folly/String.h>
 #include <folly/init/Init.h>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "velox/common/memory/Memory.h"
 #include "velox/exec/fuzzer/ReferenceQueryRunner.h"
+#include "velox/expression/FunctionSignature.h"
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
 #include "velox/expression/fuzzer/FuzzerRunner.h"
 #include "velox/expression/fuzzer/SparkSpecialFormSignatureGenerator.h"
@@ -35,6 +38,12 @@
 #include "velox/functions/sparksql/fuzzer/UnscaledValueArgTypesGenerator.h"
 #include "velox/functions/sparksql/registration/Register.h"
 
+#ifdef VELOX_ENABLE_PARQUET
+#include "velox/dwio/parquet/RegisterParquetWriter.h"
+#include "velox/functions/sparksql/fuzzer/SparkQueryRunner.h"
+#include "velox/functions/sparksql/fuzzer/SparkSql.h"
+#endif
+
 using namespace facebook::velox::functions::sparksql::fuzzer;
 using facebook::velox::functions::sparksql::SparkQueryConfig;
 using facebook::velox::fuzzer::ArgTypesGenerator;
@@ -46,9 +55,44 @@ DEFINE_int64(
     "Initial seed for random number generator "
     "(use it to reproduce previous results).");
 
+DEFINE_string(
+    spark_url,
+    "",
+    "Spark Connect server address along with port. If set, Spark is used as "
+    "the source of truth. Otherwise, the Velox simplified expression "
+    "evaluation is used. Example: --spark_url=localhost:15002");
+
+DEFINE_uint32(
+    spark_query_timeout_sec,
+    60,
+    "Timeout in seconds for queries run in Spark. Queries that time out are "
+    "treated as not supported by Spark. Example: "
+    "--spark_query_timeout_sec=120");
+
 using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
+
+namespace {
+
+#ifdef VELOX_ENABLE_PARQUET
+// Returns the functions that cannot be verified against Spark.
+std::unordered_set<std::string> sparkSkippedFunctions() {
+  std::unordered_set<std::string> skipFunctions = {
+      // Velox limits the number of elements by
+      // 'max_elements_size_in_repeat_and_sequence', while Spark doesn't.
+      "sequence",
+  };
+  for (const auto& [name, _] : facebook::velox::getFunctionSignatures()) {
+    if (!isSupportedFunction(name)) {
+      skipFunctions.insert(name);
+    }
+  }
+  return skipFunctions;
+}
+#endif
+
+} // namespace
 
 int main(int argc, char** argv) {
   facebook::velox::functions::sparksql::registerFunctions("");
@@ -59,6 +103,9 @@ int main(int argc, char** argv) {
   // singletons, installing proper signal handlers for better debugging
   // experience, and initialize glog and gflags.
   folly::Init init(&argc, &argv);
+
+  facebook::velox::memory::MemoryManager::initialize(
+      facebook::velox::memory::MemoryManager::Options{});
 
   // The following list are the Spark UDFs that hit issues
   // For rlike you need the following combo in the only list:
@@ -136,7 +183,32 @@ int main(int argc, char** argv) {
       argValuesGenerators = {
           {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()}};
 
+  std::shared_ptr<facebook::velox::memory::MemoryPool> rootPool{
+      facebook::velox::memory::memoryManager()->addRootPool()};
   std::shared_ptr<ReferenceQueryRunner> referenceQueryRunner{nullptr};
+  if (!FLAGS_spark_url.empty()) {
+#ifdef VELOX_ENABLE_PARQUET
+    // The input data is written to Parquet files for Spark to read.
+    facebook::velox::parquet::registerParquetWriterFactory();
+    const auto sparkSkipped = sparkSkippedFunctions();
+    skipFunctions.insert(sparkSkipped.begin(), sparkSkipped.end());
+    // Spark interprets timestamps in the session time zone.
+    queryConfigs.emplace(
+        facebook::velox::core::QueryConfig::kAdjustTimestampToTimezone, "true");
+    referenceQueryRunner = std::make_shared<SparkQueryRunner>(
+        rootPool.get(),
+        FLAGS_spark_url,
+        "fuzzer",
+        "expression",
+        std::chrono::seconds(FLAGS_spark_query_timeout_sec));
+    LOG(INFO) << "Using Spark as the reference DB.";
+#else
+    LOG(ERROR) << "Spark as the reference DB requires Parquet support. "
+               << "Build with VELOX_ENABLE_PARQUET=ON.";
+    return 1;
+#endif
+  }
+
   return FuzzerRunner::run(
       FLAGS_seed,
       skipFunctions,
