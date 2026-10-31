@@ -220,5 +220,49 @@ TEST(ArgValuesGeneratorsTest, pad) {
   }
 }
 
+TEST(ArgValuesGeneratorsTest, repeat) {
+  VectorFuzzer::Options options;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  RepeatArgValuesGenerator generator;
+  const CallableSignature signature{
+      .name = "repeat",
+      .args = {VARCHAR(), INTEGER()},
+      .returnType = VARCHAR(),
+      .constantArgs = {false, false},
+  };
+
+  bool hasNonPositiveCount = false;
+  bool hasLargeCount = false;
+  for (auto i = 0; i < 100; ++i) {
+    state.reset();
+    const auto inputs = generator.generate(signature, options, rng, state);
+
+    // The fuzzer generates the string, and the count reads an input column.
+    ASSERT_EQ(inputs.size(), 2);
+    EXPECT_EQ(inputs[0], nullptr);
+    const auto count =
+        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(inputs[1]);
+    ASSERT_NE(count, nullptr);
+    ASSERT_EQ(state.inputRowNames_.size(), 1);
+    EXPECT_EQ(count->name(), state.inputRowNames_[0]);
+    ASSERT_EQ(*state.inputRowTypes_[0], *INTEGER());
+
+    // Velox throws for results larger than 1048576 bytes.
+    ASSERT_EQ(state.customInputGenerators_.size(), 1);
+    ASSERT_NE(state.customInputGenerators_[0], nullptr);
+    for (auto j = 0; j < 20; ++j) {
+      const auto value =
+          state.customInputGenerators_[0]->generate().value<int32_t>();
+      EXPECT_GE(value, -5);
+      EXPECT_LE(value, 100);
+      hasNonPositiveCount |= value <= 0;
+      hasLargeCount |= value > 10;
+    }
+  }
+  EXPECT_TRUE(hasNonPositiveCount);
+  EXPECT_TRUE(hasLargeCount);
+}
+
 } // namespace
 } // namespace facebook::velox::fuzzer::test

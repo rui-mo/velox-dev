@@ -298,4 +298,19 @@ class PadArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark repeat. Reads the count from an input column
+/// with values in [-5, 10], and sometimes in [-5, 100], which covers empty and
+/// repeated strings. Random 32-bit counts almost always make the result exceed
+/// the limit of 1048576 bytes in Velox, while Spark has no such limit.
+class RepeatArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~RepeatArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer
