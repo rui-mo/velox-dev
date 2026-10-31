@@ -78,7 +78,9 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   /// expression, e.g. when another argument of the function is null. Velox
   /// evaluates them only for the rows that need them. These configs disable
   /// constant folding, which window frames with offsets need, and
-  /// subexpression elimination.
+  /// subexpression elimination. They also disable the reordering of nested
+  /// additions and multiplications, which ignores the TRY evaluation mode of
+  /// try_add and try_multiply.
   static const std::unordered_map<std::string, std::string>&
   projectionSessionConfigs();
 
