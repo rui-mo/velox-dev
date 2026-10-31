@@ -21,6 +21,7 @@
 #include <unordered_set>
 
 #include <boost/algorithm/string.hpp>
+#include <folly/ScopeGuard.h>
 #include <google/protobuf/unknown_field_set.h>
 
 #include "velox/functions/sparksql/fuzzer/SparkQueryRunner.h"
@@ -556,6 +557,11 @@ SparkQueryRunner::executeAndReturnVector(const core::PlanNodePtr& plan) {
   auto writerPool = aggregatePool()->addAggregateChild("writer");
   std::vector<std::shared_ptr<TempFilePath>> tempFiles;
   tempFiles.reserve(inputMap.size());
+  // The views read the temporary files, so they are dropped with the files.
+  std::vector<std::string> viewNames;
+  SCOPE_EXIT {
+    dropViews(viewNames);
+  };
   for (const auto& [tableName, input] : inputMap) {
     auto tempFile = TempFilePath::create();
     tempFiles.emplace_back(tempFile);
@@ -581,6 +587,7 @@ SparkQueryRunner::executeAndReturnVector(const core::PlanNodePtr& plan) {
         "Failed to create Spark view: {}. Query: {}",
         viewResult.errorMessage,
         viewSql);
+    viewNames.push_back(tableName);
   }
 
   auto result = executeQuery(*sql);
@@ -609,6 +616,23 @@ std::vector<RowVectorPtr> SparkQueryRunner::execute(const std::string& sql) {
       result.errorMessage,
       sql);
   return std::move(result.data);
+}
+
+void SparkQueryRunner::dropViews(const std::vector<std::string>& viewNames) {
+  for (const auto& viewName : viewNames) {
+    // Must not throw because it runs during stack unwinding.
+    try {
+      const auto result =
+          executeQuery(fmt::format("DROP VIEW IF EXISTS {}", viewName));
+      if (result.errorCode.has_value()) {
+        LOG(WARNING) << "Failed to drop Spark view " << viewName << ": "
+                     << result.errorMessage;
+      }
+    } catch (const std::exception& e) {
+      LOG(WARNING) << "Failed to drop Spark view " << viewName << ": "
+                   << e.what();
+    }
+  }
 }
 
 UserContext SparkQueryRunner::userContext() const {

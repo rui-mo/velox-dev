@@ -144,6 +144,9 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   // Interrupts all running operations of the session.
   void interruptSession();
 
+  // Drops the temporary views of the session. Doesn't throw.
+  void dropViews(const std::vector<std::string>& viewNames);
+
   spark::connect::UserContext userContext() const;
 
   // Generates a random UUID string for Spark. It must be of the format

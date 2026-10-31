@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <numeric>
+
 #include <folly/init/Init.h>
 #include <google/protobuf/unknown_field_set.h>
 #include <gtest/gtest.h>
@@ -152,6 +154,14 @@ TEST_F(SparkQueryRunnerTest, DISABLED_basic) {
   });
   ASSERT_EQ(sparkResults.second, exec::test::ReferenceQueryErrorCode::kSuccess);
   exec::test::assertEqualResults(sparkResults.first.value(), {expected});
+
+  // The temporary views of the input tables are dropped after the queries.
+  const auto views = queryRunner->execute("SHOW VIEWS");
+  const auto numViews = std::accumulate(
+      views.begin(), views.end(), 0, [](auto sum, const auto& batch) {
+        return sum + batch->size();
+      });
+  EXPECT_EQ(numViews, 0);
 }
 
 // This test requires a Spark coordinator running at localhost, so disable it
