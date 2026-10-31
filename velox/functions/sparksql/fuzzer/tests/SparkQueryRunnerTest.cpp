@@ -358,6 +358,41 @@ TEST_F(SparkQueryRunnerTest, DISABLED_constantFolding) {
   exec::test::assertEqualResults(result.first.value(), {veloxResults});
 }
 
+// Verifies that with the projection session configs, Spark doesn't fail the
+// query when a common subexpression throws on rows that default null behavior
+// skips, as in Velox. This test requires a Spark coordinator running at
+// localhost, so disable it by default.
+TEST_F(SparkQueryRunnerTest, DISABLED_subexpressionElimination) {
+  auto aggregatePool = rootPool_->addAggregateChild("subexpressionElimination");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(),
+      "localhost:15002",
+      "test",
+      "subexpressionElimination",
+      fuzzer::SparkQueryRunner::kDefaultQueryTimeout,
+      fuzzer::SparkQueryRunner::projectionSessionConfigs());
+  auto input = makeRowVector({
+      makeFlatVector<int32_t>({0, 100}),
+      makeNullableMapVector<int8_t, int64_t>({{{{2, 10}}}, std::nullopt}),
+  });
+
+  // bit_get throws on position 100. Velox skips it since 'c1' is null in that
+  // row.
+  auto plan =
+      exec::test::PlanBuilder()
+          .values({input})
+          .project({"element_at(c1, add(bit_get(1, c0), bit_get(1, c0)))"})
+          .planNode();
+  auto result = queryRunner->executeAndReturnVector(plan);
+  ASSERT_EQ(result.second, ReferenceQueryErrorCode::kSuccess);
+  auto expected = makeRowVector({
+      makeNullableFlatVector<int64_t>({10, std::nullopt}),
+  });
+  exec::test::assertEqualResults(result.first.value(), {expected});
+  exec::test::assertEqualResults(
+      {exec::test::AssertQueryBuilder(plan).copyResults(pool())}, {expected});
+}
+
 // Verifies that Spark accepts the SQL generated for the expressions and returns
 // the same results as Velox. This test requires a Spark coordinator running at
 // localhost, so disable it by default.
