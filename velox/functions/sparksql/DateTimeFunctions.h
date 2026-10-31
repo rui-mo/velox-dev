@@ -18,6 +18,7 @@
 
 #include <boost/algorithm/string.hpp>
 
+#include "velox/common/base/CheckedArithmetic.h"
 #include "velox/functions/lib/DateTimeFormatter.h"
 #include "velox/functions/lib/DateTimeFormatterBuilder.h"
 #include "velox/functions/lib/TimeUtils.h"
@@ -1055,6 +1056,10 @@ struct SecondsToTimestampFunction {
   template <typename T>
   FOLLY_ALWAYS_INLINE bool call(out_type<Timestamp>& result, T seconds) {
     if constexpr (std::is_integral_v<T>) {
+      // Spark stores timestamps as BIGINT microseconds and throws when the
+      // number of microseconds overflows.
+      checkedMultiply<int64_t>(
+          seconds, Timestamp::kMicrosecondsInSecond, "long");
       result = Timestamp(static_cast<int64_t>(seconds), 0);
       return true;
     } else {
