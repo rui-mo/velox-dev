@@ -114,7 +114,10 @@ class 42), unsupported features (class 0A), resource limit errors (classes 53 an
 Spark internal errors (class XX) and fatal JVM errors, e.g. ``OutOfMemoryError``, mean
 Spark cannot run the query, so the query is reported as not supported by the reference
 DB and the results are not verified. Other errors, e.g. division by zero with ANSI mode
-enabled, are reported as a reference query failure. A syntax
+enabled, are reported as a reference query failure. So are the errors with SQLSTATE
+42K0B that Spark raises for datetime patterns and strings while evaluating expressions,
+e.g. ``INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION`` for the
+week-based pattern ``YYYY``. A syntax
 error means the SQL generated from the Velox plan is invalid and fails the test. A stopped SparkContext
 fails the test as well because all following queries would fail. A query that runs
 longer than the timeout, 5 minutes by default, is interrupted and reported as not
