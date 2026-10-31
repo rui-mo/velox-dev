@@ -803,6 +803,29 @@ std::vector<core::TypedExprPtr> RoundArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+namespace {
+
+// Adds an input column of 'type' with values in [min, max] and returns an
+// expression that reads it.
+core::TypedExprPtr addRangeConstrainedColumn(
+    const TypePtr& type,
+    int32_t min,
+    int32_t max,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  state.inputRowTypes_.emplace_back(type);
+  state.inputRowNames_.emplace_back(
+      fmt::format("c{}", state.inputRowTypes_.size() - 1));
+  state.customInputGenerators_.emplace_back(
+      std::make_shared<RangeConstrainedGenerator<int32_t>>(
+          rand<uint32_t>(rng), type, options.nullRatio, min, max));
+  return std::make_shared<core::FieldAccessTypedExpr>(
+      type, state.inputRowNames_.back());
+}
+
+} // namespace
+
 std::vector<core::TypedExprPtr> PadArgValuesGenerator::generate(
     const CallableSignature& signature,
     const VectorFuzzer::Options& options,
@@ -815,19 +838,32 @@ std::vector<core::TypedExprPtr> PadArgValuesGenerator::generate(
 
   // Mostly sizes close to the lengths of fuzzed strings.
   const int32_t maxSize = coinToss(rng, 0.9) ? 100 : 10'000;
-  state.inputRowTypes_.emplace_back(sizeType);
-  state.inputRowNames_.emplace_back(
-      fmt::format("c{}", state.inputRowTypes_.size() - 1));
-  state.customInputGenerators_.emplace_back(
-      std::make_shared<RangeConstrainedGenerator<int32_t>>(
-          rand<uint32_t>(rng), sizeType, options.nullRatio, -10, maxSize));
 
   // The fuzzer generates the string and the pad string.
   std::vector<core::TypedExprPtr> inputExpressions(
       signature.args.size(), nullptr);
-  inputExpressions[1] = std::make_shared<core::FieldAccessTypedExpr>(
-      sizeType, state.inputRowNames_.back());
+  inputExpressions[1] =
+      addRangeConstrainedColumn(sizeType, -10, maxSize, options, rng, state);
   return inputExpressions;
+}
+
+std::vector<core::TypedExprPtr> RepeatArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_EQ(signature.args.size(), 2);
+  const auto& countType = signature.args[1];
+  VELOX_CHECK_EQ(countType->kind(), TypeKind::INTEGER);
+
+  // Mostly small counts, so that repeating long strings, e.g. results of lpad,
+  // stays within the limit.
+  const int32_t maxCount = coinToss(rng, 0.9) ? 10 : 100;
+
+  // The fuzzer generates the string.
+  return {
+      nullptr,
+      addRangeConstrainedColumn(countType, -5, maxCount, options, rng, state)};
 }
 
 } // namespace facebook::velox::fuzzer
