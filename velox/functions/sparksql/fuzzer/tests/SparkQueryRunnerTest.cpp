@@ -393,6 +393,49 @@ TEST_F(SparkQueryRunnerTest, DISABLED_subexpressionElimination) {
       {exec::test::AssertQueryBuilder(plan).copyResults(pool())}, {expected});
 }
 
+// Verifies that with the projection session configs, Spark doesn't fold
+// constants through try_multiply, which returns null on overflow, as in Velox.
+// This test requires a Spark coordinator running at localhost, so disable it by
+// default.
+TEST_F(SparkQueryRunnerTest, DISABLED_reorderAssociativeOperator) {
+  auto aggregatePool =
+      rootPool_->addAggregateChild("reorderAssociativeOperator");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(),
+      "localhost:15002",
+      "test",
+      "reorderAssociativeOperator",
+      fuzzer::SparkQueryRunner::kDefaultQueryTimeout,
+      fuzzer::SparkQueryRunner::projectionSessionConfigs());
+  auto input = makeRowVector({makeFlatVector<int16_t>({2, 23231})});
+
+  // 13593 * try_multiply(15837, c0). 15837 * 23231 overflows SMALLINT.
+  const auto smallintLiteral = [](int16_t value) {
+    return std::make_shared<core::ConstantTypedExpr>(SMALLINT(), value);
+  };
+  auto plan = exec::test::PlanBuilder(pool())
+                  .values({input})
+                  .projectExpressions({std::make_shared<core::CallTypedExpr>(
+                      SMALLINT(),
+                      "multiply",
+                      smallintLiteral(13593),
+                      std::make_shared<core::CallTypedExpr>(
+                          SMALLINT(),
+                          "try_multiply",
+                          smallintLiteral(15837),
+                          std::make_shared<core::FieldAccessTypedExpr>(
+                              SMALLINT(), "c0")))})
+                  .planNode();
+  auto result = queryRunner->executeAndReturnVector(plan);
+  ASSERT_EQ(result.second, ReferenceQueryErrorCode::kSuccess);
+  auto expected = makeRowVector({
+      makeNullableFlatVector<int16_t>({-26838, std::nullopt}),
+  });
+  exec::test::assertEqualResults(result.first.value(), {expected});
+  exec::test::assertEqualResults(
+      {exec::test::AssertQueryBuilder(plan).copyResults(pool())}, {expected});
+}
+
 // Verifies that Spark accepts the SQL generated for the expressions and returns
 // the same results as Velox. This test requires a Spark coordinator running at
 // localhost, so disable it by default.

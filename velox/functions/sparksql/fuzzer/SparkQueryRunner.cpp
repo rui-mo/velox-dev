@@ -404,8 +404,12 @@ SparkQueryRunner::defaultSessionConfigs() {
 const std::unordered_map<std::string, std::string>&
 SparkQueryRunner::projectionSessionConfigs() {
   static const std::unordered_map<std::string, std::string> kConfigs{
+      // ReorderAssociativeOperator ignores the eval mode of nested Add and
+      // Multiply, e.g. it evaluates 1 + try_add(c0, 2) as c0 + (1 + 2), which
+      // doesn't return null on overflow.
       {"spark.sql.optimizer.excludedRules",
-       "org.apache.spark.sql.catalyst.optimizer.ConstantFolding"},
+       "org.apache.spark.sql.catalyst.optimizer.ConstantFolding,"
+       "org.apache.spark.sql.catalyst.optimizer.ReorderAssociativeOperator"},
       {"spark.sql.subexpressionElimination.enabled", "false"},
   };
   return kConfigs;
