@@ -18,6 +18,7 @@
 #include <bitset>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <system_error>
 #include <type_traits>
 
@@ -25,7 +26,9 @@
 #include "velox/common/base/Status.h"
 #include "velox/functions/Macros.h"
 #include "velox/functions/lib/ToHex.h"
+#include "velox/functions/prestosql/ArithmeticImpl.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
+#include "velox/type/DecimalUtil.h"
 
 namespace facebook::velox::functions::sparksql {
 
@@ -612,6 +615,95 @@ struct RIntFunction {
   FOLLY_ALWAYS_INLINE void call(double& result, double input) {
     result = std::rint(input);
   }
+};
+
+/// Rounds integral and floating-point numbers to 'decimals' decimal places
+/// like Spark, which rounds the decimal value of the number half up.
+template <typename TExec>
+struct RoundFunction {
+  template <typename T>
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const T* /*number*/,
+      const int32_t* decimals) {
+    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
+    if (decimals != nullptr) {
+      scaleFactor_ = std::pow(10, *decimals);
+    }
+  }
+
+  template <typename T>
+  FOLLY_ALWAYS_INLINE Status
+  call(T& result, const T& number, const int32_t decimals = 0) {
+    if constexpr (std::is_integral_v<T>) {
+      return roundIntegral(result, number, decimals);
+    } else {
+      result = roundFloatingPoint(
+          number,
+          decimals,
+          scaleFactor_.has_value() ? *scaleFactor_ : std::pow(10, decimals));
+      return Status::OK();
+    }
+  }
+
+ private:
+  // Wraps around on overflow unless ANSI mode is enabled.
+  template <typename T>
+  Status roundIntegral(T& result, T number, int32_t decimals) const {
+    if (decimals >= 0) {
+      result = number;
+      return Status::OK();
+    }
+    // All integers are less than half of 10^20, so they round to zero when
+    // 'decimals' is -20 or lower.
+    int128_t rounded = 0;
+    if (decimals > -20) {
+      const int128_t factor = velox::DecimalUtil::kPowersOfTen[-decimals];
+      const int128_t remainder = number % factor;
+      rounded = number - remainder;
+      if (2 * (remainder < 0 ? -remainder : remainder) >= factor) {
+        rounded += remainder < 0 ? -factor : factor;
+      }
+    }
+    if (rounded < std::numeric_limits<T>::min() ||
+        rounded > std::numeric_limits<T>::max()) {
+      VELOX_USER_RETURN(
+          ansiEnabled_, "Arithmetic overflow: round({}, {})", number, decimals);
+    }
+    result = static_cast<T>(rounded);
+    return Status::OK();
+  }
+
+  // 'factor' is 10^decimals.
+  template <typename T>
+  static T roundFloatingPoint(T number, int32_t decimals, double factor) {
+    if (!std::isfinite(number)) {
+      return number;
+    }
+    double rounded;
+    if (decimals < -308) {
+      // All numbers are less than half of 10^309, so they round to zero.
+      rounded = 0;
+    } else if (decimals > 308 && std::abs(number) < 1) {
+      // 10^decimals overflows, so scale the number up by 10^308 first.
+      rounded =
+          roundFloatingPoint<double>(
+              number * 1e308, decimals - 308, std::pow(10, decimals - 308)) /
+          1e308;
+    } else if (std::isinf(number * factor)) {
+      // The number has no digits past the 'decimals'-th decimal place.
+      rounded = number;
+    } else {
+      rounded = functions::round(number, decimals, factor);
+    }
+    // Spark returns positive zero.
+    return rounded == 0 ? T(0) : static_cast<T>(rounded);
+  }
+
+  bool ansiEnabled_ = false;
+  // 10^decimals when 'decimals' is a constant.
+  std::optional<double> scaleFactor_;
 };
 
 template <typename TExec>
