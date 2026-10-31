@@ -23,6 +23,7 @@
 #include "velox/functions/Macros.h"
 #include "velox/functions/lib/string/StringCore.h"
 #include "velox/functions/lib/string/StringImpl.h"
+#include "velox/functions/sparksql/SparkQueryConfig.h"
 
 namespace facebook::velox::functions::sparksql {
 
@@ -693,6 +694,11 @@ struct SubstrFunction {
 };
 
 struct OverlayFunctionBase {
+  FOLLY_ALWAYS_INLINE void initialize(const core::QueryConfig& config) {
+    legacyWrapPositions_ =
+        SparkQueryConfig{config}.legacyOverlayWrapPositions();
+  }
+
   template <bool isAscii, bool isVarchar>
   FOLLY_ALWAYS_INLINE void doCall(
       exec::StringWriter& result,
@@ -700,8 +706,19 @@ struct OverlayFunctionBase {
       StringView replace,
       int32_t pos,
       int32_t len) {
+    // Spark computes 'pos - 1' and 'pos + length' as 64-bit integers and clamps
+    // them to the 32-bit range. It clamps 'pos + length' to at least
+    // INT32_MIN + 1 because 'substring' of length INT32_MAX from INT32_MIN ends
+    // one character before the end of the input.
+    // With the legacy config, they wrap around in 32 bits. Only the binary
+    // 'substring' of length INT32_MAX from INT32_MIN ends at the end of the
+    // input then.
+    const int64_t firstLength = legacyWrapPositions_
+        ? static_cast<int32_t>(static_cast<uint32_t>(pos) - 1U)
+        : std::clamp<int64_t>(
+              static_cast<int64_t>(pos) - 1, INT32_MIN, INT32_MAX);
     // Calculate and append first part.
-    auto startAndLength = substring<isAscii, isVarchar>(input, 1, pos - 1);
+    auto startAndLength = substring<isAscii, isVarchar>(input, 1, firstLength);
     append<isAscii, isVarchar>(result, input, startAndLength);
 
     // Append second part.
@@ -718,7 +735,17 @@ struct OverlayFunctionBase {
         length = replace.size();
       }
     }
-    int64_t start = (int64_t)pos + (int64_t)length;
+    int64_t start = 0;
+    if (legacyWrapPositions_) {
+      start = static_cast<int32_t>(
+          static_cast<uint32_t>(pos) + static_cast<uint32_t>(length));
+      if constexpr (!isVarchar) {
+        start = std::max<int64_t>(start, INT32_MIN + 1LL);
+      }
+    } else {
+      start = std::clamp<int64_t>(
+          static_cast<int64_t>(pos) + length, INT32_MIN + 1LL, INT32_MAX);
+    }
     startAndLength = substring<isAscii, isVarchar>(input, start, INT32_MAX);
     append<isAscii, isVarchar>(result, input, startAndLength);
   }
@@ -778,6 +805,8 @@ struct OverlayFunctionBase {
       return std::make_pair(0, 0);
     }
   }
+
+  bool legacyWrapPositions_{false};
 };
 
 template <typename T>
@@ -786,6 +815,16 @@ struct OverlayVarcharFunction : public OverlayFunctionBase {
 
   // ASCII input always produces ASCII result.
   static constexpr bool is_default_ascii_behavior = true;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const arg_type<Varchar>* /*input*/,
+      const arg_type<Varchar>* /*replace*/,
+      const int32_t* /*pos*/,
+      const int32_t* /*len*/) {
+    OverlayFunctionBase::initialize(config);
+  }
 
   FOLLY_ALWAYS_INLINE void call(
       out_type<Varchar>& result,
@@ -809,6 +848,16 @@ struct OverlayVarcharFunction : public OverlayFunctionBase {
 template <typename T>
 struct OverlayVarbinaryFunction : public OverlayFunctionBase {
   VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const arg_type<Varbinary>* /*input*/,
+      const arg_type<Varbinary>* /*replace*/,
+      const int32_t* /*pos*/,
+      const int32_t* /*len*/) {
+    OverlayFunctionBase::initialize(config);
+  }
 
   FOLLY_ALWAYS_INLINE void call(
       out_type<Varbinary>& result,

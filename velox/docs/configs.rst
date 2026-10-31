@@ -1531,6 +1531,12 @@ Spark-specific Configuration
        Joda date formatter performs strict checking of its input and uses different pattern string.
        For example, the 2015-07-22 10:00:00 timestamp cannot be parsed if pattern is yyyy-MM-dd because the parser does not consume whole input.
        Another example is that the 'W' pattern, which means week in month, is not supported. For more differences, see :issue:`10354`.
+   * - spark.legacy_overlay_wrap_positions
+     - bool
+     - false
+     - If true, :spark:func:`overlay` computes ``pos - 1`` and ``pos + len`` as 32-bit integers that wrap around
+       on overflow, e.g. ``overlay('abc', 'xyz', 2147483647, 1)`` returns ``'abcxyzab'`` instead of ``'abcxyz'``.
+       This matches the behavior of Spark before 4.2.1.
    * - spark.legacy_statistical_aggregate
      - bool
      - false

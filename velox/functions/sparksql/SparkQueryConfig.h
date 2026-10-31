@@ -134,6 +134,17 @@ class SparkQueryConfig {
       false,
       "Use simple date formatter instead of Joda for Spark.")
 
+  /// If true, overlay computes the positions where the replacement starts and
+  /// the rest of the input resumes in 32-bit integers that wrap around, as in
+  /// Spark 4.2.0 and earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyOverlayWrapPositions,
+      legacyOverlayWrapPositions,
+      "legacy_overlay_wrap_positions",
+      bool,
+      false,
+      "Compute Spark overlay positions in wrapping 32-bit integers.")
+
   /// If true, Spark statistical aggregation functions return NaN instead of
   /// NULL when dividing by zero.
   VELOX_SPARK_CONFIG(
