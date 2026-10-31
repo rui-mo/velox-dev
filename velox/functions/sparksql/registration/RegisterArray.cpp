@@ -26,6 +26,7 @@
 #include "velox/functions/sparksql/ArrayInsert.h"
 #include "velox/functions/sparksql/ArrayMinMaxFunction.h"
 #include "velox/functions/sparksql/ArrayPrepend.h"
+#include "velox/functions/sparksql/ArrayRemove.h"
 #include "velox/functions/sparksql/ArraySort.h"
 #include "velox/functions/sparksql/SimpleComparisonMatcher.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"

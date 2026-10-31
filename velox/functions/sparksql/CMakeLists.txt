@@ -67,6 +67,7 @@ velox_add_library(
   ArrayInsert.h
   ArrayMinMaxFunction.h
   ArrayPrepend.h
+  ArrayRemove.h
   ArraySort.h
   AssertNotNull.h
   Base64Function.h

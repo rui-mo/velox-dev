@@ -148,13 +148,14 @@ Array Functions
 
     Remove all elements that equal ``element`` from array ``x``. Returns NULL as result if ``element`` is NULL.
     If array ``x`` is empty array, returns empty array. If all elements in array ``x`` are NULL but ``element`` is not NULL,
-    returns array ``x``. ::
+    returns array ``x``. NULL values nested in elements of complex types are compared as values, i.e. NULL equals NULL. ::
 
         SELECT array_remove(array(1, 2, 3), 3); -- [1, 2]
         SELECT array_remove(array(2, 1, NULL), 1); -- [2, NULL]
         SELECT array_remove(array(1, 2, NULL), NULL); -- NULL
         SELECT array_remove(array(), 1); -- []
         SELECT array_remove(array(NULL, NULL), -1); -- [NULL, NULL]
+        SELECT array_remove(array(array(1, NULL), array(1, 2)), array(1, NULL)); -- [[1, 2]]
 
 .. spark:function:: array_repeat(element, count) -> array(E)
 
