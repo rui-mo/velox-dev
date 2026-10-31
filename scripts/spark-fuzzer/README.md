@@ -151,7 +151,9 @@ remainder, `floor` and casts to strings. Velox uses glibc's math functions, whil
 Java 21, they differ for 55% of random inputs of `cbrt`, 14% for `atan2`, 12%
 for `hypot`, 11% for `log10`, 7% for `cosh`, 6% for `acos`, 5% for `asin`, 3%
 for `atan` and less than 1% for `sin`, `cos`, `tan`, `sinh`, `tanh`, `exp`,
-`expm1`, `log`, `log1p` and `pow`.
+`expm1`, `log`, `log1p` and `pow`. A batch has 100 rows, so a function
+that differs for 3% of inputs almost always produces a differing row:
+`known-issues.txt` skips the functions from `cbrt` to `atan`.
 
 ## Known issues
 

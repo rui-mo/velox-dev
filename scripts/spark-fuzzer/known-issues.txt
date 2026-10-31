@@ -24,9 +24,16 @@ aggregate
 array_repeat
 # Spark treats the delimiters as regular expressions.
 str_to_map
-# Velox uses glibc's math functions, while Java's Math.cbrt and Math.atan2 use
-# the fdlibm algorithms. Their results differ in the last bit for 55% of random
-# inputs of cbrt and 14% of atan2, which changes results of discontinuous
+# Velox uses glibc's math functions, while Java's Math uses the fdlibm
+# algorithms or HotSpot intrinsics. Their results differ in the last bit for at
+# least 3% of random inputs of these functions, see README.md, so most batches
+# have a differing row. The difference changes results of discontinuous
 # functions, e.g. width_bucket, remainder and casts to strings.
+acos
+asin
+atan
 atan2
 cbrt
+cosh
+hypot
+log10
