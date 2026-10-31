@@ -290,13 +290,42 @@ void checkForBadGroupId(int64_t groupId, const RE2& re) {
   }
 }
 
+// Returns true if 'groupId' is a group of 're'. Otherwise, throws if
+// 'checkGroupIdOnMatch' is false or 're' matches the string at 'row'. If not,
+// writes the result of no match for 'row' and returns false.
+bool checkGroupIdForExtract(
+    FlatVector<StringView>& result,
+    vector_size_t row,
+    const RE2& re,
+    const exec::LocalDecodedVector& strs,
+    int64_t groupId,
+    bool emptyNoMatch,
+    bool checkGroupIdOnMatch) {
+  if (LIKELY(!isBadGroupId(groupId, re))) {
+    return true;
+  }
+  if (!checkGroupIdOnMatch ||
+      RE2::PartialMatch(toStringPiece(strs->valueAt<StringView>(row)), re)) {
+    checkForBadGroupId(groupId, re);
+  }
+  if (emptyNoMatch) {
+    result.setNoCopy(row, StringView());
+  } else {
+    result.setNull(row, true);
+  }
+  return false;
+}
+
 template <typename T>
 class Re2SearchAndExtractConstantPattern final : public exec::VectorFunction {
  public:
-  explicit Re2SearchAndExtractConstantPattern(
+  Re2SearchAndExtractConstantPattern(
       StringView pattern,
-      bool emptyNoMatch)
-      : re_(toStringPiece(pattern), RE2::Quiet), emptyNoMatch_(emptyNoMatch) {}
+      bool emptyNoMatch,
+      bool checkGroupIdOnMatch)
+      : re_(toStringPiece(pattern), RE2::Quiet),
+        emptyNoMatch_(emptyNoMatch),
+        checkGroupIdOnMatch_(checkGroupIdOnMatch) {}
 
   void apply(
       const SelectivityVector& rows,
@@ -334,17 +363,28 @@ class Re2SearchAndExtractConstantPattern final : public exec::VectorFunction {
     }
 
     if (const auto groupId = getIfConstant<T>(*args[2])) {
-      try {
-        checkForBadGroupId(*groupId, re_);
-      } catch (const std::exception&) {
-        context.setErrors(rows, std::current_exception());
-        return;
+      if (!checkGroupIdOnMatch_) {
+        try {
+          checkForBadGroupId(*groupId, re_);
+        } catch (const std::exception&) {
+          context.setErrors(rows, std::current_exception());
+          return;
+        }
       }
 
-      groups.resize(*groupId + 1);
+      groups.resize(re_.NumberOfCapturingGroups() + 1);
       context.applyToSelectedNoThrow(rows, [&](vector_size_t i) {
-        mustRefSourceStrings |= re2Extract(
-            result, i, re_, toSearch, groups, *groupId, emptyNoMatch_);
+        if (checkGroupIdForExtract(
+                result,
+                i,
+                re_,
+                toSearch,
+                *groupId,
+                emptyNoMatch_,
+                checkGroupIdOnMatch_)) {
+          mustRefSourceStrings |= re2Extract(
+              result, i, re_, toSearch, groups, *groupId, emptyNoMatch_);
+        }
       });
       if (mustRefSourceStrings) {
         result.acquireSharedStringBuffers(toSearch->base());
@@ -359,9 +399,17 @@ class Re2SearchAndExtractConstantPattern final : public exec::VectorFunction {
     groups.resize(re_.NumberOfCapturingGroups() + 1);
     context.applyToSelectedNoThrow(rows, [&](vector_size_t i) {
       T group = groupIds->valueAt<T>(i);
-      checkForBadGroupId(group, re_);
-      mustRefSourceStrings |=
-          re2Extract(result, i, re_, toSearch, groups, group, emptyNoMatch_);
+      if (checkGroupIdForExtract(
+              result,
+              i,
+              re_,
+              toSearch,
+              group,
+              emptyNoMatch_,
+              checkGroupIdOnMatch_)) {
+        mustRefSourceStrings |=
+            re2Extract(result, i, re_, toSearch, groups, group, emptyNoMatch_);
+      }
     });
     if (mustRefSourceStrings) {
       result.acquireSharedStringBuffers(toSearch->base());
@@ -373,6 +421,10 @@ class Re2SearchAndExtractConstantPattern final : public exec::VectorFunction {
   // If true, returns empty string as result for no match case, which is Spark's
   // behavior. Otherwise, returns null as result, which is Presto's behavior.
   const bool emptyNoMatch_;
+  // If true, throws for an out-of-range group id only if the pattern matches,
+  // which is Spark's behavior. Otherwise, always throws, which is Presto's
+  // behavior.
+  const bool checkGroupIdOnMatch_;
 };
 
 // The factory function we provide returns a unique instance for each call, so
@@ -380,8 +432,13 @@ class Re2SearchAndExtractConstantPattern final : public exec::VectorFunction {
 template <typename T>
 class Re2SearchAndExtract final : public exec::VectorFunction {
  public:
-  explicit Re2SearchAndExtract(bool emptyNoMatch, int64_t maxCompiledRegexes)
-      : emptyNoMatch_(emptyNoMatch), cache_(maxCompiledRegexes) {}
+  Re2SearchAndExtract(
+      bool emptyNoMatch,
+      bool checkGroupIdOnMatch,
+      int64_t maxCompiledRegexes)
+      : emptyNoMatch_(emptyNoMatch),
+        checkGroupIdOnMatch_(checkGroupIdOnMatch),
+        cache_(maxCompiledRegexes) {}
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
@@ -391,7 +448,8 @@ class Re2SearchAndExtract final : public exec::VectorFunction {
     VELOX_CHECK(args.size() == 2 || args.size() == 3);
     // Handle the common case of a constant pattern.
     if (auto pattern = getIfConstant<StringView>(*args[1])) {
-      Re2SearchAndExtractConstantPattern<T>(*pattern, emptyNoMatch_)
+      Re2SearchAndExtractConstantPattern<T>(
+          *pattern, emptyNoMatch_, checkGroupIdOnMatch_)
           .apply(rows, args, outputType, context, resultRef);
       return;
     }
@@ -428,10 +486,18 @@ class Re2SearchAndExtract final : public exec::VectorFunction {
         }
 
         const auto& re = *tryRe.value();
-        checkForBadGroupId(groupId, re);
-        groups.resize(groupId + 1);
-        mustRefSourceStrings |=
-            re2Extract(result, i, re, toSearch, groups, groupId, emptyNoMatch_);
+        if (checkGroupIdForExtract(
+                result,
+                i,
+                re,
+                toSearch,
+                groupId,
+                emptyNoMatch_,
+                checkGroupIdOnMatch_)) {
+          groups.resize(groupId + 1);
+          mustRefSourceStrings |= re2Extract(
+              result, i, re, toSearch, groups, groupId, emptyNoMatch_);
+        }
       });
     }
     if (mustRefSourceStrings) {
@@ -441,6 +507,7 @@ class Re2SearchAndExtract final : public exec::VectorFunction {
 
  private:
   const bool emptyNoMatch_;
+  const bool checkGroupIdOnMatch_;
   mutable detail::ReCache cache_;
 };
 
@@ -1791,7 +1858,8 @@ std::shared_ptr<exec::VectorFunction> makeRe2Extract(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config,
-    const bool emptyNoMatch) {
+    const bool emptyNoMatch,
+    const bool checkGroupIdOnMatch) {
   auto numArgs = inputArgs.size();
   VELOX_USER_CHECK(
       numArgs == 2 || numArgs == 3,
@@ -1830,10 +1898,10 @@ std::shared_ptr<exec::VectorFunction> makeRe2Extract(
     switch (groupIdTypeKind) {
       case TypeKind::INTEGER:
         return std::make_shared<Re2SearchAndExtractConstantPattern<int32_t>>(
-            pattern, emptyNoMatch);
+            pattern, emptyNoMatch, checkGroupIdOnMatch);
       case TypeKind::BIGINT:
         return std::make_shared<Re2SearchAndExtractConstantPattern<int64_t>>(
-            pattern, emptyNoMatch);
+            pattern, emptyNoMatch, checkGroupIdOnMatch);
       default:
         VELOX_UNREACHABLE();
     }
@@ -1843,10 +1911,10 @@ std::shared_ptr<exec::VectorFunction> makeRe2Extract(
   switch (groupIdTypeKind) {
     case TypeKind::INTEGER:
       return std::make_shared<Re2SearchAndExtract<int32_t>>(
-          emptyNoMatch, maxCompiledRegexes);
+          emptyNoMatch, checkGroupIdOnMatch, maxCompiledRegexes);
     case TypeKind::BIGINT:
       return std::make_shared<Re2SearchAndExtract<int64_t>>(
-          emptyNoMatch, maxCompiledRegexes);
+          emptyNoMatch, checkGroupIdOnMatch, maxCompiledRegexes);
     default:
       VELOX_UNREACHABLE();
   }

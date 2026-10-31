@@ -51,12 +51,16 @@ See https://github.com/google/re2/wiki/Syntax for more information.
     :noindex:
 
     Finds the first occurrence of the regular expression ``pattern`` in
-    ``string`` and returns the capturing group number ``group``.
+    ``string`` and returns the capturing group number ``group``. Returns an
+    empty string if ``pattern`` does not match ``string`` or the group does not
+    participate in the match. Throws if ``group`` is out of range and
+    ``pattern`` matches ``string``.
 
     regexp_extract does not support column references for the ``pattern`` argument.
     Patterns must be constant values. ::
 
         SELECT regexp_extract('1a 2b 14m', '(\d+)([a-z]+)', 2); -- 'a'
+        SELECT regexp_extract('1a 2b', 'x', 1); -- ''
 
 .. spark:function:: regexp_extract_all(string, pattern) -> array(varchar):
 
