@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <algorithm>
 #include <optional>
 #include "velox/expression/DecodedArgs.h"
 #include "velox/expression/VectorFunction.h"
@@ -78,6 +79,12 @@ struct MergeResults {
 // https://prestodb.io/docs/current/functions/map.html#map_zip_with
 class MapZipWithFunction : public exec::VectorFunction {
  public:
+  /// @param keepKeyOrder If true, the result lists the keys of the left map in
+  /// their order, then the keys only in the right map in their order, as Spark
+  /// does. Otherwise, the keys are sorted.
+  explicit MapZipWithFunction(bool keepKeyOrder)
+      : keepKeyOrder_{keepKeyOrder} {}
+
   void apply(
       const SelectivityVector& rows,
       std::vector<VectorPtr>& args,
@@ -119,6 +126,10 @@ class MapZipWithFunction : public exec::VectorFunction {
             return leftKeys->compare(rightKeys.get(), left, right);
           },
           mergeResults);
+    }
+
+    if (keepKeyOrder_) {
+      restoreKeyOrder(rows, mergeResults);
     }
 
     auto mergedLeftValues = BaseVector::wrapInDictionary(
@@ -200,7 +211,7 @@ class MapZipWithFunction : public exec::VectorFunction {
         mergedKeys,
         mergedValues,
         std::nullopt, /* nullCount */
-        true /* sortedKeys */);
+        !keepKeyOrder_ /* sortedKeys */);
     context.moveOrCopyResult(localResult, rows, result);
   }
 
@@ -441,6 +452,46 @@ class MapZipWithFunction : public exec::VectorFunction {
     }
   }
 
+  // Reorders the keys of each merged map from ascending order to the order of
+  // the input maps: the keys of the left map, then the keys only in the right
+  // map. The key indices of each input map grow with the key positions.
+  static void restoreKeyOrder(
+      const SelectivityVector& rows,
+      MergeResults& mergeResults) {
+    // Indices of a key in the left and the right maps, or -1 if absent.
+    std::vector<std::pair<vector_size_t, vector_size_t>> keys;
+    rows.applyToSelected([&](vector_size_t row) {
+      if (bits::isBitNull(mergeResults.rawNewNulls, row)) {
+        return;
+      }
+      const auto offset = mergeResults.rawNewOffsets[row];
+      const auto size = mergeResults.rawNewSizes[row];
+      keys.clear();
+      for (auto i = offset; i < offset + size; ++i) {
+        keys.emplace_back(
+            bits::isBitNull(mergeResults.rawLeftKeyNulls, i)
+                ? -1
+                : mergeResults.rawLeftKeyIndices[i],
+            bits::isBitNull(mergeResults.rawRightKeyNulls, i)
+                ? -1
+                : mergeResults.rawRightKeyIndices[i]);
+      }
+      std::sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) {
+        if ((a.first < 0) != (b.first < 0)) {
+          return a.first >= 0;
+        }
+        return a.first >= 0 ? a.first < b.first : a.second < b.second;
+      });
+      for (auto i = 0; i < size; ++i) {
+        const auto [left, right] = keys[i];
+        bits::setNull(mergeResults.rawLeftKeyNulls, offset + i, left < 0);
+        mergeResults.rawLeftKeyIndices[offset + i] = std::max(left, 0);
+        bits::setNull(mergeResults.rawRightKeyNulls, offset + i, right < 0);
+        mergeResults.rawRightKeyIndices[offset + i] = std::max(right, 0);
+      }
+    });
+  }
+
   static VectorPtr materializeMergedKeys(
       vector_size_t size,
       const VectorPtr& leftKeys,
@@ -480,6 +531,8 @@ class MapZipWithFunction : public exec::VectorFunction {
 
     return wrapCapture;
   }
+
+  const bool keepKeyOrder_;
 };
 } // namespace
 
@@ -492,6 +545,14 @@ VELOX_DECLARE_VECTOR_FUNCTION_WITH_METADATA(
     udf_map_zip_with,
     MapZipWithFunction::signatures(),
     exec::VectorFunctionMetadataBuilder().defaultNullBehavior(false).build(),
-    std::make_unique<MapZipWithFunction>());
+    std::make_unique<MapZipWithFunction>(/*keepKeyOrder=*/false));
+
+void registerMapZipWithFunction(const std::string& name, bool keepKeyOrder) {
+  exec::registerVectorFunction(
+      name,
+      MapZipWithFunction::signatures(),
+      std::make_unique<MapZipWithFunction>(keepKeyOrder),
+      exec::VectorFunctionMetadataBuilder().defaultNullBehavior(false).build());
+}
 
 } // namespace facebook::velox::functions

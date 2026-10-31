@@ -77,8 +77,12 @@ Map Functions
 .. spark:function:: map_zip_with(map(K,V1), map(K,V2), function(K,V1,V2,V3)) -> map(K,V3)
 
     Merges the two given maps into a single map by applying ``function`` to the pair of values with the same key.
-    For keys only presented in one map, NULL will be passed as the value for the missing key. ::
+    For keys only presented in one map, NULL will be passed as the value for the missing key.
+    The result lists the keys of the first map in their order, then the keys only in the second map in their order. ::
 
+        SELECT map_keys(map_zip_with(MAP(ARRAY[3, 1], ARRAY['a', 'b']), -- [3, 1, 2]
+                                     MAP(ARRAY[2, 1], ARRAY['c', 'd']),
+                                     (k, v1, v2) -> concat(v1, v2)));
         SELECT map_zip_with(MAP(ARRAY[1, 2, 3], ARRAY['a', 'b', 'c']), -- {1 -> ad, 2 -> be, 3 -> cf}
                             MAP(ARRAY[1, 2, 3], ARRAY['d', 'e', 'f']),
                             (k, v1, v2) -> concat(v1, v2));

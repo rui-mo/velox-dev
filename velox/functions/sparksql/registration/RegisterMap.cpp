@@ -25,6 +25,9 @@ extern void registerElementAtFunction(
     const std::string& name,
     bool enableCaching,
     std::string_view defaultOwner = {});
+extern void registerMapZipWithFunction(
+    const std::string& name,
+    bool keepKeyOrder);
 
 void registerSparkMapFunctions(const std::string& prefix) {
   sparksql::registerMapFromEntriesFunction(prefix + "map_from_entries");
@@ -36,7 +39,7 @@ void registerSparkMapFunctions(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_map_entries, prefix + "map_entries");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_map_keys, prefix + "map_keys");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_map_values, prefix + "map_values");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_map_zip_with, prefix + "map_zip_with");
+  registerMapZipWithFunction(prefix + "map_zip_with", /*keepKeyOrder=*/true);
 
   registerMapConcatAllowSingleArg(prefix + "map_concat");
 }
