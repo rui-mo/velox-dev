@@ -37,9 +37,10 @@ Array Functions
 
 .. spark:function:: array_contains(array(E), value) -> boolean
 
-    Returns true if the array contains the value. ::
+    Returns true if the array contains the value. NULL values nested in elements of complex types are compared as values, i.e. NULL equals NULL. ::
 
         SELECT array_contains(array(1, 2, 3), 2); -- true
+        SELECT array_contains(array(array(1, NULL)), array(1, NULL)); -- true
 
 .. spark:function:: array_distinct(array(E)) -> array(E)
 
