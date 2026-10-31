@@ -64,10 +64,13 @@ See https://github.com/google/re2/wiki/Syntax for more information.
 
 .. spark:function:: regexp_extract_all(string, pattern) -> array(varchar):
 
-    Returns the substring(s) matched by the regular expression ``pattern``
-    in ``string``::
+    Finds all occurrences of the regular expression ``pattern`` in ``string``
+    and returns the first capturing group of each. Same as
+    ``regexp_extract_all(string, pattern, 1)``. Throws if ``pattern`` has no
+    capturing group and matches ``string``::
 
-        SELECT regexp_extract_all('1a 2b 14m', '\d+'); -- [1, 2, 14]
+        SELECT regexp_extract_all('1a 2b 14m', '(\d+)([a-z]+)'); -- ['1', '2', '14']
+        SELECT regexp_extract_all('1a 2b 14m', '\d+'); -- error
 
 .. spark:function:: regexp_extract_all(string, pattern, group) -> array(varchar):
     :noindex:
