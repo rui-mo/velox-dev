@@ -196,6 +196,8 @@ the following command line arguments:
 
 * ``--spark_query_timeout_sec``: Timeout in seconds for queries run in Spark. Queries that time out are treated as not supported by Spark. Default is 60.
 
+* ``--skip_functions``: Comma separated list of function names to skip in addition to the built-in skip list of Spark Expression Fuzzer, e.g. to exclude functions with known issues.
+
 If running from CLion IDE, add ``--logtostderr=1`` to see the full output.
 
 An example set of arguments to run the expression fuzzer with all features enabled is as follows:

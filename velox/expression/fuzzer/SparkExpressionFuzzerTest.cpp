@@ -29,6 +29,7 @@
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
 #include "velox/expression/fuzzer/FuzzerRunner.h"
 #include "velox/expression/fuzzer/SparkSpecialFormSignatureGenerator.h"
+#include "velox/expression/signature_parser/ParseUtil.h"
 #include "velox/functions/prestosql/fuzzer/FloorCeilRoundArgTypesGenerator.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
 #include "velox/functions/sparksql/fuzzer/AddSubtractArgTypesGenerator.h"
@@ -68,6 +69,13 @@ DEFINE_uint32(
     "Timeout in seconds for queries run in Spark. Queries that time out are "
     "treated as not supported by Spark. Example: "
     "--spark_query_timeout_sec=120");
+
+DEFINE_string(
+    skip_functions,
+    "",
+    "Comma separated list of function names to skip in addition to the "
+    "built-in skip list, e.g. to exclude functions with known issues. "
+    "Example: --skip_functions=\"array_sort,sequence\"");
 
 using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
@@ -211,6 +219,11 @@ int main(int argc, char** argv) {
                << "Build with VELOX_ENABLE_PARQUET=ON.";
     return 1;
 #endif
+  }
+
+  if (!FLAGS_skip_functions.empty()) {
+    const auto names = facebook::velox::exec::splitNames(FLAGS_skip_functions);
+    skipFunctions.insert(names.begin(), names.end());
   }
 
   return FuzzerRunner::run(
