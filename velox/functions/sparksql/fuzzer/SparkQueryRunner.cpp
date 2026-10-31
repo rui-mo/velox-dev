@@ -406,6 +406,7 @@ SparkQueryRunner::projectionSessionConfigs() {
   static const std::unordered_map<std::string, std::string> kConfigs{
       {"spark.sql.optimizer.excludedRules",
        "org.apache.spark.sql.catalyst.optimizer.ConstantFolding"},
+      {"spark.sql.subexpressionElimination.enabled", "false"},
   };
   return kConfigs;
 }

@@ -73,10 +73,12 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
 
   /// Spark SQL configs for queries that only project expressions, such as
   /// those of the expression fuzzer. Spark evaluates constant expressions when
-  /// it optimizes a query, so an error fails the query even if no row needs
-  /// the expression, e.g. when another argument of the function is null. Velox
-  /// evaluates them like other expressions. These configs disable constant
-  /// folding, which window frames with offsets need.
+  /// it optimizes a query, and common subexpressions before the expressions
+  /// that use them, so an error fails the query even if no row needs the
+  /// expression, e.g. when another argument of the function is null. Velox
+  /// evaluates them only for the rows that need them. These configs disable
+  /// constant folding, which window frames with offsets need, and
+  /// subexpression elimination.
   static const std::unordered_map<std::string, std::string>&
   projectionSessionConfigs();
 
