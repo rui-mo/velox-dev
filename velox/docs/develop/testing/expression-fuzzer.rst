@@ -205,7 +205,9 @@ subexpressions of a projection for all rows, so an error in such an expression w
 whole query even if no row needs the expression, while Velox does not evaluate expressions on
 rows whose results are already null. The configs also exclude Spark's ``ReorderAssociativeOperator``
 optimizer rule, which ignores the evaluation mode of nested additions and multiplications, e.g.
-it evaluates ``1 + try_add(c0, 2)`` as ``c0 + (1 + 2)``, which does not return null on overflow.
+it evaluates ``1 + try_add(c0, 2)`` as ``c0 + (1 + 2)``, which does not return null on overflow,
+and Spark's ``SimplifyConditionals`` optimizer rule, which removes the condition of an ``if``
+whose branches are the same even if the condition throws.
 
 Velox does not evaluate the arguments of a function with default null behavior on rows where
 another argument is null, and ignores errors in conjuncts whose result is determined by other
