@@ -91,6 +91,7 @@ velox_add_library(
   Hash.h
   In.h
   InitcapFunction.h
+  JsonArrayLength.h
   JsonObjectKeys.h
   LambdaIndexUtil.h
   LastWin.h

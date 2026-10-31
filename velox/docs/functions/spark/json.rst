@@ -104,11 +104,16 @@ JSON Functions
 .. spark:function:: json_array_length(jsonString) -> integer
 
     Returns the number of elements in the outermost JSON array from ``jsonString``.
-    If ``jsonString`` is not a valid JSON array or NULL, the function returns NULL. ::
+    If ``jsonString`` is not a valid JSON array or NULL, the function returns NULL.
+    Like Spark's JSON parser, ignores any content after the array, accepts strings
+    and field names enclosed in single quotes and unescaped control characters in
+    strings, and allows arrays and objects to nest at most 1000 levels deep. ::
 
         SELECT json_array_length('[1,2,3,4]'); -- 4
         SELECT json_array_length('[1,2,3,{"f1":1,"f2":[5,6]},4]'); -- 5
         SELECT json_array_length('[1,2'); -- NULL
+        SELECT json_array_length('[1,2]abc'); -- 2
+        SELECT json_array_length("['a','b']"); -- 2
 
 .. spark:function:: json_object_keys(jsonString) -> array(string)
 

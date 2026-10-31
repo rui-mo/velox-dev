@@ -37,5 +37,37 @@ TEST_F(JsonArrayLengthTest, basic) {
   EXPECT_EQ(std::nullopt, jsonArrayLength(R"([1,2)"));
 }
 
+TEST_F(JsonArrayLengthTest, sparkSyntax) {
+  // Content after the array is ignored.
+  EXPECT_EQ(1, jsonArrayLength("[7]7La?{eCu&<"));
+  EXPECT_EQ(2, jsonArrayLength(R"( [1, "a"]")"));
+  EXPECT_EQ(0, jsonArrayLength("[]]"));
+
+  // Strings and field names can be single quoted and contain unescaped control
+  // characters.
+  EXPECT_EQ(2, jsonArrayLength(R"(['a"]', "b'"])"));
+  EXPECT_EQ(1, jsonArrayLength(R"([{'a': 'b\'c'}])"));
+  EXPECT_EQ(1, jsonArrayLength("[\"a\x01\tb\"]"));
+
+  EXPECT_EQ(2, jsonArrayLength("[1e999, -0.5E-3]"));
+
+  EXPECT_EQ(std::nullopt, jsonArrayLength("[1,]"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength("[01]"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength("[1.]"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength("[NaN]"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength("[truex]"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength("[{a: 1}]"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength(R"(["\x"])"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength("[\v]"));
+  EXPECT_EQ(std::nullopt, jsonArrayLength("['a]"));
+
+  // Arrays and objects can nest at most 1000 levels deep.
+  EXPECT_EQ(
+      1, jsonArrayLength(std::string(1000, '[') + std::string(1000, ']')));
+  EXPECT_EQ(
+      std::nullopt,
+      jsonArrayLength(std::string(1001, '[') + std::string(1001, ']')));
+}
+
 } // namespace
 } // namespace facebook::velox::functions::sparksql::test
