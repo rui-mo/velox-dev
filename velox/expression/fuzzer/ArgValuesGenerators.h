@@ -266,4 +266,20 @@ class LevenshteinArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark round. The scale is a constant, as Spark
+/// requires, in [-400, 400], which includes scales whose power of 10 does not
+/// fit in a double. Spark computes 10 raised to the absolute value of the scale
+/// as a java.math.BigInteger, which is slow for scales in the millions and
+/// throws for scales in the hundreds of millions.
+class RoundArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~RoundArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer

@@ -782,4 +782,25 @@ std::vector<core::TypedExprPtr> LevenshteinArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+std::vector<core::TypedExprPtr> RoundArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& /*options*/,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& /*state*/) {
+  VELOX_CHECK_GE(signature.args.size(), 1);
+  VELOX_CHECK_LE(signature.args.size(), 2);
+
+  // The fuzzer generates the number.
+  std::vector<core::TypedExprPtr> inputExpressions(
+      signature.args.size(), nullptr);
+  if (signature.args.size() == 2) {
+    VELOX_CHECK_EQ(signature.args[1]->kind(), TypeKind::INTEGER);
+    // Mostly scales that round typical numbers to one of their digits.
+    const int32_t maxScale = coinToss(rng, 0.8) ? 20 : 400;
+    inputExpressions[1] = std::make_shared<core::ConstantTypedExpr>(
+        signature.args[1], variant(rand<int32_t>(rng, -maxScale, maxScale)));
+  }
+  return inputExpressions;
+}
+
 } // namespace facebook::velox::fuzzer
