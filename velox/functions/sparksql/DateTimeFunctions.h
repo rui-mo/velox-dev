@@ -1209,9 +1209,7 @@ struct MonthsBetweenFunction {
       const arg_type<Timestamp>& timestamp1,
       const arg_type<Timestamp>& timestamp2,
       const arg_type<bool>& roundOff) {
-    const auto dateTime1 = getDateTime(timestamp1, sessionTimeZone_);
-    const auto dateTime2 = getDateTime(timestamp2, sessionTimeZone_);
-    result = monthsBetween(dateTime1, dateTime2, roundOff);
+    result = monthsBetween(timestamp1, timestamp2, roundOff);
   }
 
  private:
@@ -1219,20 +1217,37 @@ struct MonthsBetweenFunction {
     return tm.tm_mday == util::getMaxDayOfMonth(getYear(tm), getMonth(tm));
   }
 
-  FOLLY_ALWAYS_INLINE double
-  monthsBetween(const std::tm& tm1, const std::tm& tm2, bool roundOff) {
+  // Returns the seconds from the start of the day of 'timestamp' in the session
+  // time zone to 'timestamp'. 'tm' is 'timestamp' in the session time zone.
+  // Like Spark, uses the first instant of the day as its start, so the result
+  // differs from the time of day on days with daylight saving time transitions.
+  FOLLY_ALWAYS_INLINE int64_t
+  secondsInDay(const Timestamp& timestamp, const std::tm& tm) const {
+    const int64_t timeOfDay =
+        tm.tm_hour * kSecondsInHour + tm.tm_min * kSecondsInMinute + tm.tm_sec;
+    if (sessionTimeZone_ == nullptr) {
+      return timeOfDay;
+    }
+    Timestamp startOfDay(
+        getSeconds(timestamp, sessionTimeZone_) - timeOfDay, 0);
+    toGMTWithGapCorrection(startOfDay, *sessionTimeZone_);
+    return timestamp.getSeconds() - startOfDay.getSeconds();
+  }
+
+  FOLLY_ALWAYS_INLINE double monthsBetween(
+      const Timestamp& timestamp1,
+      const Timestamp& timestamp2,
+      bool roundOff) {
+    const auto tm1 = getDateTime(timestamp1, sessionTimeZone_);
+    const auto tm2 = getDateTime(timestamp2, sessionTimeZone_);
     const double monthDiff =
         (tm1.tm_year - tm2.tm_year) * kMonthInYear + tm1.tm_mon - tm2.tm_mon;
     if (tm1.tm_mday == tm2.tm_mday ||
         (isEndDayOfMonth(tm1) && isEndDayOfMonth(tm2))) {
       return monthDiff;
     }
-    const auto secondsInDay1 = tm1.tm_hour * kSecondsInHour +
-        tm1.tm_min * kSecondsInMinute + tm1.tm_sec;
-    const auto secondsInDay2 = tm2.tm_hour * kSecondsInHour +
-        tm2.tm_min * kSecondsInMinute + tm2.tm_sec;
     const auto secondsDiff = (tm1.tm_mday - tm2.tm_mday) * kSecondsInDay +
-        secondsInDay1 - secondsInDay2;
+        secondsInDay(timestamp1, tm1) - secondsInDay(timestamp2, tm2);
     const auto diff =
         monthDiff + static_cast<double>(secondsDiff) / kSecondsInMonth;
     if (roundOff) {

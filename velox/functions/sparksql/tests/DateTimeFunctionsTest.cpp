@@ -2188,6 +2188,47 @@ TEST_F(DateTimeFunctionsTest, monthsBetween) {
           parseTimestamp("1997-02-21 10:30:00"),
           parseTimestamp("1996-03-21 11:00:00"),
           true));
+
+  // The time of day is the time since the start of the day in the session time
+  // zone, which differs from the local time on days with daylight saving time
+  // transitions. 1972-04-30 19:00:00 UTC is 12:00:00 in Los Angeles, 11 hours
+  // after the start of the day.
+  setQueryTimeZone("America/Los_Angeles");
+  EXPECT_EQ(
+      1.950268817204301,
+      monthsBetween(
+          parseTimestamp("1972-04-30 19:00:00"),
+          parseTimestamp("1972-03-01 08:00:00"),
+          false));
+  EXPECT_EQ(
+      1.95026882,
+      monthsBetween(
+          parseTimestamp("1972-04-30 19:00:00"),
+          parseTimestamp("1972-03-01 08:00:00"),
+          true));
+  EXPECT_EQ(
+      1.049731182795699,
+      monthsBetween(
+          parseTimestamp("1972-06-01 07:00:00"),
+          parseTimestamp("1972-04-30 19:00:00"),
+          false));
+  // 1972-10-29 20:00:00 UTC is 12:00:00 in Los Angeles, 13 hours after the
+  // start of the day.
+  EXPECT_EQ(
+      1.9206989247311828,
+      monthsBetween(
+          parseTimestamp("1972-10-29 20:00:00"),
+          parseTimestamp("1972-09-01 07:00:00"),
+          false));
+  // 2018-11-04 in Sao Paulo starts at 01:00:00, so 2018-11-04 14:00:00 UTC,
+  // which is 12:00:00 there, is 11 hours after the start of the day.
+  setQueryTimeZone("America/Sao_Paulo");
+  EXPECT_EQ(
+      1.1115591397849462,
+      monthsBetween(
+          parseTimestamp("2018-11-04 14:00:00"),
+          parseTimestamp("2018-10-01 03:00:00"),
+          false));
 }
 TEST_F(DateTimeFunctionsTest, dateFormat) {
   const auto dateFormat = [&](std::optional<Timestamp> timestamp,
