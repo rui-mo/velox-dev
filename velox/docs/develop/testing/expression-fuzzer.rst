@@ -235,6 +235,10 @@ subexpression that still fails in Velox and evaluates it alone in Spark. The err
 Spark throws for that subexpression too. Otherwise the test fails and logs the Spark query of the
 smallest subexpression with the ``Smallest failing Velox expression`` prefix.
 
+The scripts in ``scripts/spark-fuzzer`` set up a Spark Connect server for the Spark fuzzers, run
+Spark Expression Fuzzer with Spark as the source of truth with many seeds, group the failures
+by their causes and reproduce them. See ``scripts/spark-fuzzer/README.md``.
+
 If running from CLion IDE, add ``--logtostderr=1`` to see the full output.
 
 An example set of arguments to run the expression fuzzer with all features enabled is as follows:
