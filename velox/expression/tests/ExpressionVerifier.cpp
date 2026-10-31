@@ -249,15 +249,14 @@ bool canThrowStandalone(const core::TypedExprPtr& expr) {
   return true;
 }
 
-// Returns the smallest subexpression of 'expr' that fails in the reference DB,
-// given that 'expr' fails. Descends into the first failing input until none of
-// the inputs fail.
+// Returns the smallest subexpression of 'expr' that fails, given that 'expr'
+// fails. Descends into the first failing input until none of the inputs fail.
 core::TypedExprPtr findSmallestFailingExpression(
     const core::TypedExprPtr& expr,
-    const std::function<bool(const core::TypedExprPtr&)>& referenceFails) {
+    const std::function<bool(const core::TypedExprPtr&)>& fails) {
   for (const auto& input : expr->inputs()) {
-    if (canThrowStandalone(input) && referenceFails(input)) {
-      return findSmallestFailingExpression(input, referenceFails);
+    if (canThrowStandalone(input) && fails(input)) {
+      return findSmallestFailingExpression(input, fails);
     }
   }
   return expr;
@@ -323,6 +322,43 @@ std::optional<ReferenceErrorSource> findReferenceErrorSource(
     }
     const auto expr = findSmallestFailingExpression(plan, referenceFails);
     return ReferenceErrorSource{toSql(expr), veloxFails(expr)};
+  }
+  return std::nullopt;
+}
+
+struct VeloxErrorSource {
+  // Reference query of the subexpression that fails in Velox.
+  std::string sql;
+  // Whether the reference DB throws when evaluating that subexpression alone.
+  bool referenceThrows;
+};
+
+// Called when Velox throws for 'plans' but the reference DB doesn't. Finds the
+// smallest subexpression that fails in Velox and evaluates it alone in the
+// reference DB. 'referenceInput' holds the active rows of 'veloxInput'.
+// Returns std::nullopt if none of 'plans' fails in Velox alone.
+std::optional<VeloxErrorSource> findVeloxErrorSource(
+    const std::vector<core::TypedExprPtr>& plans,
+    const RowVectorPtr& referenceInput,
+    const std::vector<core::TypedExprPtr>& transformPlans,
+    const RowVectorPtr& veloxInput,
+    const SelectivityVector& rows,
+    ReferenceQueryRunner* referenceQueryRunner,
+    core::ExecCtx* execCtx) {
+  auto veloxFails = [&](const core::TypedExprPtr& expr) {
+    return veloxThrows(expr, veloxInput, rows, execCtx);
+  };
+  for (const auto& plan : plans) {
+    if (!veloxFails(plan)) {
+      continue;
+    }
+    const auto expr = findSmallestFailingExpression(plan, veloxFails);
+    const auto referencePlan =
+        makeProjectionPlan(referenceInput, {expr}, transformPlans);
+    return VeloxErrorSource{
+        referenceQueryRunner->toSql(referencePlan).value_or("<unknown>"),
+        computeReferenceResults(referencePlan, referenceQueryRunner).second ==
+            ReferenceQueryErrorCode::kReferenceQueryFail};
   }
   return std::nullopt;
 }
@@ -537,47 +573,79 @@ ExpressionVerifier::verify(
               const bool isPresto = referenceQueryRunner_->runnerType() ==
                   ReferenceQueryRunner::RunnerType::kPrestoQueryRunner;
               if (!(defaultNull && isPresto)) {
-                if (exceptionCommonPtr) {
-                  LOG(ERROR) << "Only common path threw exception";
-                  std::rethrow_exception(exceptionCommonPtr);
-                }
-                // Velox skips rows where an argument of a default-null
-                // function is null and ignores errors in conjuncts whose
-                // result is determined by other conjuncts. Reference DBs other
-                // than Presto may still throw for these rows. Accept the error
-                // if Velox also throws for the smallest subexpression that
-                // fails in the reference DB.
-                std::optional<ReferenceErrorSource> errorSource;
-                if (!isPresto) {
-                  errorSource = findReferenceErrorSource(
-                      plans,
-                      inputRowVector,
+                auto veloxInput = [&]() {
+                  return transformInput(
+                      rowVector,
+                      execCtx_,
+                      options_.disableConstantFolding,
                       transformPlans,
-                      transformInput(
-                          rowVector,
-                          execCtx_,
-                          options_.disableConstantFolding,
-                          transformPlans,
-                          originalInputFields),
-                      rows,
-                      referenceQueryRunner_.get(),
-                      execCtx_);
-                }
-                if (errorSource && errorSource->veloxThrows) {
-                  LOG(WARNING)
-                      << "Velox suppressed an error that the reference DB "
-                         "throws. Both throw for: "
-                      << errorSource->sql;
-                } else {
-                  LOG(ERROR) << "Only reference path threw exception";
-                  if (errorSource) {
-                    LOG(ERROR) << "Smallest failing reference query: "
-                               << errorSource->sql;
+                      originalInputFields);
+                };
+                if (exceptionCommonPtr) {
+                  // Velox evaluates all arguments of functions without
+                  // default null behavior, e.g. elt and array_prepend, on all
+                  // rows. Reference DBs other than Presto may evaluate only
+                  // the arguments they need. Accept the error if the
+                  // reference DB also throws for the smallest subexpression
+                  // that fails in Velox.
+                  std::optional<VeloxErrorSource> errorSource;
+                  if (!isPresto) {
+                    errorSource = findVeloxErrorSource(
+                        plans,
+                        inputRowVector,
+                        transformPlans,
+                        veloxInput(),
+                        rows,
+                        referenceQueryRunner_.get(),
+                        execCtx_);
                   }
-                  auto referenceSql =
-                      referenceQueryRunner_->toSql(projectionPlan);
-                  VELOX_FAIL(
-                      "Reference path throws for query: {}", *referenceSql);
+                  if (errorSource && errorSource->referenceThrows) {
+                    LOG(WARNING)
+                        << "The reference DB skipped an error that Velox "
+                           "throws. Both throw for: "
+                        << errorSource->sql;
+                  } else {
+                    LOG(ERROR) << "Only common path threw exception";
+                    if (errorSource) {
+                      LOG(ERROR) << "Smallest failing Velox expression: "
+                                 << errorSource->sql;
+                    }
+                    std::rethrow_exception(exceptionCommonPtr);
+                  }
+                } else {
+                  // Velox skips rows where an argument of a default-null
+                  // function is null and ignores errors in conjuncts whose
+                  // result is determined by other conjuncts. Reference DBs
+                  // other than Presto may still throw for these rows. Accept
+                  // the error if Velox also throws for the smallest
+                  // subexpression that fails in the reference DB.
+                  std::optional<ReferenceErrorSource> errorSource;
+                  if (!isPresto) {
+                    errorSource = findReferenceErrorSource(
+                        plans,
+                        inputRowVector,
+                        transformPlans,
+                        veloxInput(),
+                        rows,
+                        referenceQueryRunner_.get(),
+                        execCtx_);
+                  }
+                  if (errorSource && errorSource->veloxThrows) {
+                    LOG(WARNING)
+                        << "Velox suppressed an error that the reference DB "
+                           "throws. Both throw for: "
+                        << errorSource->sql;
+                  } else {
+                    LOG(ERROR) << "Only reference path threw exception";
+                    if (errorSource) {
+                      LOG(ERROR) << "Smallest failing reference query: "
+                                 << errorSource->sql;
+                    }
+                    auto referenceSql =
+                        referenceQueryRunner_->toSql(projectionPlan);
+                    VELOX_FAIL(
+                        "Reference path throws for query: {}", *referenceSql);
+                  }
                 }
               }
             }
