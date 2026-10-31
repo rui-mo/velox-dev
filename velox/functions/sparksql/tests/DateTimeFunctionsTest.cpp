@@ -1440,6 +1440,19 @@ TEST_F(DateTimeFunctionsTest, secondsToTimestamp) {
       secondsToTimestamp<int32_t>(kMax), parseTimestamp("2038-01-19 03:14:07"));
   EXPECT_EQ(
       secondsToTimestamp<int32_t>(kMin), parseTimestamp("1901-12-13 20:45:52"));
+  EXPECT_EQ(
+      secondsToTimestamp<int64_t>(9223372036854), Timestamp(9223372036854, 0));
+  EXPECT_EQ(
+      secondsToTimestamp<int64_t>(-9223372036854),
+      Timestamp(-9223372036854, 0));
+  // The number of microseconds overflows BIGINT.
+  VELOX_ASSERT_THROW(
+      secondsToTimestamp<int64_t>(9223372036855), "long overflow");
+  VELOX_ASSERT_THROW(
+      secondsToTimestamp<int64_t>(-9223372036855), "long overflow");
+  VELOX_ASSERT_THROW(
+      secondsToTimestamp<int64_t>(std::numeric_limits<int64_t>::max()),
+      "long overflow");
 
   // Tests using floating-point seconds as input.
   EXPECT_EQ(
