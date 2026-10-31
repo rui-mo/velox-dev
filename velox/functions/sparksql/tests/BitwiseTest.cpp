@@ -231,11 +231,12 @@ TEST_F(BitwiseTest, bitCount) {
   EXPECT_EQ(bitCount<int8_t>(std::nullopt), std::nullopt);
   EXPECT_EQ(bitCount<bool>(1), 1);
   EXPECT_EQ(bitCount<bool>(false), 0);
-  EXPECT_EQ(bitCount<int8_t>(kMin8), 1);
+  // Negative values are sign-extended to 64 bits.
+  EXPECT_EQ(bitCount<int8_t>(kMin8), 57);
   EXPECT_EQ(bitCount<int8_t>(kMax8), 7);
-  EXPECT_EQ(bitCount<int16_t>(kMin16), 1);
+  EXPECT_EQ(bitCount<int16_t>(kMin16), 49);
   EXPECT_EQ(bitCount<int16_t>(kMax16), 15);
-  EXPECT_EQ(bitCount<int32_t>(kMin32), 1);
+  EXPECT_EQ(bitCount<int32_t>(kMin32), 33);
   EXPECT_EQ(bitCount<int32_t>(kMax32), 31);
   EXPECT_EQ(bitCount<int64_t>(kMin64), 1);
   EXPECT_EQ(bitCount<int64_t>(kMax64), 63);

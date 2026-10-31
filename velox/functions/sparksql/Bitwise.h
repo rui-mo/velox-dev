@@ -121,9 +121,9 @@ template <typename T>
 struct BitCountFunction {
   template <typename TInput>
   FOLLY_ALWAYS_INLINE void call(int32_t& result, TInput num) {
-    constexpr int kMaxBits = sizeof(TInput) * CHAR_BIT;
+    // Spark counts the bits of the input sign-extended to 64 bits.
     auto value = static_cast<uint64_t>(num);
-    result = bits::countBits(&value, 0, kMaxBits);
+    result = bits::countBits(&value, 0, 64);
   }
 };
 
