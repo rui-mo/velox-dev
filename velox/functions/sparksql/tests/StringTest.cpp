@@ -1344,6 +1344,8 @@ TEST_F(StringTest, substringIndex) {
   EXPECT_EQ(substringIndex("", ".", 1), "");
   // Empty string delim.
   EXPECT_EQ(substringIndex("www.apache.org", "", 1), "");
+  EXPECT_EQ(substringIndex("www.apache.org", "", -1), "");
+  EXPECT_EQ(substringIndex("www.apache.org", "", -100), "");
   // Delim does not exist in str.
   EXPECT_EQ(substringIndex("www.apache.org", "#", 2), "www.apache.org");
   EXPECT_EQ(substringIndex("www.apache.org", "WW", 1), "www.apache.org");

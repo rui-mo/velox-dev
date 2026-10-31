@@ -564,7 +564,8 @@ String Functions
     Here the ``string`` can be VARCHAR or VARBINARY and return type matches type of ``string``.
     If ``count`` is positive, returns everything to the left of the final delimiter
     (counting from the left). If ``count`` is negative, returns everything to the right
-    of the final delimiter (counting from the right). If ``count`` is 0, returns empty string.
+    of the final delimiter (counting from the right). If ``count`` is 0 or ``delim`` is empty,
+    returns empty string.
     If ``delim`` is not found or found fewer times than ``count``, returns the original input string.
     ``delim`` is case-sensitive. It also takes into account overlapping strings. ::
 
@@ -573,6 +574,7 @@ String Functions
         SELECT substring_index('Spark.SQL', '.', -1); -- "SQL"
         SELECT substring_index('TEST.Spark.SQL', '.',2); -- "TEST.Spark"
         SELECT substring_index('TEST.Spark.SQL', '', 0); -- ""
+        SELECT substring_index('TEST.Spark.SQL', '', -1); -- ""
         SELECT substring_index('TEST.Spark.SQL', '.', -2); -- "Spark.SQL"
         SELECT substring_index('TEST.Spark.SQL', '.', 10); -- "TEST.Spark.SQL"
         SELECT substring_index('TEST.Spark.SQL', '.', -12); -- "TEST.Spark.SQL"

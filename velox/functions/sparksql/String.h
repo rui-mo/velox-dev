@@ -442,7 +442,7 @@ struct SubstringIndexFunction {
       const arg_type<Varchar>& str,
       const arg_type<Varchar>& delim,
       const int32_t& count) {
-    if (count == 0) {
+    if (count == 0 || delim.empty()) {
       result.setEmpty();
       return;
     }
