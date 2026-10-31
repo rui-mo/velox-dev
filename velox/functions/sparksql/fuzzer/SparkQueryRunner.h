@@ -80,7 +80,8 @@ class SparkQueryRunner : public velox::exec::test::ReferenceQueryRunner {
   /// constant folding, which window frames with offsets need, and
   /// subexpression elimination. They also disable the reordering of nested
   /// additions and multiplications, which ignores the TRY evaluation mode of
-  /// try_add and try_multiply.
+  /// try_add and try_multiply, and the simplification of conditionals, which
+  /// removes conditions that may throw.
   static const std::unordered_map<std::string, std::string>&
   projectionSessionConfigs();
 

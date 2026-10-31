@@ -436,6 +436,36 @@ TEST_F(SparkQueryRunnerTest, DISABLED_reorderAssociativeOperator) {
       {exec::test::AssertQueryBuilder(plan).copyResults(pool())}, {expected});
 }
 
+// Verifies that with the projection session configs, Spark evaluates the
+// condition of an if whose branches are the same, so that an error in the
+// condition fails the query as in Velox. This test requires a Spark coordinator
+// running at localhost, so disable it by default.
+TEST_F(SparkQueryRunnerTest, DISABLED_simplifyConditionals) {
+  auto aggregatePool = rootPool_->addAggregateChild("simplifyConditionals");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(),
+      "localhost:15002",
+      "test",
+      "simplifyConditionals",
+      fuzzer::SparkQueryRunner::kDefaultQueryTimeout,
+      fuzzer::SparkQueryRunner::projectionSessionConfigs());
+  auto input = makeRowVector({
+      makeFlatVector<int32_t>({100}),
+      makeFlatVector<int64_t>({1}),
+  });
+
+  // bit_get throws on position 100.
+  auto plan = exec::test::PlanBuilder()
+                  .values({input})
+                  .project({"if(isnull(bit_get(1, c0)), c1, c1)"})
+                  .planNode();
+  auto result = queryRunner->executeAndReturnVector(plan);
+  EXPECT_EQ(result.second, ReferenceQueryErrorCode::kReferenceQueryFail);
+  VELOX_ASSERT_USER_THROW(
+      exec::test::AssertQueryBuilder(plan).copyResults(pool()),
+      "The value of 'pos' argument must not exceed the number of bits");
+}
+
 // Verifies that Spark accepts the SQL generated for the expressions and returns
 // the same results as Velox. This test requires a Spark coordinator running at
 // localhost, so disable it by default.
