@@ -205,6 +205,13 @@ subexpressions of a projection for all rows, so an error in such an expression w
 whole query even if no row needs the expression, while Velox does not evaluate expressions on
 rows whose results are already null.
 
+Velox does not evaluate the arguments of a function with default null behavior on rows where
+another argument is null, and ignores errors in conjuncts whose result is determined by other
+conjuncts, while Spark evaluates the arguments and throws. When only Spark throws, the fuzzer
+finds the smallest subexpression that still fails in Spark and evaluates it alone in Velox. The
+error is accepted if Velox throws for that subexpression too. Otherwise the test fails and logs
+the Spark query of the subexpression with the ``Smallest failing reference query`` prefix.
+
 If running from CLion IDE, add ``--logtostderr=1`` to see the full output.
 
 An example set of arguments to run the expression fuzzer with all features enabled is as follows:

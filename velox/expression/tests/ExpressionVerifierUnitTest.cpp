@@ -61,6 +61,95 @@ struct ThrowsRuntimeErrorOnEvenInputFunction {
   }
 };
 
+template <typename T>
+struct IdentityFunction {
+  template <typename TResult, typename TInput>
+  FOLLY_ALWAYS_INLINE void call(TResult& result, const TInput& in) {
+    result = in;
+  }
+};
+
+template <typename T>
+struct AddFunction {
+  template <typename TResult, typename TInput>
+  FOLLY_ALWAYS_INLINE void
+  call(TResult& result, const TInput& a, const TInput& b) {
+    result = a + b;
+  }
+};
+
+// Reference query runner that fails queries calling 'failingFunction' and
+// returns no rows for other queries. Queries that call 'nonFailingFunction' at
+// the top level don't fail, like Spark functions that skip their remaining
+// arguments after a null one.
+class FailingFunctionQueryRunner : public exec::test::ReferenceQueryRunner {
+ public:
+  FailingFunctionQueryRunner(
+      memory::MemoryPool* pool,
+      std::string failingFunction,
+      std::string nonFailingFunction = "")
+      : ReferenceQueryRunner(pool),
+        failingFunction_(std::move(failingFunction)),
+        nonFailingFunction_(std::move(nonFailingFunction)) {}
+
+  RunnerType runnerType() const override {
+    return RunnerType::kSparkQueryRunner;
+  }
+
+  const std::unordered_map<std::string, exec::test::DataSpec>&
+  aggregationFunctionDataSpecs() const override {
+    static const std::unordered_map<std::string, exec::test::DataSpec>
+        kDataSpecs;
+    return kDataSpecs;
+  }
+
+  std::optional<std::string> toSql(const core::PlanNodePtr& plan) override {
+    return projection(plan)->toString();
+  }
+
+  std::pair<
+      std::optional<std::multiset<std::vector<velox::variant>>>,
+      exec::test::ReferenceQueryErrorCode>
+  execute(const core::PlanNodePtr& plan) override {
+    const auto expr = projection(plan);
+    const bool nonFailing = expr->isCallKind() &&
+        expr->asUnchecked<core::CallTypedExpr>()->name() == nonFailingFunction_;
+    if (!nonFailing && calls(expr)) {
+      return {
+          std::nullopt,
+          exec::test::ReferenceQueryErrorCode::kReferenceQueryFail};
+    }
+    return {
+        std::multiset<std::vector<velox::variant>>{},
+        exec::test::ReferenceQueryErrorCode::kSuccess};
+  }
+
+ private:
+  static core::TypedExprPtr projection(const core::PlanNodePtr& plan) {
+    const auto project =
+        std::dynamic_pointer_cast<const core::ProjectNode>(plan);
+    VELOX_CHECK_NOT_NULL(project);
+    VELOX_CHECK_EQ(project->projections().size(), 1);
+    return project->projections()[0];
+  }
+
+  bool calls(const core::TypedExprPtr& expr) const {
+    if (expr->isCallKind() &&
+        expr->asUnchecked<core::CallTypedExpr>()->name() == failingFunction_) {
+      return true;
+    }
+    for (const auto& input : expr->inputs()) {
+      if (calls(input)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const std::string failingFunction_;
+  const std::string nonFailingFunction_;
+};
+
 void removeDirecrtoryIfExist(
     std::shared_ptr<filesystems::FileSystem>& localFs,
     const std::string& folderPath) {
@@ -156,6 +245,81 @@ TEST_F(ExpressionVerifierUnitTest, subsetOfRowsToVerify) {
     rows.updateBounds();
     verifier.verify({plan}, {{data, rows}}, nullptr, false);
   }
+}
+
+TEST_F(ExpressionVerifierUnitTest, referenceErrorSuppressedByVelox) {
+  // Velox skips evaluating 'always_throws(c0)' because 'c1' is null in all
+  // rows, while the reference DB throws. The error is accepted because Velox
+  // also throws for 'always_throws(c0)' alone.
+  registerFunction<AlwaysThrowsUserErrorFunction, int32_t, int32_t>(
+      {"always_throws"});
+  registerFunction<AddFunction, int32_t, int32_t, int32_t>({"add"});
+  auto referenceRunner = std::make_shared<FailingFunctionQueryRunner>(
+      pool_.get(), "always_throws");
+  ExpressionVerifier verifier{&execCtx_, {}, referenceRunner};
+
+  auto data = makeRowVector(
+      {makeFlatVector<int32_t>({1, 2, 3}), makeAllNullFlatVector<int32_t>(3)});
+  auto plan =
+      parseExpression("add(always_throws(c0), c1)", asRowType(data->type()));
+  auto states = verifier
+                    .verify(
+                        {plan},
+                        {{data, SelectivityVector(data->size())}},
+                        nullptr,
+                        /*canThrow=*/true)
+                    .second;
+  ASSERT_EQ(states.size(), 1);
+  EXPECT_EQ(
+      states[0],
+      ExpressionVerifier::VerificationState::kReferencePathUnsupported);
+}
+
+TEST_F(ExpressionVerifierUnitTest, referenceErrorNotThrownByVelox) {
+  // The reference DB throws for 'identity(c0)' but Velox doesn't.
+  registerFunction<IdentityFunction, int32_t, int32_t>({"identity"});
+  registerFunction<AddFunction, int32_t, int32_t, int32_t>({"add"});
+  auto referenceRunner =
+      std::make_shared<FailingFunctionQueryRunner>(pool_.get(), "identity");
+  ExpressionVerifier verifier{&execCtx_, {}, referenceRunner};
+
+  auto data = makeRowVector(
+      {makeFlatVector<int32_t>({1, 2, 3}), makeAllNullFlatVector<int32_t>(3)});
+  auto plan = parseExpression("add(identity(c0), c1)", asRowType(data->type()));
+  VELOX_ASSERT_THROW(
+      verifier.verify(
+          {plan},
+          {{data, SelectivityVector(data->size())}},
+          nullptr,
+          /*canThrow=*/true),
+      "Reference path throws for query: add(identity(ROW[\"c0\"]),ROW[\"c1\"])");
+}
+
+TEST_F(ExpressionVerifierUnitTest, referenceErrorOnlyInsideExpression) {
+  // The reference DB throws for 'identity(add(always_throws(c0), c1))' but not
+  // for 'add(always_throws(c0), c1)', so the smallest failing expression is the
+  // whole expression, for which Velox doesn't throw. The error is not accepted
+  // even though both throw for 'always_throws(c0)' alone, because that doesn't
+  // explain why the reference DB throws for the whole expression.
+  registerFunction<AlwaysThrowsUserErrorFunction, int32_t, int32_t>(
+      {"always_throws"});
+  registerFunction<AddFunction, int32_t, int32_t, int32_t>({"add"});
+  registerFunction<IdentityFunction, int32_t, int32_t>({"identity"});
+  auto referenceRunner = std::make_shared<FailingFunctionQueryRunner>(
+      pool_.get(), "always_throws", "add");
+  ExpressionVerifier verifier{&execCtx_, {}, referenceRunner};
+
+  auto data = makeRowVector(
+      {makeFlatVector<int32_t>({1, 2, 3}), makeAllNullFlatVector<int32_t>(3)});
+  auto plan = parseExpression(
+      "identity(add(always_throws(c0), c1))", asRowType(data->type()));
+  VELOX_ASSERT_THROW(
+      verifier.verify(
+          {plan},
+          {{data, SelectivityVector(data->size())}},
+          nullptr,
+          /*canThrow=*/true),
+      "Reference path throws for query: identity(add(always_throws(ROW[\"c0\"]),ROW[\"c1\"]))");
 }
 
 TEST_F(ExpressionVerifierUnitTest, emptyActiveRowsWithReferenceRunner) {
