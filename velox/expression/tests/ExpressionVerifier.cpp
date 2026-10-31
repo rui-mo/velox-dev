@@ -477,12 +477,16 @@ ExpressionVerifier::verify(
                 commonEvalResult);
             commonEvalResultRow =
                 reduceToSelectedRows(commonEvalResultRow, rows);
-            VELOX_CHECK(
-                exec::test::assertEqualResults(
+            if (!exec::test::assertEqualResults(
                     referenceEvalResult.value(),
                     projectionPlan->outputType(),
-                    {commonEvalResultRow}),
-                "Velox and reference DB results don't match");
+                    {commonEvalResultRow})) {
+              const auto referenceSql =
+                  referenceQueryRunner_->toSql(projectionPlan);
+              VELOX_FAIL(
+                  "Velox and reference DB results don't match. Reference query: {}",
+                  referenceSql.value_or("<unknown>"));
+            }
             LOG(INFO) << "Verified results against reference DB";
             verificationStates.push_back(
                 VerificationState::kVerifiedAgainstReference);
