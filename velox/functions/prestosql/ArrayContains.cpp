@@ -285,8 +285,8 @@ VELOX_DECLARE_VECTOR_FUNCTION(
     ArrayContainsFunction::signatures(),
     std::make_unique<ArrayContainsFunction>(true));
 
-// Internal function only used for testing. This function allows the array to
-// have null elements and considers null as a value, i.e., null == null.
+// Compares nulls nested in complex types as values, i.e. null == null. Used as
+// Spark's array_contains and internally, e.g. for testing.
 VELOX_DECLARE_VECTOR_FUNCTION(
     udf_$internal$contains,
     ArrayContainsFunction::signatures(),

@@ -39,7 +39,9 @@ namespace facebook::velox::functions {
 void registerSparkArrayFunctions(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_reduce, prefix + "aggregate");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_constructor, prefix + "array");
-  VELOX_REGISTER_VECTOR_FUNCTION(udf_array_contains, prefix + "array_contains");
+  // Spark compares nulls nested in complex types as values.
+  VELOX_REGISTER_VECTOR_FUNCTION(
+      udf_$internal$contains, prefix + "array_contains");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_distinct, prefix + "array_distinct");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, prefix + "array_except");
   VELOX_REGISTER_VECTOR_FUNCTION(
