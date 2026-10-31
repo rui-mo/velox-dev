@@ -214,7 +214,8 @@ int main(int argc, char** argv) {
         FLAGS_spark_url,
         "fuzzer",
         "expression",
-        std::chrono::seconds(FLAGS_spark_query_timeout_sec));
+        std::chrono::seconds(FLAGS_spark_query_timeout_sec),
+        SparkQueryRunner::projectionSessionConfigs());
     LOG(INFO) << "Using Spark as the reference DB.";
 #else
     LOG(ERROR) << "Spark as the reference DB requires Parquet support. "
