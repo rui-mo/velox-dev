@@ -125,8 +125,11 @@ scripts/spark-fuzzer/spark_fuzzer.py summary [runs/<run> ...] [--examples 5]
 # build instead of the binary of the run, e.g. to check a fix.
 scripts/spark-fuzzer/spark_fuzzer.py repro --seed <iteration seed> --run-dir runs/<run> [--current-build]
 
-# Run Spark SQL in the server, with the session configs of the fuzzer.
-scripts/spark-fuzzer/spark_fuzzer.py sql "SELECT concat_ws(',', array('a', NULL))"
+# Run Spark SQL in the server with the session configs of the fuzzer. --values
+# writes rows to Parquet that the query reads from the view T, like the fuzzer
+# reads its input, since Spark evaluates queries on literal rows when it
+# optimizes them. --conf overrides a config and --explain prints the plans.
+scripts/spark-fuzzer/spark_fuzzer.py sql "SELECT concat_ws(',', c0) FROM T" --values "(array('a', NULL)) AS t(c0)"
 
 # Rerun all failed iterations of runs with the current build, e.g. after a fix,
 # and group the failures that remain.

@@ -23,7 +23,8 @@ Subcommands:
            SQL and the error.
   recheck  Reruns the failed iterations of runs with the current build, e.g.
            to find the failures that a fix resolved.
-  sql      Runs Spark SQL in the Spark Connect server.
+  sql      Runs Spark SQL in the Spark Connect server with the session configs
+           of the expression fuzzer.
 
 Environment variables:
   SPARK_FUZZER_HOME   Directory of the Spark installation, the Python venv and
@@ -78,6 +79,31 @@ DEFAULT_FLAGS = {
 
 # glog line prefix, e.g. "E1031 00:25:39.251145 99357 File.cpp:156] ".
 GLOG_PREFIX = re.compile(r"^[IWEF]\d{4} \d\d:\d\d:\d\d\.\d+ +\d+ [^\]]+\] ")
+
+# Session configs of the queries of the expression fuzzer, i.e.
+# SparkQueryRunner::defaultSessionConfigs() and projectionSessionConfigs().
+SESSION_CONFIGS = {
+    "spark.sql.ansi.enabled": "false",
+    "spark.sql.session.timeZone": "America/Los_Angeles",
+    "spark.sql.legacy.timeParserPolicy": "CORRECTED",
+    "spark.sql.parquet.datetimeRebaseModeInRead": "CORRECTED",
+    "spark.sql.parquet.int96RebaseModeInRead": "CORRECTED",
+    "spark.sql.mapKeyDedupPolicy": "LAST_WIN",
+    "spark.sql.codegen.wholeStage": "false",
+    "spark.sql.codegen.factoryMode": "NO_CODEGEN",
+    "spark.sql.optimizer.excludedRules": ",".join(
+        "org.apache.spark.sql.catalyst.optimizer." + rule
+        for rule in [
+            "ConstantFolding",
+            "ReorderAssociativeOperator",
+            "SimplifyConditionals",
+            "NullPropagation",
+            "SimplifyBinaryComparison",
+            "SimplifyExtractValueOps",
+        ]
+    ),
+    "spark.sql.subexpressionElimination.enabled": "false",
+}
 
 
 def log(text):
@@ -586,19 +612,29 @@ def cmd_sql(args, _):
 
     host, port = server_address(args.spark_url)
     spark = SparkSession.builder.remote(f"sc://{host}:{port}").getOrCreate()
-    for key, value in {
-        "spark.sql.ansi.enabled": "false",
-        "spark.sql.session.timeZone": "America/Los_Angeles",
-        "spark.sql.legacy.timeParserPolicy": "CORRECTED",
-        "spark.sql.mapKeyDedupPolicy": "LAST_WIN",
-    }.items():
-        spark.conf.set(key, value)
+    confs = dict(SESSION_CONFIGS)
     for key_value in args.conf or []:
         key, _, value = key_value.partition("=")
+        confs[key] = value
+    for key, value in confs.items():
         spark.conf.set(key, value)
     started = time.time()
     try:
-        rows = spark.sql(args.query).collect()
+        if args.values:
+            # Spark evaluates queries on literal rows when it optimizes them,
+            # even with ConstantFolding excluded, and infers the nullability of
+            # their columns. Read the rows from Parquet like the fuzzer does.
+            path = f"file://{HOME / 'tmp' / 'sql-values'}"
+            spark.sql(f"SELECT * FROM VALUES {args.values}").write.mode(
+                "overwrite"
+            ).parquet(path)
+            spark.sql(
+                f"CREATE OR REPLACE TEMPORARY VIEW T AS SELECT * FROM parquet.`{path}`"
+            )
+        df = spark.sql(args.query)
+        if args.explain:
+            df.explain(mode="extended")
+        rows = df.collect()
         for row in rows[: args.limit]:
             log(repr(row))
         log(f"OK: {len(rows)} rows in {time.time() - started:.1f}s")
@@ -698,9 +734,24 @@ def main():
     recheck.add_argument("--iteration-timeout-sec", type=int, default=900)
     recheck.set_defaults(handler=cmd_recheck)
 
-    sql = subparsers.add_parser("sql", help="Run Spark SQL.")
+    sql = subparsers.add_parser(
+        "sql", help="Run Spark SQL with the session configs of the fuzzer."
+    )
     sql.add_argument("query")
-    sql.add_argument("--conf", action="append", help="Spark conf key=value.")
+    sql.add_argument(
+        "--conf",
+        action="append",
+        help="Spark conf key=value. Overrides the session configs of the fuzzer.",
+    )
+    sql.add_argument(
+        "--values",
+        help="Rows of a VALUES clause with column names, e.g. "
+        "\"(1, 'a'), (NULL, 'b') AS t(c0, c1)\". They are written to Parquet "
+        "and read by the query from the view T, like the fuzzer reads its input.",
+    )
+    sql.add_argument(
+        "--explain", action="store_true", help="Print the plans of the query."
+    )
     sql.add_argument("--limit", type=int, default=20)
     sql.set_defaults(handler=cmd_sql)
 
