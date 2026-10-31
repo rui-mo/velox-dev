@@ -63,14 +63,15 @@ void registerMathFunctions(const std::string& prefix) {
   registerBinaryNumeric<PmodFunction>({prefix + "pmod"});
   registerFunction<PowerFunction, double, double, double>({prefix + "power"});
   registerFunction<RIntFunction, double, double>({prefix + "rint"});
-  registerUnaryNumeric<sparksql::RoundFunction>({prefix + "round"});
-  registerFunction<sparksql::RoundFunction, int8_t, int8_t, int32_t>(
+  registerUnaryIntegral<IntegralRoundFunction>({prefix + "round"});
+  registerUnaryFloatingPoint<sparksql::RoundFunction>({prefix + "round"});
+  registerFunction<IntegralRoundFunction, int8_t, int8_t, int32_t>(
       {prefix + "round"});
-  registerFunction<sparksql::RoundFunction, int16_t, int16_t, int32_t>(
+  registerFunction<IntegralRoundFunction, int16_t, int16_t, int32_t>(
       {prefix + "round"});
-  registerFunction<sparksql::RoundFunction, int32_t, int32_t, int32_t>(
+  registerFunction<IntegralRoundFunction, int32_t, int32_t, int32_t>(
       {prefix + "round"});
-  registerFunction<sparksql::RoundFunction, int64_t, int64_t, int32_t>(
+  registerFunction<IntegralRoundFunction, int64_t, int64_t, int32_t>(
       {prefix + "round"});
   registerFunction<sparksql::RoundFunction, double, double, int32_t>(
       {prefix + "round"});
