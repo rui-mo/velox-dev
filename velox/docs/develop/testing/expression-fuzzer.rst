@@ -220,6 +220,14 @@ finds the smallest subexpression that still fails in Spark and evaluates it alon
 error is accepted if Velox throws for that subexpression too. Otherwise the test fails and logs
 the Spark query of the subexpression with the ``Smallest failing reference query`` prefix.
 
+Conversely, Velox evaluates all arguments of a function without default null behavior on all
+rows, e.g. all arguments of ``elt`` and the element argument of ``array_prepend``, while Spark
+evaluates only the arguments it needs, e.g. the argument that ``elt`` returns, and does not
+throw for errors in the others. When only Velox throws, the fuzzer finds the smallest
+subexpression that still fails in Velox and evaluates it alone in Spark. The error is accepted if
+Spark throws for that subexpression too. Otherwise the test fails and logs the Spark query of the
+smallest subexpression with the ``Smallest failing Velox expression`` prefix.
+
 If running from CLion IDE, add ``--logtostderr=1`` to see the full output.
 
 An example set of arguments to run the expression fuzzer with all features enabled is as follows:

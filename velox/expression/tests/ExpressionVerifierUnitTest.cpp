@@ -322,6 +322,53 @@ TEST_F(ExpressionVerifierUnitTest, referenceErrorOnlyInsideExpression) {
       "Reference path throws for query: identity(add(always_throws(ROW[\"c0\"]),ROW[\"c1\"]))");
 }
 
+TEST_F(ExpressionVerifierUnitTest, veloxErrorSkippedByReference) {
+  // Velox throws for 'identity(always_throws(c0))', while the reference DB
+  // doesn't evaluate the argument of 'identity', like Spark doesn't evaluate
+  // the arguments of elt that it doesn't return. The error is accepted because
+  // the reference DB also throws for 'always_throws(c0)' alone.
+  registerFunction<AlwaysThrowsUserErrorFunction, int32_t, int32_t>(
+      {"always_throws"});
+  registerFunction<IdentityFunction, int32_t, int32_t>({"identity"});
+  auto referenceRunner = std::make_shared<FailingFunctionQueryRunner>(
+      pool_.get(), "always_throws", "identity");
+  ExpressionVerifier verifier{&execCtx_, {}, referenceRunner};
+
+  auto data = makeRowVector({makeFlatVector<int32_t>({1, 2, 3})});
+  auto plan =
+      parseExpression("identity(always_throws(c0))", asRowType(data->type()));
+  auto states = verifier
+                    .verify(
+                        {plan},
+                        {{data, SelectivityVector(data->size())}},
+                        nullptr,
+                        /*canThrow=*/true)
+                    .second;
+  ASSERT_EQ(states.size(), 1);
+  EXPECT_EQ(
+      states[0],
+      ExpressionVerifier::VerificationState::kReferencePathUnsupported);
+}
+
+TEST_F(ExpressionVerifierUnitTest, veloxErrorNotThrownByReference) {
+  // Velox throws for 'always_throws(c0)' but the reference DB doesn't.
+  registerFunction<AlwaysThrowsUserErrorFunction, int32_t, int32_t>(
+      {"always_throws"});
+  auto referenceRunner =
+      std::make_shared<FailingFunctionQueryRunner>(pool_.get(), "identity");
+  ExpressionVerifier verifier{&execCtx_, {}, referenceRunner};
+
+  auto data = makeRowVector({makeFlatVector<int32_t>({1, 2, 3})});
+  auto plan = parseExpression("always_throws(c0)", asRowType(data->type()));
+  VELOX_ASSERT_THROW(
+      verifier.verify(
+          {plan},
+          {{data, SelectivityVector(data->size())}},
+          nullptr,
+          /*canThrow=*/true),
+      "expected");
+}
+
 TEST_F(ExpressionVerifierUnitTest, emptyActiveRowsWithReferenceRunner) {
   // When no rows are selected, the reference-runner path reduces both the input
   // and the result to zero rows and verifies the empty result against the
