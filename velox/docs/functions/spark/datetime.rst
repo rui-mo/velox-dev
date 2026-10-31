@@ -342,7 +342,9 @@ These functions support TIMESTAMP and DATE input types.
     If ``timestamp1`` is later than ``timestamp2``, the result is positive.
     If ``timestamp1`` and ``timestamp2`` are on the same day of month, or both are the
     last day of month, time of day will be ignored. Otherwise, the difference is calculated
-    based on 31 days per month, and rounded to 8 digits unless ``roundOff`` is false. ::
+    based on 31 days per month, and rounded to 8 digits unless ``roundOff`` is false. The time
+    of day is the time since the start of the day in the session time zone, which differs from
+    the local time on days with daylight saving time transitions. ::
 
         SELECT months_between('1997-02-28 10:30:00', '1996-10-30', true); -- 3.94959677
         SELECT months_between('1997-02-28 10:30:00', '1996-10-30', false); -- 3.9495967741935485
