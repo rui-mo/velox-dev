@@ -238,6 +238,18 @@ TEST_F(SparkQueryRunnerTest, DISABLED_errors) {
   EXPECT_EQ(result.second, ReferenceQueryErrorCode::kReferenceQueryFail);
   EXPECT_FALSE(result.first.has_value());
 
+  // Runtime error with SQLSTATE 42K0B for a week-based datetime pattern.
+  plan = exec::test::PlanBuilder()
+             .values({makeRowVector({
+                 makeFlatVector<Timestamp>({Timestamp(0, 0)}),
+                 makeFlatVector<std::string>({"YYYY"}),
+             })})
+             .project({"date_format(c0, c1)"})
+             .planNode();
+  result = queryRunner->executeAndReturnVector(plan);
+  EXPECT_EQ(result.second, ReferenceQueryErrorCode::kReferenceQueryFail);
+  EXPECT_FALSE(result.first.has_value());
+
   // View creation error. Spark column names are case insensitive.
   auto duplicateColumns = makeRowVector(
       {"a", "A"}, {makeFlatVector<int64_t>({1}), makeFlatVector<int64_t>({2})});
@@ -716,6 +728,24 @@ TEST_F(SparkQueryRunnerTest, classifyError) {
   EXPECT_EQ(
       SparkQueryRunner::classifyError(
           makeSparkError("[USER_RAISED_EXCEPTION] ...", "P0001")),
+      ReferenceQueryErrorCode::kReferenceQueryFail);
+  // Spark raises errors for datetime patterns while evaluating expressions,
+  // although their SQLSTATE is in class 42.
+  EXPECT_EQ(
+      SparkQueryRunner::classifyError(makeSparkError(
+          "[INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_WEEK_BASED_PATTERN] "
+          "...",
+          "42K0B",
+          "org.apache.spark.SparkUpgradeException",
+          "",
+          "INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_WEEK_BASED_PATTERN")),
+      ReferenceQueryErrorCode::kReferenceQueryFail);
+  EXPECT_EQ(
+      SparkQueryRunner::classifyError(
+          grpc::Status(
+              grpc::StatusCode::INTERNAL,
+              "[INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION]"
+              " ... SQLSTATE: 42K0B")),
       ReferenceQueryErrorCode::kReferenceQueryFail);
 
   // Statuses without details.

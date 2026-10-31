@@ -467,6 +467,15 @@ exec::test::ReferenceQueryErrorCode SparkQueryRunner::classifyError(
           "\"org.apache.spark.sql.AnalysisException\"") != std::string::npos) {
     return kUnsupported;
   }
+  // Spark raises these errors for datetime patterns and strings while
+  // evaluating expressions, although their SQLSTATE 42K0B is in class 42.
+  static const std::unordered_set<std::string> kRuntimeConditions{
+      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION",
+      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_WEEK_BASED_PATTERN",
+      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.PARSE_DATETIME_BY_NEW_PARSER"};
+  if (kRuntimeConditions.contains(error.condition)) {
+    return exec::test::ReferenceQueryErrorCode::kReferenceQueryFail;
+  }
   // Syntax errors and access rule violations (42), unsupported features (0A),
   // resource limits (53, 54) and internal errors (XX).
   static const std::unordered_set<std::string> kUnsupportedClasses{
