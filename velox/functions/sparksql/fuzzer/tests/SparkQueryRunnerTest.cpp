@@ -238,6 +238,17 @@ TEST_F(SparkQueryRunnerTest, DISABLED_errors) {
   EXPECT_EQ(result.second, ReferenceQueryErrorCode::kReferenceQueryFail);
   EXPECT_FALSE(result.first.has_value());
 
+  // View creation error. Spark column names are case insensitive.
+  auto duplicateColumns = makeRowVector(
+      {"a", "A"}, {makeFlatVector<int64_t>({1}), makeFlatVector<int64_t>({2})});
+  plan = exec::test::PlanBuilder()
+             .values({duplicateColumns})
+             .project({"a"})
+             .planNode();
+  result = queryRunner->executeAndReturnVector(plan);
+  EXPECT_EQ(result.second, ReferenceQueryErrorCode::kReferenceQueryUnsupported);
+  EXPECT_FALSE(result.first.has_value());
+
   VELOX_ASSERT_THROW(
       queryRunner->execute("SELEC 1"),
       "[PARSE_SYNTAX_ERROR] Syntax error at or near 'SELEC'");

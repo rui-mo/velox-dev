@@ -595,11 +595,15 @@ SparkQueryRunner::executeAndReturnVector(const core::PlanNodePtr& plan) {
         tableName,
         filePath);
     const auto viewResult = executeQuery(viewSql);
-    VELOX_CHECK(
-        !viewResult.errorCode.has_value(),
-        "Failed to create Spark view: {}. Query: {}",
-        viewResult.errorMessage,
-        viewSql);
+    if (viewResult.errorCode.has_value()) {
+      // For example, the view fails to read the file if a previous query ran
+      // an executor out of memory.
+      LOG(WARNING) << "Spark query unsupported: Failed to create Spark view: "
+                   << viewResult.errorMessage << "\nQuery: " << viewSql;
+      return std::make_pair(
+          std::nullopt,
+          exec::test::ReferenceQueryErrorCode::kReferenceQueryUnsupported);
+    }
     viewNames.push_back(tableName);
   }
 
