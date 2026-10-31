@@ -81,6 +81,7 @@ DEFINE_string(
 using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
+using facebook::velox::fuzzer::MakeTimestampArgValuesGenerator;
 using facebook::velox::fuzzer::PadArgValuesGenerator;
 using facebook::velox::fuzzer::RepeatArgValuesGenerator;
 using facebook::velox::fuzzer::RoundArgValuesGenerator;
@@ -203,9 +204,17 @@ int main(int argc, char** argv) {
       argValuesGenerators = {
           {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()},
           {"lpad", std::make_shared<PadArgValuesGenerator>()},
+          {"make_timestamp",
+           std::make_shared<MakeTimestampArgValuesGenerator>()},
+          {"make_timestamp_ntz",
+           std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"repeat", std::make_shared<RepeatArgValuesGenerator>()},
           {"round", std::make_shared<RoundArgValuesGenerator>()},
-          {"rpad", std::make_shared<PadArgValuesGenerator>()}};
+          {"rpad", std::make_shared<PadArgValuesGenerator>()},
+          {"try_make_timestamp",
+           std::make_shared<MakeTimestampArgValuesGenerator>()},
+          {"try_make_timestamp_ntz",
+           std::make_shared<MakeTimestampArgValuesGenerator>()}};
 
   std::shared_ptr<facebook::velox::memory::MemoryPool> rootPool{
       facebook::velox::memory::memoryManager()->addRootPool()};
