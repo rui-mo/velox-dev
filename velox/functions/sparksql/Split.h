@@ -202,6 +202,15 @@ struct Split {
       int32_t limit) {
     VELOX_DCHECK(!delimiter.empty(), "Non-empty delimiter is expected");
 
+    if (!isConstantDelimiter_) {
+      initializeFastPath(delimiter.data(), delimiter.size());
+    }
+
+    if (fastPathKind_ == FastPathKind::kNone) {
+      splitByRegex(result, input, delimiter, limit);
+      return;
+    }
+
     // Trivial case of converting string to array with 1 element.
     if (limit == 1) {
       result.add_item().setNoCopy(input);
@@ -214,10 +223,6 @@ struct Split {
     const size_t end = input.size();
     const char* start = input.data();
     size_t pos = 0;
-
-    if (!isConstantDelimiter_) {
-      initializeFastPath(delimiter.data(), delimiter.size());
-    }
 
     if (fastPathKind_ == FastPathKind::kSingleChar) {
       for (size_t i = 0; i < end; ++i) {
@@ -248,55 +253,66 @@ struct Split {
           break;
         }
       }
-    } else {
-      auto* re = cache_.findOrCompile(delimiter);
-      const auto re2String = re2::StringPiece(start, end);
-      re2::StringPiece subMatches[1];
-      // Matches a regular expression against a portion of the input string,
-      // starting from 'pos' to the end of the input string. The match is not
-      // anchored, which means it can start at any position in the string. If a
-      // match is found, the matched portion of the string is stored in
-      // 'subMatches'. The '1' indicates that we are only interested in the
-      // first match found from the current position 'pos' in each iteration of
-      // the loop.
-      while (re->Match(
-          re2String, pos, end, RE2::Anchor::UNANCHORED, subMatches, 1)) {
-        const auto fullMatch = subMatches[0];
-        auto offset = fullMatch.data() - start;
-        const auto size = fullMatch.size();
-        if (offset >= end) {
-          break;
-        }
-
-        // When hitting an empty match, split the character at the current 'pos'
-        // of the input string and put it into the result array, followed by an
-        // empty tail string at last, e.g., the result array for
-        // split('abc','d|') is ["a","b","c",""].
-        if (size == 0) {
-          int32_t codePoint;
-          auto charLength =
-              tryGetUtf8CharLength(start + pos, end - pos, codePoint);
-          if (charLength <= 0) {
-            // Invalid UTF-8 character, the length of the invalid
-            // character is the absolute value of result of
-            // `tryGetUtf8CharLength`.
-            charLength = -charLength;
-          }
-          offset += charLength;
-        }
-        result.add_item().setNoCopy(StringView(start + pos, offset - pos));
-        pos = offset + size;
-
-        ++addedElements;
-        // If the next element should be the last, leave the loop.
-        if (addedElements + 1 == limit) {
-          break;
-        }
-      }
     }
 
     // Add the rest of the string and we are done.
     // Note that the rest of the string can be empty - we still add it.
+    result.add_item().setNoCopy(StringView(start + pos, end - pos));
+  }
+
+  // Splits like java.util.regex.Pattern.split. A zero-width match at the
+  // beginning of the input is skipped. After an empty match, the next search
+  // starts one character later, so an empty match right after a non-empty match
+  // is kept. Once limit - 1 elements are added, the next match adds the rest of
+  // the input as the last element.
+  void splitByRegex(
+      out_type<Array<Varchar>>& result,
+      const arg_type<Varchar>& input,
+      const arg_type<Varchar>& delimiter,
+      int32_t limit) {
+    // Compiles the pattern even if the result is known so that an invalid
+    // pattern throws like in Spark.
+    auto* re = cache_.findOrCompile(delimiter);
+    if (input.empty() || limit == 1) {
+      result.add_item().setNoCopy(input);
+      return;
+    }
+
+    const char* start = input.data();
+    const size_t end = input.size();
+    const re2::StringPiece text(start, end);
+    re2::StringPiece match;
+    int32_t addedElements = 0;
+    // The start of the next element.
+    size_t pos = 0;
+    size_t searchPos = 0;
+    while (searchPos <= end &&
+           re->Match(text, searchPos, end, RE2::UNANCHORED, &match, 1)) {
+      const size_t matchStart = match.data() - start;
+      const size_t matchEnd = matchStart + match.size();
+      if (matchStart != matchEnd) {
+        searchPos = matchEnd;
+      } else if (matchEnd < end) {
+        int32_t codePoint;
+        const auto charLength =
+            tryGetUtf8CharLength(start + matchEnd, end - matchEnd, codePoint);
+        // An invalid UTF-8 character has a length of -charLength.
+        searchPos = matchEnd + std::abs(charLength);
+      } else {
+        searchPos = end + 1;
+      }
+
+      if (addedElements + 1 == limit) {
+        result.add_item().setNoCopy(StringView(start + pos, end - pos));
+        return;
+      }
+      if (pos == 0 && matchEnd == 0) {
+        continue;
+      }
+      result.add_item().setNoCopy(StringView(start + pos, matchStart - pos));
+      pos = matchEnd;
+      ++addedElements;
+    }
     result.add_item().setNoCopy(StringView(start + pos, end - pos));
   }
 

@@ -499,6 +499,8 @@ String Functions
 
     Note that ``delimiter`` is always interpreted as a regular expression if it contains regex metacharacters.
     An example pitfall is ``split(path, '.')`` splits on any character rather than literal dots.
+    Like Java's ``Pattern.split``, a match of the empty string at the beginning of ``string`` does not produce a
+    leading empty element, and an invalid pattern throws an exception even if ``limit`` is 1.
 
     For ``delimiter`` without regex metacharacters, Velox uses literal-matching fast paths. In this case, regex
     compilation is skipped and these delimiters do not count toward the ``expression.max_compiled_regexes`` cache
@@ -507,6 +509,7 @@ String Functions
     ::
 
         SELECT split('one', '1'); -- ["one"]
+        SELECT split('aab', 'a*'); -- ["","","b",""]
         SELECT split('abcd', ''); -- ["a","b","c","d"]
         SELECT split('abcd', '', 3); -- ["a","b","c"]
         SELECT split('abcd', '', 5); -- ["a","b","c","d"]
