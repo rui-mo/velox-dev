@@ -16,7 +16,9 @@
 
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
 
+#include <cctype>
 #include <cmath>
+#include <limits>
 
 #include "velox/common/fuzzer/ConstrainedGenerators.h"
 #include "velox/common/fuzzer/Utils.h"
@@ -914,6 +916,59 @@ std::vector<core::TypedExprPtr> ArrayInsertArgValuesGenerator::generate(
       nullptr,
       std::make_shared<core::ConstantTypedExpr>(
           signature.args[3], variant(coinToss(rng, 0.5)))};
+}
+
+std::vector<core::TypedExprPtr> TimestampAddDiffArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_EQ(signature.args.size(), 3);
+  VELOX_CHECK_EQ(signature.args[0]->kind(), TypeKind::VARCHAR);
+  const bool isAdd = signature.name == "timestampadd";
+
+  // Units and the quantities of them in about 200 years. dayofyear comes last
+  // since only timestampadd supports it.
+  static const std::vector<std::pair<std::string, int64_t>> kUnits{
+      {"microsecond", 6'300'000'000'000'000},
+      {"millisecond", 6'300'000'000'000},
+      {"second", 6'300'000'000},
+      {"minute", 105'000'000},
+      {"hour", 1'750'000},
+      {"day", 73'000},
+      {"week", 10'000},
+      {"month", 2'400},
+      {"quarter", 800},
+      {"year", 200},
+      {"dayofyear", 73'000}};
+  const auto& [unit, maxQuantity] =
+      kUnits[rand<size_t>(rng, 0, kUnits.size() - (isAdd ? 1 : 2))];
+  std::string unitString;
+  for (const auto c : unit) {
+    unitString.push_back(
+        coinToss(rng, 0.5) ? static_cast<char>(std::toupper(c)) : c);
+  }
+
+  // The fuzzer generates the timestamps.
+  std::vector<core::TypedExprPtr> inputExpressions{
+      std::make_shared<core::ConstantTypedExpr>(
+          signature.args[0], variant(unitString)),
+      nullptr,
+      nullptr};
+  if (isAdd && coinToss(rng, 0.9)) {
+    const auto& quantityType = signature.args[1];
+    if (quantityType->kind() == TypeKind::INTEGER) {
+      const auto max = static_cast<int32_t>(
+          std::min<int64_t>(maxQuantity, std::numeric_limits<int32_t>::max()));
+      inputExpressions[1] = addRangeConstrainedColumn<int32_t>(
+          quantityType, -max, max, options, rng, state);
+    } else {
+      VELOX_CHECK_EQ(quantityType->kind(), TypeKind::BIGINT);
+      inputExpressions[1] = addRangeConstrainedColumn<int64_t>(
+          quantityType, -maxQuantity, maxQuantity, options, rng, state);
+    }
+  }
+  return inputExpressions;
 }
 
 std::vector<core::TypedExprPtr> MakeTimestampArgValuesGenerator::generate(

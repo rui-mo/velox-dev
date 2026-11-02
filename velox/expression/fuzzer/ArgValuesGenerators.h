@@ -332,6 +332,23 @@ class ArrayInsertArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark timestampadd and timestampdiff. The unit is a
+/// constant valid unit in random letter case. Random strings are almost never
+/// valid units. Only timestampadd supports dayofyear. The timestampadd quantity
+/// mostly reads an input column with values that move timestamps by up to
+/// about 200 years. Otherwise it is random, and most random quantities of days
+/// or longer units overflow.
+class TimestampAddDiffArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~TimestampAddDiffArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 /// Generates arguments for Spark make_timestamp, make_timestamp_ntz,
 /// try_make_timestamp and try_make_timestamp_ntz. Reads the fields from input
 /// columns with years in [1800, 2200] and other fields within or just outside
