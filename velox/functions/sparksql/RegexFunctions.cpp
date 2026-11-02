@@ -32,6 +32,138 @@ void ensureRegexIsConstant(
   }
 }
 
+// The replacement of regexp_replace parsed following
+// java.util.regex.Matcher.appendReplacement. A backslash escapes the next
+// character, '$n' refers to a numbered group and '${name}' to a named group.
+class JavaReplacement {
+ public:
+  JavaReplacement(const RE2& re, std::string_view replacement)
+      : replacement_(replacement) {
+    error_ = parse(re);
+  }
+
+  // Returns the number of submatches needed to expand the replacement.
+  int numSubmatches() const {
+    return maxGroup_ + 1;
+  }
+
+  // Appends the replacement of a match to 'result'. Throws if the replacement
+  // is invalid. Like Java, the error is only reported if the pattern matches.
+  template <typename TResult>
+  void appendTo(TResult& result, const re2::StringPiece* submatches) const {
+    if (error_.has_value()) {
+      VELOX_USER_FAIL(
+          "Invalid replacement '{}': {}.", replacement_, error_.value());
+    }
+    for (const auto& piece : pieces_) {
+      if (piece.group < 0) {
+        result.append(piece.literal);
+      } else {
+        const auto& submatch = submatches[piece.group];
+        result.append(std::string_view(submatch.data(), submatch.size()));
+      }
+    }
+  }
+
+ private:
+  // A literal if 'group' is negative, otherwise a reference to a group.
+  struct Piece {
+    std::string literal;
+    int32_t group;
+  };
+
+  static bool isDigit(char c) {
+    return c >= '0' && c <= '9';
+  }
+
+  // Java only allows ASCII letters and digits in group names.
+  static bool isGroupNameChar(char c) {
+    return isDigit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+  }
+
+  // Parses the replacement into 'pieces_'. Returns an error message if the
+  // replacement is invalid.
+  std::optional<std::string> parse(const RE2& re) {
+    const std::string_view replacement{replacement_};
+    const int32_t numGroups = re.NumberOfCapturingGroups();
+    std::string literal;
+    size_t i = 0;
+    while (i < replacement.size()) {
+      const char c = replacement[i++];
+      if (c == '\\') {
+        if (i == replacement.size()) {
+          return "character to be escaped is missing";
+        }
+        literal.push_back(replacement[i++]);
+        continue;
+      }
+      if (c != '$') {
+        literal.push_back(c);
+        continue;
+      }
+      if (i == replacement.size()) {
+        return "group index is missing";
+      }
+      int32_t group;
+      if (replacement[i] == '{') {
+        const auto nameStart = ++i;
+        while (i < replacement.size() && isGroupNameChar(replacement[i])) {
+          ++i;
+        }
+        const std::string name{replacement.substr(nameStart, i - nameStart)};
+        if (name.empty()) {
+          return "named capturing group has 0 length name";
+        }
+        if (i == replacement.size() || replacement[i] != '}') {
+          return "named capturing group is missing trailing '}'";
+        }
+        ++i;
+        if (isDigit(name[0])) {
+          return fmt::format(
+              "capturing group name {{{}}} starts with digit character", name);
+        }
+        const auto it = re.NamedCapturingGroups().find(name);
+        if (it == re.NamedCapturingGroups().end()) {
+          return fmt::format("no group with name {{{}}}", name);
+        }
+        group = it->second;
+      } else {
+        if (!isDigit(replacement[i])) {
+          return "illegal group reference";
+        }
+        group = replacement[i++] - '0';
+        // Takes the longest group number that exists.
+        while (i < replacement.size() && isDigit(replacement[i])) {
+          const int32_t next = group * 10 + (replacement[i] - '0');
+          if (next > numGroups) {
+            break;
+          }
+          group = next;
+          ++i;
+        }
+        if (group > numGroups) {
+          return fmt::format("no group {}", group);
+        }
+      }
+      if (!literal.empty()) {
+        pieces_.push_back({std::move(literal), -1});
+        literal.clear();
+      }
+      pieces_.push_back({"", group});
+      maxGroup_ = std::max(maxGroup_, group);
+    }
+    if (!literal.empty()) {
+      pieces_.push_back({std::move(literal), -1});
+    }
+    return std::nullopt;
+  }
+
+  const std::string replacement_;
+  std::vector<Piece> pieces_;
+  int32_t maxGroup_{0};
+  std::optional<std::string> error_;
+};
+
 // REGEXP_REPLACE(string, pattern, overwrite) → string
 // REGEXP_REPLACE(string, pattern, overwrite, position) → string
 //
@@ -79,8 +211,9 @@ struct RegexpReplaceFunction {
         // Only when both the 'replacement' and 'pattern' are constants can they
         // be processed during initialization; otherwise, each row needs to be
         // processed separately.
-        constantReplacement_ =
-            prepareRegexpReplaceReplacement(re_.value(), *replacement);
+        constantReplacement_.emplace(
+            re_.value(),
+            std::string_view(replacement->data(), replacement->size()));
       }
     }
     cache_.setMaxCompiledRegexes(config.exprMaxCompiledRegexes());
@@ -162,17 +295,15 @@ struct RegexpReplaceFunction {
       const arg_type<Varchar>& replace,
       const arg_type<int32_t>& position) {
     auto& re = ensurePattern(pattern);
-    const auto& processedReplacement = constantReplacement_.has_value()
-        ? constantReplacement_.value()
-        : prepareRegexpReplaceReplacement(re, replace);
-
-    // Like RE2::GlobalReplace, keeps the input unchanged if the replacement
-    // refers to a missing group.
-    const int numSubmatches = 1 + RE2::MaxSubmatch(processedReplacement);
-    if (numSubmatches > 1 + re.NumberOfCapturingGroups()) {
-      result = stringInput;
-      return;
+    std::optional<JavaReplacement> rowReplacement;
+    if (!constantReplacement_.has_value()) {
+      rowReplacement.emplace(
+          re, std::string_view(replace.data(), replace.size()));
     }
+    const auto& replacement = constantReplacement_.has_value()
+        ? constantReplacement_.value()
+        : rowReplacement.value();
+    const int numSubmatches = replacement.numSubmatches();
 
     // Spark searches from 'position' as if the input started there, so '^'
     // matches at 'position'.
@@ -200,10 +331,7 @@ struct RegexpReplaceFunction {
       result.append(
           std::string_view(
               text.data() + appendPosition, matchStart - appendPosition));
-      rewritten_.clear();
-      re.Rewrite(
-          &rewritten_, processedReplacement, submatches_.data(), numSubmatches);
-      result.append(rewritten_);
+      replacement.appendTo(result, submatches_.data());
       appendPosition = matchEnd;
       if (matchStart != matchEnd) {
         searchPosition = matchEnd;
@@ -234,16 +362,13 @@ struct RegexpReplaceFunction {
   std::optional<RE2> re_;
 
   // Used when replacement is constant.
-  std::optional<std::string> constantReplacement_;
+  std::optional<JavaReplacement> constantReplacement_;
 
   // Used when pattern is not constant.
   detail::ReCache cache_;
 
   // Scratch memory for the submatches of a match.
   std::vector<re2::StringPiece> submatches_;
-
-  // Scratch memory for the rewritten replacement of a match.
-  std::string rewritten_;
 };
 
 // Calls 'function' with a constant group id of 1 appended to the arguments.

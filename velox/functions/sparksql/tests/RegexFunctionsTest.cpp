@@ -441,9 +441,9 @@ TEST_F(RegexFunctionsTest, regexpReplaceWithEmptyString) {
 //      preserved verbatim, so a matched control byte is rewritten to a
 //      literal backslash plus letter. Inputs include a multibyte UTF-8
 //      character to confirm surrounding bytes do not affect the result.
-//   2. Replacement of the form '\\X' where X is neither a digit nor '\\'
-//      drops the leading backslash and produces literal X, matching
-//      java.util.regex semantics (e.g. '\\{' -> '{', '\\$' -> '$').
+//   2. Replacement of the form '\\X' drops the leading backslash and
+//      produces literal X, matching java.util.regex semantics (e.g. '\\{' ->
+//      '{', '\\$' -> '$').
 //
 // Patterns use the explicit hex form '\\x08' for backspace because RE2
 // interprets '\\b' in patterns as a word boundary anchor; the other letter
@@ -785,6 +785,36 @@ TEST_F(RegexFunctionsTest, regexpReplaceEmptyMatch) {
   EXPECT_EQ(testRegexpReplace("abc", "b*", "-", 2), "a--c-");
   EXPECT_EQ(testRegexpReplace("a日b", "[a-c]*", "<$0>"), "<a><>日<b><>");
   EXPECT_EQ(testRegexpReplace("", "b*", "-"), "-");
+}
+
+// Spark parses the replacement following
+// java.util.regex.Matcher.appendReplacement: a backslash escapes the next
+// character, '$n' refers to the longest group number that exists, and an
+// invalid replacement fails only if the pattern matches.
+TEST_F(RegexFunctionsTest, regexpReplaceJavaReplacement) {
+  EXPECT_EQ(testRegexpReplace("abc", "b", "\\1"), "a1c");
+  EXPECT_EQ(testRegexpReplace("abc", "(b)", "\\$1"), "a$1c");
+  EXPECT_EQ(testRegexpReplace("abc", "(b)", "$1$1"), "abbc");
+  EXPECT_EQ(testRegexpReplace("abc", "(b)", "$10"), "ab0c");
+  EXPECT_EQ(
+      testRegexpReplace("abcdefghijk", "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)", "$10"),
+      "jk");
+  EXPECT_EQ(testRegexpReplace("abc", "(b)|(x)", "[$2]"), "a[]c");
+  EXPECT_EQ(testRegexpReplace("abc", "(?<g>b)", "${g}${g}"), "abbc");
+
+  auto result = testingRegexpReplaceRows(
+      {"abc", "abc", "abc"}, {"b", "(b)", "x"}, {"\\1", "$1$1", "$1"});
+  assertEqualVectors(
+      makeFlatVector<std::string>({"a1c", "abbc", "abc"}), result);
+
+  for (const auto* replacement :
+       {"$2", "$", "$a", "x\\", "${h}", "${}", "${g", "${1g}"}) {
+    SCOPED_TRACE(replacement);
+    VELOX_ASSERT_USER_THROW(
+        testRegexpReplace("abc", "(?<g>b)", replacement),
+        "Invalid replacement");
+    EXPECT_EQ(testRegexpReplace("abc", "(?<g>x)", replacement), "abc");
+  }
 }
 
 TEST_F(RegexFunctionsTest, regexpInstrBasic) {
