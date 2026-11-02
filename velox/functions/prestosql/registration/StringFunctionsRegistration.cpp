@@ -48,7 +48,8 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
       inputArgs,
       config,
       /*emptyNoMatch=*/false,
-      /*checkGroupIdOnMatch=*/false);
+      /*checkGroupIdOnMatch=*/false,
+      /*advanceByCharOnEmptyMatch=*/false);
 }
 
 void registerSimpleFunctions(

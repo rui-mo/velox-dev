@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/functions/lib/Re2Functions.h"
+#include "velox/functions/lib/Utf8Utils.h"
 #include "velox/functions/lib/string/StringImpl.h"
 #include "velox/vector/FunctionVector.h"
 
@@ -1175,7 +1176,8 @@ void re2ExtractAll(
     const int row,
     std::vector<re2::StringPiece>& groups,
     int32_t groupId,
-    bool emptyNoMatch) {
+    bool emptyNoMatch,
+    bool advanceByCharOnEmptyMatch) {
   resultWriter.setOffset(row);
 
   auto& arrayWriter = resultWriter.current();
@@ -1202,7 +1204,14 @@ void re2ExtractAll(
     }
     pos = fullMatch.data() + fullMatch.size() - input.data();
     if (UNLIKELY(fullMatch.size() == 0)) {
-      ++pos;
+      if (advanceByCharOnEmptyMatch && pos < input.size()) {
+        int32_t codePoint;
+        // An invalid UTF-8 character has a length of -charLength.
+        pos += std::abs(tryGetUtf8CharLength(
+            input.data() + pos, input.size() - pos, codePoint));
+      } else {
+        ++pos;
+      }
     }
   }
 
@@ -1215,10 +1224,12 @@ class Re2ExtractAllConstantPattern final : public exec::VectorFunction {
   Re2ExtractAllConstantPattern(
       StringView pattern,
       bool emptyNoMatch,
-      bool checkGroupIdOnMatch)
+      bool checkGroupIdOnMatch,
+      bool advanceByCharOnEmptyMatch)
       : re_(toStringPiece(pattern), RE2::Quiet),
         emptyNoMatch_(emptyNoMatch),
-        checkGroupIdOnMatch_(checkGroupIdOnMatch) {}
+        checkGroupIdOnMatch_(checkGroupIdOnMatch),
+        advanceByCharOnEmptyMatch_(advanceByCharOnEmptyMatch) {}
 
   void apply(
       const SelectivityVector& rows,
@@ -1248,7 +1259,14 @@ class Re2ExtractAllConstantPattern final : public exec::VectorFunction {
       groups.resize(1);
       context.applyToSelectedNoThrow(rows, [&](vector_size_t row) {
         re2ExtractAll(
-            resultWriter, re_, inputStrs, row, groups, 0, emptyNoMatch_);
+            resultWriter,
+            re_,
+            inputStrs,
+            row,
+            groups,
+            0,
+            emptyNoMatch_,
+            advanceByCharOnEmptyMatch_);
       });
     } else if (const auto _groupId = getIfConstant<T>(*args[2])) {
       // Case 2: Constant groupId
@@ -1278,7 +1296,8 @@ class Re2ExtractAllConstantPattern final : public exec::VectorFunction {
               row,
               groups,
               *_groupId,
-              emptyNoMatch_);
+              emptyNoMatch_,
+              advanceByCharOnEmptyMatch_);
         }
       });
     } else {
@@ -1303,7 +1322,8 @@ class Re2ExtractAllConstantPattern final : public exec::VectorFunction {
               row,
               groups,
               groupId,
-              emptyNoMatch_);
+              emptyNoMatch_,
+              advanceByCharOnEmptyMatch_);
         }
       });
     }
@@ -1320,6 +1340,7 @@ class Re2ExtractAllConstantPattern final : public exec::VectorFunction {
   RE2 re_;
   const bool emptyNoMatch_;
   const bool checkGroupIdOnMatch_;
+  const bool advanceByCharOnEmptyMatch_;
 };
 
 template <typename T>
@@ -1328,9 +1349,11 @@ class Re2ExtractAll final : public exec::VectorFunction {
   Re2ExtractAll(
       bool emptyNoMatch,
       bool checkGroupIdOnMatch,
+      bool advanceByCharOnEmptyMatch,
       int64_t maxCompiledRegexes)
       : emptyNoMatch_(emptyNoMatch),
         checkGroupIdOnMatch_(checkGroupIdOnMatch),
+        advanceByCharOnEmptyMatch_(advanceByCharOnEmptyMatch),
         cache_(maxCompiledRegexes) {}
 
   void apply(
@@ -1344,7 +1367,10 @@ class Re2ExtractAll final : public exec::VectorFunction {
     //
     if (auto pattern = getIfConstant<StringView>(*args[1])) {
       Re2ExtractAllConstantPattern<T>(
-          *pattern, emptyNoMatch_, checkGroupIdOnMatch_)
+          *pattern,
+          emptyNoMatch_,
+          checkGroupIdOnMatch_,
+          advanceByCharOnEmptyMatch_)
           .apply(rows, args, outputType, context, resultRef);
       return;
     }
@@ -1370,7 +1396,14 @@ class Re2ExtractAll final : public exec::VectorFunction {
         }
         const auto& re = *tryRe.value();
         re2ExtractAll(
-            resultWriter, re, inputStrs, row, groups, 0, emptyNoMatch_);
+            resultWriter,
+            re,
+            inputStrs,
+            row,
+            groups,
+            0,
+            emptyNoMatch_,
+            advanceByCharOnEmptyMatch_);
       });
     } else {
       // Case 2: Has groupId
@@ -1393,7 +1426,14 @@ class Re2ExtractAll final : public exec::VectorFunction {
                 checkGroupIdOnMatch_)) {
           groups.resize(groupId + 1);
           re2ExtractAll(
-              resultWriter, re, inputStrs, row, groups, groupId, emptyNoMatch_);
+              resultWriter,
+              re,
+              inputStrs,
+              row,
+              groups,
+              groupId,
+              emptyNoMatch_,
+              advanceByCharOnEmptyMatch_);
         }
       });
     }
@@ -1408,6 +1448,7 @@ class Re2ExtractAll final : public exec::VectorFunction {
  private:
   const bool emptyNoMatch_;
   const bool checkGroupIdOnMatch_;
+  const bool advanceByCharOnEmptyMatch_;
   mutable detail::ReCache cache_;
 };
 
@@ -2527,7 +2568,8 @@ std::shared_ptr<exec::VectorFunction> makeRe2ExtractAll(
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config,
     bool emptyNoMatch,
-    bool checkGroupIdOnMatch) {
+    bool checkGroupIdOnMatch,
+    bool advanceByCharOnEmptyMatch) {
   auto numArgs = inputArgs.size();
   VELOX_USER_CHECK(
       numArgs == 2 || numArgs == 3,
@@ -2565,10 +2607,16 @@ std::shared_ptr<exec::VectorFunction> makeRe2ExtractAll(
     switch (groupIdTypeKind) {
       case TypeKind::INTEGER:
         return std::make_shared<Re2ExtractAllConstantPattern<int32_t>>(
-            pattern, emptyNoMatch, checkGroupIdOnMatch);
+            pattern,
+            emptyNoMatch,
+            checkGroupIdOnMatch,
+            advanceByCharOnEmptyMatch);
       case TypeKind::BIGINT:
         return std::make_shared<Re2ExtractAllConstantPattern<int64_t>>(
-            pattern, emptyNoMatch, checkGroupIdOnMatch);
+            pattern,
+            emptyNoMatch,
+            checkGroupIdOnMatch,
+            advanceByCharOnEmptyMatch);
       default:
         VELOX_UNREACHABLE();
     }
@@ -2578,10 +2626,16 @@ std::shared_ptr<exec::VectorFunction> makeRe2ExtractAll(
   switch (groupIdTypeKind) {
     case TypeKind::INTEGER:
       return std::make_shared<Re2ExtractAll<int32_t>>(
-          emptyNoMatch, checkGroupIdOnMatch, maxCompiledRegexes);
+          emptyNoMatch,
+          checkGroupIdOnMatch,
+          advanceByCharOnEmptyMatch,
+          maxCompiledRegexes);
     case TypeKind::BIGINT:
       return std::make_shared<Re2ExtractAll<int64_t>>(
-          emptyNoMatch, checkGroupIdOnMatch, maxCompiledRegexes);
+          emptyNoMatch,
+          checkGroupIdOnMatch,
+          advanceByCharOnEmptyMatch,
+          maxCompiledRegexes);
     default:
       VELOX_UNREACHABLE();
   }

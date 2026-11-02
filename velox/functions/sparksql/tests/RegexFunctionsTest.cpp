@@ -340,6 +340,33 @@ TEST_F(RegexFunctionsTest, regexpExtractAllUnmatchedGroup) {
   assertEqualVectors(expected, evaluate("regexp_extract_all(c0, c1, 1)", data));
 }
 
+TEST_F(RegexFunctionsTest, regexpExtractAllEmptyMatchMultiByte) {
+  // After an empty match, the search continues from the next character, not
+  // from the next byte.
+  auto data = makeRowVector({
+      makeFlatVector<std::string>({"é", "a日b", "日本", "éa"}),
+      makeFlatVector<std::string>({"", "b*", "(x?)", "a|"}),
+      makeFlatVector<int32_t>({0, 0, 1, 0}),
+  });
+  auto expected = makeArrayVectorFromJson<std::string>({
+      "[\"\", \"\"]",
+      "[\"\", \"\", \"b\", \"\"]",
+      "[\"\", \"\", \"\"]",
+      "[\"\", \"\", \"\"]",
+  });
+  assertEqualVectors(
+      expected, evaluate("regexp_extract_all(c0, 'b*', 0)", data));
+
+  expected = makeArrayVectorFromJson<std::string>({
+      "[\"\", \"\"]",
+      "[\"\", \"\", \"b\", \"\"]",
+      "[\"\", \"\", \"\"]",
+      "[\"\", \"a\", \"\"]",
+  });
+  assertEqualVectors(
+      expected, evaluate("regexp_extract_all(c0, c1, c2)", data));
+}
+
 TEST_F(RegexFunctionsTest, regexpReplaceRegistration) {
   std::string output = "teeheebc";
   auto result = testRegexpReplace("abc", "a", "teehee");

@@ -94,7 +94,8 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
       inputArgs,
       config,
       /*emptyNoMatch=*/false,
-      /*checkGroupIdOnMatch=*/false);
+      /*checkGroupIdOnMatch=*/false,
+      /*advanceByCharOnEmptyMatch=*/false);
 }
 
 class Re2FunctionsTest : public test::FunctionBaseTest {
