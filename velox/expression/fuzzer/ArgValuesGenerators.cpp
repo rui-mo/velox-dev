@@ -879,6 +879,43 @@ std::vector<core::TypedExprPtr> RepeatArgValuesGenerator::generate(
       addRangeConstrainedColumn(countType, -5, maxCount, options, rng, state)};
 }
 
+std::vector<core::TypedExprPtr> ArrayInsertArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_EQ(signature.args.size(), 4);
+  const auto& positionType = signature.args[1];
+  VELOX_CHECK_EQ(positionType->kind(), TypeKind::INTEGER);
+  VELOX_CHECK_EQ(signature.args[3]->kind(), TypeKind::BOOLEAN);
+
+  // Mostly positions within or next to the fuzzed arrays.
+  const int32_t maxDistance = coinToss(rng, 0.9)
+      ? static_cast<int32_t>(options.containerLength) + 2
+      : 100;
+  int32_t minPosition = -maxDistance;
+  int32_t maxPosition = maxDistance;
+  // A test case throws if any row has position 0, so most test cases have
+  // positions of one sign.
+  if (coinToss(rng, 0.9)) {
+    if (coinToss(rng, 0.5)) {
+      minPosition = 1;
+    } else {
+      maxPosition = -1;
+    }
+  }
+
+  // The legacyNegativeIndex flag comes from a config in Spark, so it is never
+  // null. The fuzzer generates the array and the element.
+  return {
+      nullptr,
+      addRangeConstrainedColumn(
+          positionType, minPosition, maxPosition, options, rng, state),
+      nullptr,
+      std::make_shared<core::ConstantTypedExpr>(
+          signature.args[3], variant(coinToss(rng, 0.5)))};
+}
+
 std::vector<core::TypedExprPtr> MakeTimestampArgValuesGenerator::generate(
     const CallableSignature& signature,
     const VectorFuzzer::Options& options,

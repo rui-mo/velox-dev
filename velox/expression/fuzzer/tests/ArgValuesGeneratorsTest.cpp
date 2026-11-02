@@ -266,6 +266,69 @@ TEST(ArgValuesGeneratorsTest, repeat) {
   EXPECT_TRUE(hasLargeCount);
 }
 
+TEST(ArgValuesGeneratorsTest, arrayInsert) {
+  VectorFuzzer::Options options;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  ArrayInsertArgValuesGenerator generator;
+  const CallableSignature signature{
+      .name = "array_insert",
+      .args = {ARRAY(BIGINT()), INTEGER(), BIGINT(), BOOLEAN()},
+      .returnType = ARRAY(BIGINT()),
+      .constantArgs = {false, false, false, true},
+  };
+
+  const auto maxNearPosition =
+      static_cast<int32_t>(options.containerLength) + 2;
+  int32_t numMixedSigns = 0;
+  bool hasFarPosition = false;
+  std::unordered_set<bool> legacyNegativeIndices;
+  for (auto i = 0; i < 100; ++i) {
+    state.reset();
+    const auto inputs = generator.generate(signature, options, rng, state);
+
+    // The fuzzer generates the array and the element, and the position reads
+    // an input column.
+    ASSERT_EQ(inputs.size(), 4);
+    EXPECT_EQ(inputs[0], nullptr);
+    EXPECT_EQ(inputs[2], nullptr);
+    const auto legacyNegativeIndex =
+        std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[3]);
+    ASSERT_NE(legacyNegativeIndex, nullptr);
+    ASSERT_FALSE(legacyNegativeIndex->isNull());
+    legacyNegativeIndices.insert(
+        legacyNegativeIndex->value().value<TypeKind::BOOLEAN>());
+    const auto position =
+        std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(inputs[1]);
+    ASSERT_NE(position, nullptr);
+    ASSERT_EQ(state.inputRowNames_.size(), 1);
+    EXPECT_EQ(position->name(), state.inputRowNames_[0]);
+    ASSERT_EQ(*state.inputRowTypes_[0], *INTEGER());
+
+    // Velox throws for results of more than 10'000 elements.
+    ASSERT_EQ(state.customInputGenerators_.size(), 1);
+    ASSERT_NE(state.customInputGenerators_[0], nullptr);
+    bool hasPositive = false;
+    bool hasNonPositive = false;
+    for (auto j = 0; j < 20; ++j) {
+      const auto value =
+          state.customInputGenerators_[0]->generate().value<int32_t>();
+      EXPECT_GE(value, -100);
+      EXPECT_LE(value, 100);
+      hasPositive |= value > 0;
+      hasNonPositive |= value <= 0;
+      hasFarPosition |= std::abs(value) > maxNearPosition;
+    }
+    numMixedSigns += hasPositive && hasNonPositive;
+  }
+  // Most test cases have positions of one sign, since a test case throws if
+  // any row has position 0.
+  EXPECT_GT(numMixedSigns, 0);
+  EXPECT_LT(numMixedSigns, 30);
+  EXPECT_TRUE(hasFarPosition);
+  EXPECT_EQ(legacyNegativeIndices.size(), 2);
+}
+
 TEST(ArgValuesGeneratorsTest, regexp) {
   VectorFuzzer::Options options;
   FuzzerGenerator rng{0};
