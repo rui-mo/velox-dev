@@ -1782,6 +1782,92 @@ TEST_F(DateTimeFunctionsTest, timestampdiff) {
           parseTimestamp("2019-02-28 10:00:00.500"),
           parseTimestamp("2020-02-28 10:00:00.500")));
 
+  // Units count in the exact difference, microseconds included.
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "millisecond",
+          parseTimestamp("2024-01-01 00:00:00.000900"),
+          parseTimestamp("2024-01-01 00:00:00.001500")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "millisecond",
+          parseTimestamp("2024-01-01 00:00:00.001500"),
+          parseTimestamp("2024-01-01 00:00:00.000900")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "second",
+          parseTimestamp("2024-01-01 00:00:00.000900"),
+          parseTimestamp("2024-01-01 00:00:01.000500")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "day",
+          parseTimestamp("2024-01-01 00:00:00.000900"),
+          parseTimestamp("2024-01-02 00:00:00.000500")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "week",
+          parseTimestamp("2024-01-01 00:00:00.000900"),
+          parseTimestamp("2024-01-08 00:00:00.000500")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "month",
+          parseTimestamp("2024-01-01 00:00:00.000900"),
+          parseTimestamp("2024-02-01 00:00:00.000500")));
+
+  // An end whose time of day has not reached that of the start counts from
+  // one day closer to the start, which may be in another month. January 31
+  // 12:00 to March 1 06:00 counts as January 31 to February 29.
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "month",
+          parseTimestamp("2024-01-31 12:00:00"),
+          parseTimestamp("2024-03-01 06:00:00")));
+  EXPECT_EQ(
+      -1,
+      timestampDiff(
+          "month",
+          parseTimestamp("2024-03-01 06:00:00"),
+          parseTimestamp("2024-01-31 12:00:00")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "month",
+          parseTimestamp("2023-03-30 06:00:00"),
+          parseTimestamp("2023-02-28 12:00:00")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "quarter",
+          parseTimestamp("2024-01-31 12:00:00"),
+          parseTimestamp("2024-05-01 06:00:00")));
+  EXPECT_EQ(
+      0,
+      timestampDiff(
+          "year",
+          parseTimestamp("2024-02-29 12:00:00"),
+          parseTimestamp("2025-03-01 06:00:00")));
+
+  // About 570'000 years overflow BIGINT microseconds.
+  EXPECT_EQ(
+      18'000'000'000'000,
+      timestampDiff(
+          "second",
+          Timestamp(-9'000'000'000'000, 0),
+          Timestamp(9'000'000'000'000, 0)));
+  VELOX_ASSERT_USER_THROW(
+      timestampDiff(
+          "microsecond",
+          Timestamp(-9'000'000'000'000, 0),
+          Timestamp(9'000'000'000'000, 0)),
+      "long overflow");
+
   // Test for daylight saving. Daylight saving in US starts at 2021-03-14
   // 02:00:00 PST.
   // When adjust_timestamp_to_timezone is off, Daylight saving occurs in UTC.
