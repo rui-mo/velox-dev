@@ -1154,10 +1154,96 @@ struct TimestampDiffFunction {
       from.toTimezone(*sessionTimeZone_);
       to.toTimezone(*sessionTimeZone_);
     }
-    result = diffTimestamp(unit_.value(), from, to, /*respectLastDay=*/false);
+    // Like Java's LocalDateTime.until(), counts whole units at microsecond
+    // precision.
+    const auto start = toMicros(from);
+    const auto end = toMicros(to);
+    __int128 diff;
+    switch (unit_.value()) {
+      case DateTimeUnit::kMonth:
+        diff = diffMonths(start, end);
+        break;
+      case DateTimeUnit::kQuarter:
+        diff = diffMonths(start, end) / 3;
+        break;
+      case DateTimeUnit::kYear:
+        diff = diffMonths(start, end) / 12;
+        break;
+      default:
+        diff = (end - start) / microsInUnit(unit_.value());
+    }
+    VELOX_USER_CHECK(
+        diff >= std::numeric_limits<int64_t>::min() &&
+            diff <= std::numeric_limits<int64_t>::max(),
+        "long overflow");
+    result = static_cast<int64_t>(diff);
   }
 
  private:
+  static constexpr int64_t kMicrosInDay =
+      kSecondsInDay * Timestamp::kMicrosecondsInSecond;
+
+  static __int128 toMicros(const Timestamp& timestamp) {
+    return static_cast<__int128>(timestamp.getSeconds()) *
+        Timestamp::kMicrosecondsInSecond +
+        timestamp.getNanos() / Timestamp::kNanosecondsInMicrosecond;
+  }
+
+  static int64_t microsInUnit(DateTimeUnit unit) {
+    switch (unit) {
+      case DateTimeUnit::kMicrosecond:
+        return 1;
+      case DateTimeUnit::kMillisecond:
+        return Timestamp::kMicrosecondsInMillisecond;
+      case DateTimeUnit::kSecond:
+        return Timestamp::kMicrosecondsInSecond;
+      case DateTimeUnit::kMinute:
+        return kSecondsInMinute * Timestamp::kMicrosecondsInSecond;
+      case DateTimeUnit::kHour:
+        return kSecondsInHour * Timestamp::kMicrosecondsInSecond;
+      case DateTimeUnit::kDay:
+        return kMicrosInDay;
+      case DateTimeUnit::kWeek:
+        return kDaysInWeek * kMicrosInDay;
+      default:
+        VELOX_UNREACHABLE();
+    }
+  }
+
+  // Returns the months from local date-time 'from' to 'to', both in
+  // microseconds, like Java's LocalDateTime.until(). If the time of day of
+  // 'to' has not reached that of 'from', the date of 'to' first moves a day
+  // towards 'from'. Then a month counts once its day of the month is reached.
+  static int64_t diffMonths(__int128 from, __int128 to) {
+    int64_t fromDays = floorDays(from);
+    int64_t toDays = floorDays(to);
+    const __int128 fromTime =
+        from - static_cast<__int128>(fromDays) * kMicrosInDay;
+    const __int128 toTime = to - static_cast<__int128>(toDays) * kMicrosInDay;
+    if (toDays > fromDays && toTime < fromTime) {
+      --toDays;
+    } else if (toDays < fromDays && toTime > fromTime) {
+      ++toDays;
+    }
+    return (packMonthAndDay(toDays) - packMonthAndDay(fromDays)) / 32;
+  }
+
+  static int64_t floorDays(__int128 micros) {
+    __int128 days = micros / kMicrosInDay;
+    if (micros % kMicrosInDay < 0) {
+      --days;
+    }
+    return static_cast<int64_t>(days);
+  }
+
+  // Packs the months since year 0 and the day of the month of 'days' since
+  // the epoch, as Java's LocalDate.monthsUntil() does.
+  static int64_t packMonthAndDay(int64_t days) {
+    const std::tm date = getDateTimeUtc(days * kSecondsInDay);
+    return (static_cast<int64_t>(getYear(date)) * 12 + date.tm_mon) * 32 +
+        date.tm_mday;
+  }
+
   const tz::TimeZone* sessionTimeZone_ = nullptr;
   std::optional<DateTimeUnit> unit_ = std::nullopt;
 };
