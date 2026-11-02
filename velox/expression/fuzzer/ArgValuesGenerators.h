@@ -313,6 +313,25 @@ class RepeatArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark array_insert. Reads the position from an input
+/// column with values within or just outside the fuzzed arrays, and sometimes
+/// up to 100 elements away, which pads the array with nulls. The positions of
+/// most test cases have the same sign, since position 0 is invalid. Random
+/// 32-bit positions almost always make the result exceed the limit of 10'000
+/// elements in Velox, while Spark allocates arrays of any size that fits in
+/// memory. The legacyNegativeIndex flag is a constant true or false, since
+/// Spark reads it from a config.
+class ArrayInsertArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~ArrayInsertArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 /// Generates arguments for Spark make_timestamp, make_timestamp_ntz,
 /// try_make_timestamp and try_make_timestamp_ntz. Reads the fields from input
 /// columns with years in [1800, 2200] and other fields within or just outside

@@ -79,6 +79,7 @@ DEFINE_string(
     "Example: --skip_functions=\"array_sort,sequence\"");
 
 using facebook::velox::fuzzer::ArgValuesGenerator;
+using facebook::velox::fuzzer::ArrayInsertArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
 using facebook::velox::fuzzer::MakeTimestampArgValuesGenerator;
@@ -201,6 +202,7 @@ int main(int argc, char** argv) {
 
   std::unordered_map<std::string, std::shared_ptr<ArgValuesGenerator>>
       argValuesGenerators = {
+          {"array_insert", std::make_shared<ArrayInsertArgValuesGenerator>()},
           {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()},
           {"lpad", std::make_shared<PadArgValuesGenerator>()},
           {"make_timestamp",
