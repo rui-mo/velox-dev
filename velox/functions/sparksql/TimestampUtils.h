@@ -25,4 +25,14 @@ namespace facebook::velox::functions::sparksql {
 /// shifting forward to the nearest valid time.
 void toGMTWithGapCorrection(Timestamp& time, const tz::TimeZone& zone);
 
+/// Converts local 'time' to the GMT time like Java's ZonedDateTime.ofLocal().
+/// A nonexistent 'time' (DST gap) moves forward by the length of the gap. An
+/// ambiguous 'time' (DST overlap) keeps 'preferredOffset', an offset from GMT
+/// in seconds, if it is one of its two offsets, or else takes the earlier
+/// instant.
+void toGMTWithPreferredOffset(
+    Timestamp& time,
+    const tz::TimeZone& zone,
+    int64_t preferredOffset);
+
 } // namespace facebook::velox::functions::sparksql

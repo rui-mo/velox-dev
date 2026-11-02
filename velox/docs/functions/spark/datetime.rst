@@ -397,8 +397,11 @@ These functions support TIMESTAMP and DATE input types.
     ``YEAR``, ``QUARTER``, ``MONTH``, ``WEEK``, ``DAY``, ``DAYOFYEAR``, ``HOUR``, ``MINUTE``, ``SECOND``,
     ``MILLISECOND``, ``MICROSECOND``. Units shorter than a day add a fixed number of
     microseconds. Longer units move the local date-time in the session time zone and
-    must amount to an int number of days or months. Throws exception if the result
-    overflows the bigint microseconds since epoch. ::
+    must amount to an int number of days or months. A local result skipped by a
+    daylight saving time change moves forward by the length of the gap. A repeated
+    one keeps the offset of ``timestamp`` if valid, or else takes the earlier
+    instant. Throws exception if the result overflows the bigint microseconds since
+    epoch. ::
 
         SELECT timestampadd(YEAR, 1, '2030-02-28 10:00:00.500'); -- 2031-02-28 10:00:00.500
         SELECT timestampadd(DAY, 1, '2020-02-29 10:00:00.500'); -- 2020-03-01 10:00:00.500
