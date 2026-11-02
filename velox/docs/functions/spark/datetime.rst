@@ -375,8 +375,10 @@ These functions support TIMESTAMP and DATE input types.
 
 .. spark:function:: second(timestamp) -> integer
 
-    Returns the seconds of ``timestamp``. The result is not affected by the session
-    timezone since all timezone offsets are whole-minute multiples. ::
+    Returns the seconds of ``timestamp``, subject to the session timezone. The
+    session timezone can change the seconds when its offset is not a whole number
+    of minutes, e.g. the local mean time offset -07:52:58 of America/Los_Angeles
+    before 1883. ::
 
         SELECT second('2009-07-30 12:58:59'); -- 59
 

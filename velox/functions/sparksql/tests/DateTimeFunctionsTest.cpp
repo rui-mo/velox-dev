@@ -1168,6 +1168,13 @@ TEST_F(DateTimeFunctionsTest, second) {
   EXPECT_EQ(59, second("2024-01-08 00:59:59.999"));
   EXPECT_EQ(15, second("2015-04-08 13:10:15"));
   EXPECT_EQ(0, second("1969-01-01 13:43:00.001"));
+
+  // America/Los_Angeles used the local mean time offset -07:52:58 before 1883.
+  setQueryTimeZone("America/Los_Angeles");
+
+  EXPECT_EQ(2, second("1800-01-01 07:53:00"));
+  EXPECT_EQ(59, second("2024-01-08 00:59:59.999"));
+  EXPECT_EQ(15, second("2015-04-08 13:10:15"));
 }
 
 TEST_F(DateTimeFunctionsTest, secondTimestampUtc) {
