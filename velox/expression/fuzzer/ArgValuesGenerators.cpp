@@ -957,4 +957,309 @@ std::vector<core::TypedExprPtr> MakeTimestampArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+namespace {
+
+// A regular expression and its number of capturing groups.
+struct Regexp {
+  std::string pattern;
+  int32_t numGroups;
+};
+
+// Regular expressions that RE2 and java.util.regex interpret the same way.
+// Leaves out '.', '$', '\s' and '\b', which differ for line terminators or
+// non-ASCII characters, and constructs that the engines don't both support,
+// e.g. back references, octal escapes, possessive quantifiers, intersections
+// of character classes and named groups.
+const std::vector<Regexp>& regexps() {
+  static const std::vector<Regexp> kRegexps{
+      // Literals and escapes.
+      {"a", 0},
+      {"ab", 0},
+      {",", 0},
+      {"-", 0},
+      {R"(\|)", 0},
+      {R"(\.)", 0},
+      {R"(\\)", 0},
+      {R"(\Q*.\E)", 0},
+      {R"(\x41)", 0},
+      {"é", 0},
+      // Character classes.
+      {"[a-c]", 0},
+      {"[^a-z]", 0},
+      {"[,;]", 0},
+      {"[a-c]+", 0},
+      {"[^,]+", 0},
+      {"[^a]", 0},
+      {R"(\d)", 0},
+      {R"(\d+)", 0},
+      {R"(\D+)", 0},
+      {R"(\w+)", 0},
+      {R"(\W)", 0},
+      {R"(\W+)", 0},
+      {R"(\p{L}+)", 0},
+      {"[0-9]{2}", 0},
+      {"[A-Z][a-z]*", 0},
+      // Quantifiers, including lazy ones and ones that match empty strings.
+      {"", 0},
+      {"a*", 0},
+      {"b*", 0},
+      {"x*", 0},
+      {"a?", 0},
+      {"a+?", 0},
+      {"[a-z]*?", 0},
+      {"a{2}", 0},
+      {"a{1,2}", 0},
+      {"a{2,}", 0},
+      {",*", 0},
+      {"[a-c]*", 0},
+      // Alternations and anchors.
+      {"a|b", 0},
+      {"a|", 0},
+      {"|a", 0},
+      {"ab|a", 0},
+      {"^", 0},
+      {"^a", 0},
+      {"^[a-z]*", 0},
+      // Case-insensitive matching of letters without non-ASCII case variants.
+      // RE2 matches 'k' with the Kelvin sign, while Java doesn't by default.
+      {"(?i)ab", 0},
+      {"(?i)[a-c]+", 0},
+      // Groups.
+      {"(?:ab)+", 0},
+      {"(a)", 1},
+      {"([a-z]+)", 1},
+      {"(x)?", 1},
+      {"(a|b)+", 1},
+      {"(a*)", 1},
+      {"([^,]*),", 1},
+      {R"(^(\w+))", 1},
+      {"(a)(b)?", 2},
+      {R"((\d+)-(\d+))", 2},
+      {"((a)b)?", 2},
+      {"(a)|(b)", 2},
+      {R"((\w)(\w))", 2},
+      {"(b*)(a)", 2},
+  };
+  return kRegexps;
+}
+
+// Regular expressions that both RE2 and java.util.regex reject.
+const std::vector<std::string>& invalidRegexps() {
+  static const std::vector<std::string> kRegexps{
+      "(", ")", "[", "*", "+a", "a{2,1}", "\\", "[a-"};
+  return kRegexps;
+}
+
+// Generates short strings of characters that the patterns of 'regexps()'
+// match, including multi-byte characters and line feeds.
+class RegexpSubjectGenerator : public AbstractInputGenerator {
+ public:
+  RegexpSubjectGenerator(size_t seed, const TypePtr& type, double nullRatio)
+      : AbstractInputGenerator(seed, type, nullptr, nullRatio) {}
+
+  variant generate() override {
+    if (coinToss(rng_, nullRatio_)) {
+      return variant::null(type_->kind());
+    }
+    static const std::vector<std::string> kCharacters{
+        "a",
+        "b",
+        "c",
+        "x",
+        "A",
+        "B",
+        "1",
+        "2",
+        ",",
+        ";",
+        "-",
+        "|",
+        ".",
+        "*",
+        "\\",
+        " ",
+        "\n",
+        "é",
+        "日"};
+    std::string subject;
+    const auto length = rand<int32_t>(rng_, 0, 8);
+    for (auto i = 0; i < length; ++i) {
+      subject += kCharacters[rand<size_t>(rng_, 0, kCharacters.size() - 1)];
+    }
+    return variant(subject);
+  }
+};
+
+template <typename T>
+const T& randElement(const std::vector<T>& values, FuzzerGenerator& rng) {
+  return values[rand<size_t>(rng, 0, values.size() - 1)];
+}
+
+core::TypedExprPtr makeConstant(const TypePtr& type, variant value) {
+  return std::make_shared<core::ConstantTypedExpr>(type, std::move(value));
+}
+
+// Returns a constant or an input column with values in [min, max] of 'type',
+// which is INTEGER or BIGINT.
+core::TypedExprPtr makeIntegerArg(
+    const TypePtr& type,
+    int32_t min,
+    int32_t max,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  const bool constant = coinToss(rng, 0.5);
+  if (type->kind() == TypeKind::INTEGER) {
+    return constant ? makeConstant(type, variant(rand<int32_t>(rng, min, max)))
+                    : addRangeConstrainedColumn<int32_t>(
+                          type, min, max, options, rng, state);
+  }
+  VELOX_CHECK_EQ(type->kind(), TypeKind::BIGINT);
+  return constant
+      ? makeConstant(type, variant(rand<int64_t>(rng, min, max)))
+      : addRangeConstrainedColumn<int64_t>(type, min, max, options, rng, state);
+}
+
+} // namespace
+
+std::vector<core::TypedExprPtr> RegexpArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  const auto& name = signature.name;
+  const auto& args = signature.args;
+  VELOX_CHECK_GE(args.size(), 2);
+  VELOX_CHECK_LE(args.size(), 4);
+
+  // The fuzzer generates the arguments that are left null, e.g. the string to
+  // match half of the time.
+  std::vector<core::TypedExprPtr> inputExpressions(args.size(), nullptr);
+  if (args[0]->kind() == TypeKind::VARCHAR && coinToss(rng, 0.5)) {
+    inputExpressions[0] = addColumn(
+        args[0],
+        std::make_shared<RegexpSubjectGenerator>(
+            rand<uint32_t>(rng), args[0], options.nullRatio),
+        state);
+  }
+
+  const auto& patternType = args[1];
+  if (patternType->kind() != TypeKind::VARCHAR) {
+    // A pattern of unknown type, which must be a constant for rlike.
+    inputExpressions[1] =
+        makeConstant(patternType, variant::null(patternType->kind()));
+    return inputExpressions;
+  }
+
+  const bool isExtract =
+      name == "regexp_extract" || name == "regexp_extract_all";
+  const bool isReplace = name == "regexp_replace";
+  // The minimum number of groups of the patterns. regexp_extract and
+  // regexp_extract_all extract group 1 by default.
+  int32_t minGroups = 0;
+  if (isExtract) {
+    minGroups = args.size() == 2 ? (coinToss(rng, 0.9) ? 1 : 0)
+                                 : rand<int32_t>(rng, 0, 2);
+  } else if (isReplace) {
+    minGroups = rand<int32_t>(rng, 0, 2);
+  }
+  std::vector<std::string> patterns;
+  std::vector<int32_t> patternGroups;
+  for (const auto& regexp : regexps()) {
+    if (regexp.numGroups >= minGroups) {
+      patterns.push_back(regexp.pattern);
+      patternGroups.push_back(regexp.numGroups);
+    }
+  }
+
+  // The number of groups that all patterns have. Velox requires constant
+  // patterns for rlike and regexp_extract.
+  int32_t numGroups = minGroups;
+  if (name == "rlike" || name == "regexp_extract" || coinToss(rng, 0.7)) {
+    if (coinToss(rng, options.nullRatio)) {
+      inputExpressions[1] =
+          makeConstant(patternType, variant::null(TypeKind::VARCHAR));
+    } else if (coinToss(rng, 0.02)) {
+      // Velox and Spark throw for invalid patterns.
+      numGroups = 0;
+      inputExpressions[1] = makeConstant(
+          patternType, variant(randElement(invalidRegexps(), rng)));
+    } else {
+      const auto index = rand<size_t>(rng, 0, patterns.size() - 1);
+      numGroups = patternGroups[index];
+      inputExpressions[1] = makeConstant(patternType, variant(patterns[index]));
+    }
+  } else {
+    std::vector<variant> values;
+    if (coinToss(rng, 0.5)) {
+      values.push_back(variant::null(TypeKind::VARCHAR));
+    }
+    const auto numPatterns = rand<int32_t>(rng, 1, 8);
+    for (auto i = 0; i < numPatterns; ++i) {
+      values.emplace_back(randElement(patterns, rng));
+    }
+    inputExpressions[1] = addColumn(
+        patternType,
+        std::make_shared<SetConstrainedGenerator>(
+            rand<uint32_t>(rng), patternType, values),
+        state);
+  }
+
+  if (isExtract && args.size() == 3) {
+    // Velox and Spark throw for indices of groups that don't exist if the
+    // pattern matches.
+    const bool validGroup = coinToss(rng, 0.85);
+    inputExpressions[2] = makeIntegerArg(
+        args[2],
+        validGroup ? 0 : -1,
+        validGroup ? numGroups : numGroups + 1,
+        options,
+        rng,
+        state);
+  } else if (isReplace) {
+    std::vector<std::string> replacements{
+        "", "-", "x", "$0", "<$0>", R"(\$)", R"(\\)"};
+    if (numGroups >= 1) {
+      replacements.insert(replacements.end(), {"$1", "[$1]", "$10"});
+    }
+    if (numGroups >= 2) {
+      replacements.emplace_back("$2$1");
+    }
+    if (coinToss(rng, 0.02)) {
+      // Velox and Spark throw for invalid replacements if the pattern matches.
+      replacements = {"$", "\\", "$a", "${g}"};
+    }
+    const auto& replacementType = args[2];
+    if (coinToss(rng, 0.8)) {
+      inputExpressions[2] = makeConstant(
+          replacementType, variant(randElement(replacements, rng)));
+    } else {
+      std::vector<variant> values{variant::null(TypeKind::VARCHAR)};
+      for (const auto& replacement : replacements) {
+        values.emplace_back(replacement);
+      }
+      inputExpressions[2] = addColumn(
+          replacementType,
+          std::make_shared<SetConstrainedGenerator>(
+              rand<uint32_t>(rng), replacementType, values),
+          state);
+    }
+
+    if (args.size() == 4) {
+      // Spark requires the position to be a constant that is null or >= 1.
+      const auto& positionType = args[3];
+      VELOX_CHECK_EQ(positionType->kind(), TypeKind::INTEGER);
+      inputExpressions[3] = makeConstant(
+          positionType,
+          coinToss(rng, options.nullRatio)
+              ? variant::null(TypeKind::INTEGER)
+              : variant(rand<int32_t>(rng, 1, 10)));
+    }
+  } else if (name == "split" && args.size() == 3) {
+    // Limits <= 0 split the string at all matches.
+    inputExpressions[2] = makeIntegerArg(args[2], -2, 5, options, rng, state);
+  }
+  return inputExpressions;
+}
+
 } // namespace facebook::velox::fuzzer

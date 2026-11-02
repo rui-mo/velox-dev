@@ -83,6 +83,7 @@ using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
 using facebook::velox::fuzzer::MakeTimestampArgValuesGenerator;
 using facebook::velox::fuzzer::PadArgValuesGenerator;
+using facebook::velox::fuzzer::RegexpArgValuesGenerator;
 using facebook::velox::fuzzer::RepeatArgValuesGenerator;
 using facebook::velox::fuzzer::RoundArgValuesGenerator;
 
@@ -127,15 +128,7 @@ int main(int argc, char** argv) {
       facebook::velox::memory::MemoryManager::Options{});
 
   // The following list are the Spark UDFs that hit issues
-  // For rlike you need the following combo in the only list:
-  // rlike, md5 and upper
   std::unordered_set<std::string> skipFunctions = {
-      "regexp_extract",
-      // https://github.com/facebookincubator/velox/issues/8438
-      "regexp_replace",
-      // https://github.com/facebookincubator/velox/issues/17697
-      "regexp_instr",
-      "rlike",
       "chr",
       "replace",
       "might_contain",
@@ -208,9 +201,15 @@ int main(int argc, char** argv) {
            std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"make_timestamp_ntz",
            std::make_shared<MakeTimestampArgValuesGenerator>()},
+          {"regexp_extract", std::make_shared<RegexpArgValuesGenerator>()},
+          {"regexp_extract_all", std::make_shared<RegexpArgValuesGenerator>()},
+          {"regexp_instr", std::make_shared<RegexpArgValuesGenerator>()},
+          {"regexp_replace", std::make_shared<RegexpArgValuesGenerator>()},
           {"repeat", std::make_shared<RepeatArgValuesGenerator>()},
+          {"rlike", std::make_shared<RegexpArgValuesGenerator>()},
           {"round", std::make_shared<RoundArgValuesGenerator>()},
           {"rpad", std::make_shared<PadArgValuesGenerator>()},
+          {"split", std::make_shared<RegexpArgValuesGenerator>()},
           {"try_make_timestamp",
            std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"try_make_timestamp_ntz",

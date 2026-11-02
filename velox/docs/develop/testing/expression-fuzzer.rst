@@ -235,6 +235,16 @@ subexpression that still fails in Velox and evaluates it alone in Spark. The err
 Spark throws for that subexpression too. Otherwise the test fails and logs the Spark query of the
 smallest subexpression with the ``Smallest failing Velox expression`` prefix.
 
+Velox evaluates regular expressions with RE2, while Spark uses ``java.util.regex``. Most random
+strings are invalid patterns, and the two engines accept different syntax, e.g. Java rejects
+``{}`` and RE2 rejects back references like ``\1``. So Spark Expression Fuzzer takes the patterns
+of ``rlike``, ``regexp_extract``, ``regexp_extract_all``, ``regexp_instr``, ``regexp_replace`` and
+``split`` from a list of patterns that both engines evaluate the same way. It generates the
+strings to match from characters that the patterns match, and mostly valid group indices and
+replacements for the patterns, see ``RegexpArgValuesGenerator``. A column of patterns has only a
+few distinct values, since Velox compiles at most ``expression.max_compiled_regexes`` patterns
+per function.
+
 The scripts in ``scripts/spark-fuzzer`` set up a Spark Connect server for the Spark fuzzers, run
 Spark Expression Fuzzer with Spark as the source of truth with many seeds, group the failures
 by their causes and reproduce them. See ``scripts/spark-fuzzer/README.md``.

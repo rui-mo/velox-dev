@@ -333,4 +333,26 @@ class MakeTimestampArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark rlike, regexp_extract, regexp_extract_all,
+/// regexp_instr, regexp_replace and split. The patterns are regular
+/// expressions that RE2 in Velox and java.util.regex in Spark interpret the
+/// same way, and rarely invalid ones. Random strings are mostly invalid
+/// patterns. Patterns are constants for rlike and regexp_extract, which
+/// require constant patterns in Velox. For the other functions, they are
+/// constants or input columns with few distinct patterns, since Velox limits
+/// the number of patterns that a function compiles. Strings to match are
+/// sometimes short strings of characters that the patterns match. Group
+/// indices and replacements mostly refer to groups of the patterns.
+/// Replacement positions are constants, as Spark requires.
+class RegexpArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~RegexpArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer
