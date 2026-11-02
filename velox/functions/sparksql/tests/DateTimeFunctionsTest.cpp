@@ -2140,6 +2140,65 @@ TEST_F(DateTimeFunctionsTest, timestampadd) {
       timestampadd("year", -1, parseTimestamp("1969-02-28 12:00:00")));
 }
 
+TEST_F(DateTimeFunctionsTest, timestampaddLargeQuantity) {
+  const auto timestampadd =
+      [&](const std::string& unit, int64_t value, const Timestamp& timestamp) {
+        return evaluateOnce<Timestamp>(
+                   fmt::format("timestampadd('{}', c0, c1)", unit),
+                   std::optional(value),
+                   std::optional(timestamp))
+            .value();
+      };
+  const auto epoch2000 = parseTimestamp("2000-01-01 00:00:00");
+  constexpr auto kMax = std::numeric_limits<int64_t>::max();
+
+  for (const auto* timeZone : {"", "America/Los_Angeles"}) {
+    SCOPED_TRACE(timeZone);
+    if (timeZone[0] != '\0') {
+      setQueryTimeZone(timeZone);
+    }
+
+    // Units shorter than a day add a BIGINT number of microseconds.
+    EXPECT_EQ(
+        Timestamp::fromMicros(2'460'299'391'068'000),
+        timestampadd(
+            "millisecond",
+            4'387'152'199'371,
+            parseTimestamp("1908-12-10 11:06:31.697")));
+    EXPECT_EQ(
+        Timestamp::fromMicros(9'953'884'054'740'993),
+        timestampadd("microsecond", 9'007'199'254'740'993, epoch2000));
+    EXPECT_EQ(
+        Timestamp::fromMicros(-2'053'315'200'000'000),
+        timestampadd("second", -3'000'000'000, epoch2000));
+    EXPECT_EQ(
+        Timestamp::fromMicros(7'731'887'817'600'000'000),
+        timestampadd("hour", 2'147'483'648, epoch2000));
+    EXPECT_EQ(
+        Timestamp::fromMicros(kMax),
+        timestampadd("microsecond", kMax - 946'684'800'000'000, epoch2000));
+
+    // Spark fails when the microseconds overflow, when a longer unit does not
+    // convert to an INTEGER number of days or months, and when the result is
+    // out of the BIGINT microsecond range.
+    const auto assertOverflow = [&](const std::string& unit, int64_t value) {
+      VELOX_ASSERT_USER_THROW(
+          timestampadd(unit, value, epoch2000),
+          fmt::format("Datetime operation overflow: add {} {}", value, unit));
+    };
+    assertOverflow("microsecond", kMax - 946'684'799'999'999);
+    assertOverflow("minute", kMax);
+    assertOverflow("day", 2'147'483'648);
+    assertOverflow("dayofyear", -2'147'483'649);
+    assertOverflow("week", 306'783'379);
+    assertOverflow("month", 2'147'483'647);
+    assertOverflow("quarter", 715'827'883);
+    assertOverflow("year", 178'956'971);
+    assertOverflow("year", 300'000);
+    assertOverflow("day", 2'147'483'647);
+  }
+}
+
 TEST_F(DateTimeFunctionsTest, constantTimestampUnits) {
   for (const auto* name : {"timestampadd", "timestampdiff"}) {
     const auto signatures = getFunctionSignatures(name);

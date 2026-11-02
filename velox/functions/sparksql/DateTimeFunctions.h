@@ -1194,14 +1194,114 @@ struct TimestampAddFunction {
   template <typename TInput>
   FOLLY_ALWAYS_INLINE void call(
       out_type<TTimestamp>& result,
-      const arg_type<Varchar>& /*unitString*/,
+      const arg_type<Varchar>& unitString,
       const TInput value,
       const arg_type<TTimestamp>& timestamp) {
     const auto unit = unit_.value();
-    result = addToTimestamp(unit, value, timestamp, sessionTimeZone_);
+    const int64_t quantity = value;
+    // Like Spark, adds units shorter than a day as a fixed number of
+    // microseconds. Longer units must convert to an INTEGER number of days or
+    // months, which move the local date-time. A result out of the BIGINT
+    // microsecond range is an overflow.
+    bool overflow;
+    if (isTimeUnit(unit)) {
+      overflow = !addMicros(timestamp, quantity, unit, result);
+    } else if (!fitsInInteger(quantity, unit)) {
+      overflow = true;
+    } else {
+      Timestamp local = timestamp;
+      if (sessionTimeZone_ != nullptr) {
+        local.toTimezone(*sessionTimeZone_);
+      }
+      result = addToTimestamp(local, unit, static_cast<int32_t>(quantity));
+      overflow = !inMicrosRange(result);
+      if (!overflow && sessionTimeZone_ != nullptr) {
+        toGMTWithGapCorrection(result, *sessionTimeZone_);
+        overflow = !inMicrosRange(result);
+      }
+    }
+    VELOX_USER_CHECK(
+        !overflow,
+        "Datetime operation overflow: add {} {} to {}",
+        quantity,
+        std::string_view(unitString),
+        timestamp.toString());
   }
 
  private:
+  // Adds 'quantity' units shorter than a day to 'timestamp' and keeps its
+  // nanoseconds below a microsecond. Returns false on overflow.
+  static bool addMicros(
+      const Timestamp& timestamp,
+      int64_t quantity,
+      DateTimeUnit unit,
+      Timestamp& result) {
+    int64_t unitMicros = 1;
+    switch (unit) {
+      case DateTimeUnit::kMicrosecond:
+        break;
+      case DateTimeUnit::kMillisecond:
+        unitMicros = Timestamp::kMicrosecondsInMillisecond;
+        break;
+      case DateTimeUnit::kSecond:
+        unitMicros = Timestamp::kMicrosecondsInSecond;
+        break;
+      case DateTimeUnit::kMinute:
+        unitMicros = kSecondsInMinute * Timestamp::kMicrosecondsInSecond;
+        break;
+      case DateTimeUnit::kHour:
+        unitMicros = kSecondsInHour * Timestamp::kMicrosecondsInSecond;
+        break;
+      default:
+        VELOX_UNREACHABLE();
+    }
+    int64_t micros;
+    int64_t resultMicros;
+    if (!inMicrosRange(timestamp) ||
+        __builtin_mul_overflow(quantity, unitMicros, &micros) ||
+        __builtin_add_overflow(timestamp.toMicros(), micros, &resultMicros)) {
+      return false;
+    }
+    const auto sum = Timestamp::fromMicros(resultMicros);
+    result = Timestamp(
+        sum.getSeconds(),
+        sum.getNanos() +
+            timestamp.getNanos() % Timestamp::kNanosecondsInMicrosecond);
+    return true;
+  }
+
+  // Returns whether 'quantity' units converts to an INTEGER number of days or
+  // months.
+  static bool fitsInInteger(int64_t quantity, DateTimeUnit unit) {
+    int32_t factor = 1;
+    switch (unit) {
+      case DateTimeUnit::kWeek:
+        factor = kDaysInWeek;
+        break;
+      case DateTimeUnit::kQuarter:
+        factor = 3;
+        break;
+      case DateTimeUnit::kYear:
+        factor = 12;
+        break;
+      default:
+        break;
+    }
+    int32_t amount;
+    return quantity >= std::numeric_limits<int32_t>::min() &&
+        quantity <= std::numeric_limits<int32_t>::max() &&
+        !__builtin_mul_overflow(
+               static_cast<int32_t>(quantity), factor, &amount);
+  }
+
+  static bool inMicrosRange(const Timestamp& timestamp) {
+    const auto micros = static_cast<__int128_t>(timestamp.getSeconds()) *
+            Timestamp::kMicrosecondsInSecond +
+        timestamp.getNanos() / Timestamp::kNanosecondsInMicrosecond;
+    return micros >= std::numeric_limits<int64_t>::min() &&
+        micros <= std::numeric_limits<int64_t>::max();
+  }
+
   const tz::TimeZone* sessionTimeZone_ = nullptr;
   std::optional<DateTimeUnit> unit_ = std::nullopt;
 };

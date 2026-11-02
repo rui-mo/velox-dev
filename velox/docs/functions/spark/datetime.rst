@@ -395,13 +395,18 @@ These functions support TIMESTAMP and DATE input types.
     Throws exception if ``unit`` is invalid.
     ``unit`` is case insensitive and must be one of the following:
     ``YEAR``, ``QUARTER``, ``MONTH``, ``WEEK``, ``DAY``, ``DAYOFYEAR``, ``HOUR``, ``MINUTE``, ``SECOND``,
-    ``MILLISECOND``, ``MICROSECOND``. ::
+    ``MILLISECOND``, ``MICROSECOND``. Units shorter than a day add a fixed number of
+    microseconds. Longer units move the local date-time in the session time zone and
+    must amount to an int number of days or months. Throws exception if the result
+    overflows the bigint microseconds since epoch. ::
 
         SELECT timestampadd(YEAR, 1, '2030-02-28 10:00:00.500'); -- 2031-02-28 10:00:00.500
         SELECT timestampadd(DAY, 1, '2020-02-29 10:00:00.500'); -- 2020-03-01 10:00:00.500
         SELECT timestampadd(DAYOFYEAR, 1, '2020-02-29 10:00:00.500'); -- 2020-03-01 10:00:00.500
         SELECT timestampadd(SECOND, 10, '2019-03-01 10:00:00.500'); -- 2019-03-01 10:00:10.500
         SELECT timestampadd(MICROSECOND, 500, '2019-02-28 10:01:00.500999'); -- 2019-02-28 10:01:00.501499
+        SELECT timestampadd(SECOND, 3000000000, '2000-01-01 00:00:00'); -- 2095-01-24 05:20:00
+        SELECT timestampadd(DAY, 2147483648, '2000-01-01 00:00:00'); -- error: overflow
 
 .. spark:function:: timestampadd(unit, value, timestamp_utc) -> timestamp_utc
 
