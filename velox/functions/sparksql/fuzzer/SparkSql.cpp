@@ -460,21 +460,27 @@ std::string toSizeSql(const core::CallTypedExpr& call) {
 }
 
 // Spark supports the legacy behavior of negative indices with a config only.
+// The legacy behavior inserts at a negative position one element further left,
+// e.g. before the last element for -1 rather than after it, which is the
+// default behavior for the position minus 1.
 std::string toArrayInsertSql(const core::CallTypedExpr& call) {
   const auto& inputs = call.inputs();
   if (inputs.size() != 4) {
     VELOX_UNSUPPORTED("Expected four arguments for array_insert");
   }
   const auto legacyNegativeIndex = toConstantValue(inputs[3]);
-  if (!legacyNegativeIndex.has_value() ||
-      legacyNegativeIndex->value<TypeKind::BOOLEAN>()) {
+  if (!legacyNegativeIndex.has_value()) {
     VELOX_UNSUPPORTED(
-        "Spark SQL only supports array_insert with legacyNegativeIndex false");
+        "Spark SQL requires a constant legacyNegativeIndex for array_insert");
+  }
+  auto position = toSparkSql(inputs[1]);
+  if (legacyNegativeIndex->value<TypeKind::BOOLEAN>()) {
+    position = fmt::format("IF(({0} < 0), ({0} - 1), {0})", position);
   }
   return fmt::format(
       "array_insert({}, {}, {})",
       toSparkSql(inputs[0]),
-      toSparkSql(inputs[1]),
+      position,
       toSparkSql(inputs[2]));
 }
 

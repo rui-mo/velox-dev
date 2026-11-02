@@ -371,9 +371,12 @@ TEST_F(SparkSqlTest, functions) {
       "IF(arr IS NULL, CAST(NULL AS INT), size(arr))");
   EXPECT_EQ(
       toSql("array_insert(arr, 1, c0, false)"), "array_insert(arr, 1, c0)");
+  EXPECT_EQ(
+      toSql("array_insert(arr, c1, c0, true)"),
+      "array_insert(arr, IF((c1 < 0), (c1 - 1), c1), c0)");
   VELOX_ASSERT_UNSUPPORTED_THROW(
-      toSql("array_insert(arr, 1, c0, true)"),
-      "Spark SQL only supports array_insert with legacyNegativeIndex false");
+      toSql("array_insert(arr, 1, c0, b)"),
+      "Spark SQL requires a constant legacyNegativeIndex for array_insert");
 
   EXPECT_EQ(toSql("ltrim(s)"), "ltrim(s)");
   EXPECT_EQ(toSql("trim('x', s)"), "TRIM(BOTH 'x' FROM s)");
