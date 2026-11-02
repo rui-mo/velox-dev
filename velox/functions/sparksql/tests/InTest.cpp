@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-#include "velox/functions/sparksql/tests/SparkFunctionBaseTest.h"
-
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 #include "velox/expression/VectorFunction.h"
+#include "velox/functions/sparksql/tests/SparkFunctionBaseTest.h"
 
 #include <stdint.h>
 
@@ -251,6 +251,28 @@ TEST_F(InTest, const) {
   EXPECT_EQ(eval("5 in (1, 2)"), false);
   EXPECT_EQ(eval("1 in (1, 2)"), true);
   EXPECT_EQ(eval("1 in (1, 2)"), true);
+}
+
+TEST_F(InTest, nonConstantList) {
+  const auto data = makeRowVector({
+      makeNullableFlatVector<int64_t>({1, 2, std::nullopt}),
+      makeArrayVector<int64_t>({{1}, {3}, {}}),
+  });
+  const auto inExpr = [](const core::TypedExprPtr& list) {
+    return std::make_shared<core::CallTypedExpr>(
+        BOOLEAN(),
+        std::vector<core::TypedExprPtr>{
+            std::make_shared<core::FieldAccessTypedExpr>(BIGINT(), "c0"), list},
+        "in");
+  };
+
+  VELOX_ASSERT_USER_THROW(
+      evaluate(
+          inExpr(
+              std::make_shared<core::FieldAccessTypedExpr>(
+                  ARRAY(BIGINT()), "c1")),
+          data),
+      "IN requires a constant list.");
 }
 
 /// Test IN applied to first argument that is dictionary encoded, but has the

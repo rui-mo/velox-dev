@@ -118,9 +118,7 @@ struct InFunctionOuter {
         const core::QueryConfig& /*config*/,
         const arg_type<TInput>* /*searchTerm*/,
         const arg_type<velox::Array<TInput>>* searchElements) {
-      if (searchElements == nullptr) {
-        return;
-      }
+      VELOX_USER_CHECK_NOT_NULL(searchElements, "IN requires a constant list.");
 
       elements_.reserve(searchElements->size());
 
@@ -159,8 +157,11 @@ struct InFunctionOuter {
 
 template <typename T>
 void registerInFn(const std::string& prefix) {
-  registerFunction<InFunctionOuter<T>::template Inner, bool, T, Array<T>>(
-      {prefix + "in"});
+  registerFunction<
+      InFunctionOuter<T>::template Inner,
+      bool,
+      T,
+      Constant<Array<T>>>({prefix + "in"});
 }
 
 } // namespace
