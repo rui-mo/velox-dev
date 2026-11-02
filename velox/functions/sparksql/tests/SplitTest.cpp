@@ -274,6 +274,31 @@ TEST_F(SplitTest, regexDelimiter) {
   testSplit(input, "🙂", -1, numRows, expected);
 }
 
+// Follows java.util.regex.Pattern.split. A zero-width match at the beginning of
+// the input is skipped, an empty match right after a non-empty match is kept,
+// and once limit - 1 elements are added, the next match adds the rest of the
+// input as the last element.
+TEST_F(SplitTest, regexDelimiterLikeJava) {
+  testSplit({"aab"}, "a*", std::nullopt, 1, {{"", "", "b", ""}});
+  testSplit({"aab"}, "a*", 3, 1, {{"", "", "b"}});
+  testSplit({"a日b"}, "b*", std::nullopt, 1, {{"a", "日", "", ""}});
+  testSplit({"a日b"}, "^", std::nullopt, 1, {{"a日b"}});
+  testSplit({"a日b"}, "$", std::nullopt, 1, {{"a日b", ""}});
+  testSplit({"ab"}, "^a", std::nullopt, 1, {{"", "b"}});
+  testSplit({"ab"}, "a|b", std::nullopt, 1, {{"", "", ""}});
+  testSplit({",a,"}, "a*", 2, 1, {{",", ","}});
+  testSplit({"xyz"}, "x*", 3, 1, {{"", "", "yz"}});
+  testSplit({"abc"}, "x*", 2, 1, {{"a", "bc"}});
+  testSplit({"abc"}, "b+", 1, 1, {{"abc"}});
+  testSplit({""}, "a*", std::nullopt, 1, {{""}});
+
+  // An invalid pattern throws even if limit is 1.
+  VELOX_ASSERT_USER_THROW(
+      testSplit({"abc"}, "\\", 1, 1, {{"abc"}}), "invalid regular expression");
+  VELOX_ASSERT_USER_THROW(
+      testSplit({"abc"}, "a\\", 1, 1, {{"abc"}}), "invalid regular expression");
+}
+
 TEST_F(SplitTest, fastPath) {
   auto input = std::vector<std::string>{
       {"I$he$she$they"}, // Simple
