@@ -516,6 +516,20 @@ TEST_F(RegexFunctionsTest, regexpReplacePositionTooLarge) {
   EXPECT_EQ(result2, output);
 }
 
+// Unless position is 1, the input is returned unchanged if position is beyond
+// the last character, even if the pattern matches an empty string at the end.
+TEST_F(RegexFunctionsTest, regexpReplacePositionAtEnd) {
+  EXPECT_EQ(testRegexpReplace("0", "", "-", {2}), "0");
+  EXPECT_EQ(testRegexpReplace("ab", "$", "-", {2}), "ab-");
+  EXPECT_EQ(testRegexpReplace("ab", "$", "-", {3}), "ab");
+  EXPECT_EQ(testRegexpReplace("a日b", "b*", "-", {3}), "a日--");
+  EXPECT_EQ(testRegexpReplace("a日b", "b*", "-", {4}), "a日b");
+  EXPECT_EQ(testRegexpReplace("a日b", "$", "-", {3}), "a日b-");
+  EXPECT_EQ(testRegexpReplace("a日b", "", "-", {5}), "a日b");
+  EXPECT_EQ(testRegexpReplace("", "b*", "-", {1}), "-");
+  EXPECT_EQ(testRegexpReplace("", "b*", "-", {2}), "");
+}
+
 TEST_F(RegexFunctionsTest, regexpReplaceSpecialCharacters) {
   std::string output = "abca";
   auto result = testRegexpReplace("a.b.c.a", "\\.", "");

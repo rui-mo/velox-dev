@@ -173,7 +173,7 @@ class JavaReplacement {
 // after that position in the string (1 indexed).
 //
 // If position <= 0, throw error.
-// If position > length string, return string.
+// If position > 1 and position > length of string, return string.
 template <typename T>
 struct RegexpReplaceFunction {
   RegexpReplaceFunction() : cache_(0) {}
@@ -233,17 +233,7 @@ struct RegexpReplaceFunction {
       const arg_type<Varchar>& pattern,
       const arg_type<Varchar>& replacement,
       const arg_type<int32_t>& position) {
-    if (performChecks(
-            result, stringInput, pattern, replacement, position - 1)) {
-      return;
-    }
-    size_t start = functions::stringImpl::cappedByteLength<false>(
-        stringInput, position - 1);
-    if (start > stringInput.size() + 1) {
-      result = stringInput;
-      return;
-    }
-    performReplace(result, stringInput, pattern, replacement, start);
+    doCall<false>(result, stringInput, pattern, replacement, position);
   }
 
   void callAscii(
@@ -260,32 +250,27 @@ struct RegexpReplaceFunction {
       const arg_type<Varchar>& pattern,
       const arg_type<Varchar>& replacement,
       const arg_type<int32_t>& position) {
-    if (performChecks(
-            result, stringInput, pattern, replacement, position - 1)) {
-      return;
-    }
-    performReplace(result, stringInput, pattern, replacement, position - 1);
+    doCall<true>(result, stringInput, pattern, replacement, position);
   }
 
  private:
-  bool performChecks(
+  template <bool isAscii>
+  void doCall(
       out_type<Varchar>& result,
       const arg_type<Varchar>& stringInput,
       const arg_type<Varchar>& pattern,
-      const arg_type<Varchar>& replace,
+      const arg_type<Varchar>& replacement,
       const arg_type<int32_t>& position) {
-    VELOX_USER_CHECK_GE(
-        position + 1, 1, "regexp_replace requires a position >= 1");
-    if (position > stringInput.size()) {
+    VELOX_USER_CHECK_GE(position, 1, "regexp_replace requires a position >= 1");
+    const size_t start = functions::stringImpl::cappedByteLength<isAscii>(
+        stringInput, position - 1);
+    // Like Spark, returns the input unchanged if position is beyond the last
+    // character, unless position is 1.
+    if (position > 1 && start == stringInput.size()) {
       result = stringInput;
-      return true;
+      return;
     }
-
-    if (stringInput.size() == 0 && pattern.size() == 0 && position == 1) {
-      result = replace;
-      return true;
-    }
-    return false;
+    performReplace(result, stringInput, pattern, replacement, start);
   }
 
   void performReplace(
