@@ -404,6 +404,22 @@ std::shared_ptr<exec::VectorFunction> makeRLike(
   return result;
 }
 
+std::vector<std::shared_ptr<exec::FunctionSignature>> rlikeSignatures() {
+  // varchar|unknown, constant varchar|unknown -> boolean
+  std::vector<std::shared_ptr<exec::FunctionSignature>> signatures;
+  for (const auto* input : {"varchar", "unknown"}) {
+    for (const auto* pattern : {"varchar", "unknown"}) {
+      signatures.push_back(
+          exec::FunctionSignatureBuilder()
+              .returnType("boolean")
+              .argumentType(input)
+              .constantArgumentType(pattern)
+              .build());
+    }
+  }
+  return signatures;
+}
+
 std::shared_ptr<exec::VectorFunction> makeRegexExtract(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
@@ -420,6 +436,28 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
       /*checkGroupIdOnMatch=*/true);
   ensureRegexIsConstant("REGEXP_EXTRACT", inputArgs[1].constantValue);
   return result;
+}
+
+std::vector<std::shared_ptr<exec::FunctionSignature>>
+regexpExtractSignatures() {
+  // varchar, constant varchar -> varchar
+  // varchar, constant varchar, integer|bigint -> varchar
+  std::vector<std::shared_ptr<exec::FunctionSignature>> signatures{
+      exec::FunctionSignatureBuilder()
+          .returnType("varchar")
+          .argumentType("varchar")
+          .constantArgumentType("varchar")
+          .build()};
+  for (const auto* groupId : {"bigint", "integer"}) {
+    signatures.push_back(
+        exec::FunctionSignatureBuilder()
+            .returnType("varchar")
+            .argumentType("varchar")
+            .constantArgumentType("varchar")
+            .argumentType(groupId)
+            .build());
+  }
+  return signatures;
 }
 
 std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(

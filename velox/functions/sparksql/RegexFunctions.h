@@ -55,6 +55,9 @@ std::shared_ptr<exec::VectorFunction> makeRLike(
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config);
 
+/// Same as re2SearchSignatures(), but with a constant pattern.
+std::vector<std::shared_ptr<exec::FunctionSignature>> rlikeSignatures();
+
 /// Returns an empty string if the pattern does not match the string, and
 /// throws for an out-of-range group id only if it does. The group id defaults
 /// to 1.
@@ -62,6 +65,9 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtract(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config);
+
+/// Same as re2ExtractSignatures(), but with a constant pattern.
+std::vector<std::shared_ptr<exec::FunctionSignature>> regexpExtractSignatures();
 
 /// Returns empty strings for matches in which the group does not participate,
 /// and throws for an out-of-range group id only if the pattern matches the

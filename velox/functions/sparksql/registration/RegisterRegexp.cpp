@@ -21,13 +21,13 @@ namespace facebook::velox::functions::sparksql {
 
 void registerRegexpFunctions(const std::string& prefix) {
   exec::registerStatefulVectorFunction(
-      prefix + "regexp_extract", re2ExtractSignatures(), makeRegexExtract);
+      prefix + "regexp_extract", regexpExtractSignatures(), makeRegexExtract);
   exec::registerStatefulVectorFunction(
       prefix + "regexp_extract_all",
       re2ExtractAllSignatures(),
       makeRegexExtractAll);
   exec::registerStatefulVectorFunction(
-      prefix + "rlike", re2SearchSignatures(), makeRLike);
+      prefix + "rlike", rlikeSignatures(), makeRLike);
   exec::registerStatefulVectorFunction(
       prefix + "like", likeSignatures(), makeLike);
   registerRegexpReplace(prefix);
