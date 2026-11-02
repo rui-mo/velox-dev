@@ -225,11 +225,21 @@ def parse_log(text):
     tail_text = "\n".join(strip_prefix(line) for line in tail)
 
     expressions = []
+    num_generated = None
     for line in tail:
-        match = re.search(r"Executing expression \d+ : (.*)$", line)
-        if match and match.group(1) != '"row_number"':
-            expressions.append(match.group(1))
+        match = re.search(r"Executing expression (\d+) : (.*)$", line)
+        if not match:
+            continue
+        # The iteration first executes the expressions it generated, then e.g.
+        # retries them with try().
+        if match.group(1) == "0" and expressions and num_generated is None:
+            num_generated = len(expressions)
+        if match.group(2) != '"row_number"':
+            expressions.append(match.group(2))
     result["expressions"] = expressions
+    result["num_generated"] = (
+        len(expressions) if num_generated is None else num_generated
+    )
 
     reasons = re.findall(r"^Reason: (.*)$", tail_text, flags=re.MULTILINE)
     result["reason"] = reasons[0] if reasons else ""
@@ -295,6 +305,8 @@ def normalize_reason(reason):
 
 def failure_key(result):
     """Returns the normalized cause of a failure to group failures by."""
+    if result["category"] == "not_reproduced":
+        return "The build generates other expressions for the iteration seed."
     error = result.get("spark_error")
     if not error:
         return normalize_reason(result.get("reason", ""))
@@ -414,6 +426,23 @@ def read_results(path):
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def run_result(run_dir, iteration_seed):
+    """Returns the result of the run that failed at the iteration with
+    'iteration_seed'."""
+    for result in read_results(Path(run_dir) / "results.jsonl"):
+        if result.get("iteration_seed") == iteration_seed:
+            return result
+    return None
+
+
+def same_expressions(old, new):
+    """Returns whether a rerun of an iteration generated the expressions of the
+    original run. Builds with other candidate functions or argument generators
+    generate other expressions for the same iteration seed."""
+    n = new.get("num_generated", 0)
+    return old.get("expressions", [])[:n] == new.get("expressions", [])[:n]
+
+
 def latest_run_dirs():
     runs = HOME / "runs"
     dirs = sorted(d for d in runs.iterdir() if d.is_dir()) if runs.exists() else []
@@ -426,12 +455,16 @@ def summarize(paths, examples=3):
         results += read_results(path)
     passed = [r for r in results if r["category"] == "pass"]
     failures = [r for r in results if r["category"] != "pass"]
+    not_reproduced = [r for r in failures if r["category"] == "not_reproduced"]
     total = sum(r["stats"].get("total", 0) for r in results)
     verified = sum(r["stats"].get("verified", 0) for r in results)
     unsupported = sum(r["stats"].get("unsupported", 0) for r in results)
     suppressed = sum(r["stats"].get("suppressed", 0) for r in results)
+    counts = f"{len(passed)} passed, {len(failures) - len(not_reproduced)} failed"
+    if not_reproduced:
+        counts += f", {len(not_reproduced)} not reproduced"
     log(
-        f"\n{len(results)} runs, {len(passed)} passed, {len(failures)} failed. "
+        f"\n{len(results)} runs, {counts}. "
         f"Test cases of passed runs: {total} total, {verified} verified, "
         f"{unsupported} unsupported. Spark errors that Velox suppressed: "
         f"{suppressed}."
@@ -537,12 +570,19 @@ def cmd_repro(args, extra_flags):
         log(f"Reason: {result['reason']}")
     if result.get("diff"):
         log(f"Diff:\n{result['diff']}")
+    old = run_result(args.run_dir, args.seed) if args.run_dir else None
+    if old and not same_expressions(old, result):
+        log(
+            "Warning: The build generates other expressions for this seed than "
+            "the run, so this doesn't reproduce the failure of the run."
+        )
 
 
 def cmd_recheck(args, extra_flags):
     """Reruns the failed iterations of runs, by default with the current build,
     e.g. to find the failures that a fix resolved."""
     still_failing = 0
+    not_reproduced = 0
     total = 0
     # Copies of the current fuzzers, so rebuilding Velox during the recheck
     # doesn't change them.
@@ -558,14 +598,24 @@ def cmd_recheck(args, extra_flags):
                     sys.exit(f"{source} doesn't exist. Build it first.")
                 snapshots[fuzzer] = snapshot_dir / source.name
                 shutil.copy2(source, snapshots[fuzzer])
-            total_run, failing_run = recheck_run(
+            total_run, failing_run, not_reproduced_run = recheck_run(
                 args, run_dir, snapshots.get(fuzzer), extra_flags
             )
             total += total_run
             still_failing += failing_run
+            not_reproduced += not_reproduced_run
     finally:
         shutil.rmtree(snapshot_dir, ignore_errors=True)
-    log(f"\n{total} failures rechecked, {still_failing} still fail.")
+    log(
+        f"\n{total} failures rechecked, {still_failing} still fail, "
+        f"{not_reproduced} not reproduced."
+    )
+    if not_reproduced:
+        log(
+            "The build generates other expressions for the iteration seeds of "
+            "the failures that are not reproduced, e.g. because it has other "
+            "candidate functions. Check them with 'sql' and unit tests."
+        )
     log("Run 'summary --rechecked' to group the remaining failures.")
 
 
@@ -578,6 +628,7 @@ def recheck_run(args, run_dir, binary, extra_flags):
     log(f"Rechecking {len(failures)} failures of {run_dir}.")
     rechecked = []
     still_failing = 0
+    not_reproduced = 0
     for old in failures:
         seed = old["iteration_seed"]
         repro_args = argparse.Namespace(
@@ -594,9 +645,14 @@ def recheck_run(args, run_dir, binary, extra_flags):
         new = run_iteration(
             repro_args, seed, extra_flags, HOME / "repro" / f"{seed}.log"
         )
+        if not same_expressions(old, new):
+            # Keeps the failure of the run to reproduce it otherwise.
+            new = dict(old, category="not_reproduced", recheck_log=new["log"])
         new.update({"seed": old["seed"], "old_category": old["category"]})
         rechecked.append(new)
-        if new["category"] != "pass":
+        if new["category"] == "not_reproduced":
+            not_reproduced += 1
+        elif new["category"] != "pass":
             still_failing += 1
         log(
             f"  iteration seed {seed} (run seed {old['seed']}): "
@@ -606,7 +662,7 @@ def recheck_run(args, run_dir, binary, extra_flags):
     with open(run_dir / "recheck.jsonl", "w") as f:
         for result in rechecked:
             f.write(json.dumps(result) + "\n")
-    return len(failures), still_failing
+    return len(failures), still_failing, not_reproduced
 
 
 def cmd_sql(args, _):

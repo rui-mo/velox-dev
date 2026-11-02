@@ -137,6 +137,13 @@ scripts/spark-fuzzer/spark_fuzzer.py recheck runs/<run>
 scripts/spark-fuzzer/spark_fuzzer.py summary runs/<run> --rechecked
 ```
 
+An iteration seed reproduces a failure only with the candidate functions and
+argument generators of the run. A build that changes them, e.g. by skipping a
+function, generates other expressions for the seed. Then `repro
+--current-build` prints a warning and `recheck` reports the failure as
+`not_reproduced`. Check such failures with `spark_fuzzer.py sql` and unit
+tests instead.
+
 The fuzzer logs the Spark query of each failure. To find the cause of a
 mismatch, simplify the query with `spark_fuzzer.py sql` and compare it with
 Velox in a unit test, e.g. in `velox/functions/sparksql/tests`. Not every
