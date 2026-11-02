@@ -17,7 +17,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "velox/core/Expressions.h"
@@ -327,6 +329,102 @@ TEST(ArgValuesGeneratorsTest, arrayInsert) {
   EXPECT_LT(numMixedSigns, 30);
   EXPECT_TRUE(hasFarPosition);
   EXPECT_EQ(legacyNegativeIndices.size(), 2);
+}
+
+TEST(ArgValuesGeneratorsTest, timestampAddDiff) {
+  VectorFuzzer::Options options;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  TimestampAddDiffArgValuesGenerator generator;
+  // Average length of each unit in days.
+  const std::unordered_map<std::string, double> kDaysPerUnit{
+      {"microsecond", 1.0 / 86'400'000'000},
+      {"millisecond", 1.0 / 86'400'000},
+      {"second", 1.0 / 86'400},
+      {"minute", 1.0 / 1'440},
+      {"hour", 1.0 / 24},
+      {"day", 1},
+      {"dayofyear", 1},
+      {"week", 7},
+      {"month", 365.25 / 12},
+      {"quarter", 365.25 / 4},
+      {"year", 365.25}};
+
+  for (const auto& signature : std::vector<CallableSignature>{
+           {.name = "timestampadd",
+            .args = {VARCHAR(), INTEGER(), TIMESTAMP()},
+            .returnType = TIMESTAMP(),
+            .constantArgs = {true, false, false}},
+           {.name = "timestampadd",
+            .args = {VARCHAR(), BIGINT(), TIMESTAMP()},
+            .returnType = TIMESTAMP(),
+            .constantArgs = {true, false, false}},
+           {.name = "timestampdiff",
+            .args = {VARCHAR(), TIMESTAMP(), TIMESTAMP()},
+            .returnType = BIGINT(),
+            .constantArgs = {true, false, false}}}) {
+    SCOPED_TRACE(signature.toString());
+    const bool isAdd = signature.name == "timestampadd";
+    std::unordered_set<std::string> units;
+    bool hasUpperCase = false;
+    int32_t numRandomQuantities = 0;
+    for (auto i = 0; i < 200; ++i) {
+      state.reset();
+      const auto inputs = generator.generate(signature, options, rng, state);
+
+      // The unit is a constant, and the fuzzer generates the timestamps.
+      ASSERT_EQ(inputs.size(), 3);
+      EXPECT_EQ(inputs[2], nullptr);
+      const auto unitInput =
+          std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[0]);
+      ASSERT_NE(unitInput, nullptr);
+      ASSERT_FALSE(unitInput->isNull());
+      const auto& unitString = unitInput->value().value<TypeKind::VARCHAR>();
+      std::string unit;
+      for (const auto c : unitString) {
+        hasUpperCase |= std::isupper(c) != 0;
+        unit.push_back(static_cast<char>(std::tolower(c)));
+      }
+      ASSERT_TRUE(kDaysPerUnit.contains(unit)) << unitString;
+      units.insert(unit);
+      if (!isAdd) {
+        EXPECT_EQ(inputs[1], nullptr);
+        continue;
+      }
+      if (inputs[1] == nullptr) {
+        ++numRandomQuantities;
+        continue;
+      }
+
+      // Quantities move the fuzzed timestamps by up to about 200 years, which
+      // keeps results in range.
+      const auto quantity =
+          std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+              inputs[1]);
+      ASSERT_NE(quantity, nullptr);
+      ASSERT_EQ(state.inputRowNames_.size(), 1);
+      EXPECT_EQ(quantity->name(), state.inputRowNames_[0]);
+      ASSERT_EQ(*state.inputRowTypes_[0], *signature.args[1]);
+      ASSERT_EQ(state.customInputGenerators_.size(), 1);
+      ASSERT_NE(state.customInputGenerators_[0], nullptr);
+      for (auto j = 0; j < 20; ++j) {
+        const auto value = state.customInputGenerators_[0]->generate();
+        const double days = kDaysPerUnit.at(unit) *
+            (signature.args[1]->kind() == TypeKind::INTEGER
+                 ? value.value<int32_t>()
+                 : value.value<int64_t>());
+        EXPECT_LE(std::abs(days), 200 * 365.25) << unitString;
+      }
+    }
+    EXPECT_EQ(units.contains("dayofyear"), isAdd);
+    EXPECT_EQ(units.size(), isAdd ? 11 : 10);
+    EXPECT_TRUE(hasUpperCase);
+    if (isAdd) {
+      // Random quantities test overflows.
+      EXPECT_GT(numRandomQuantities, 0);
+      EXPECT_LT(numRandomQuantities, 50);
+    }
+  }
 }
 
 TEST(ArgValuesGeneratorsTest, regexp) {

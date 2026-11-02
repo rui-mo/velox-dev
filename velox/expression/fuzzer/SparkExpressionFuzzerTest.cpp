@@ -87,6 +87,7 @@ using facebook::velox::fuzzer::PadArgValuesGenerator;
 using facebook::velox::fuzzer::RegexpArgValuesGenerator;
 using facebook::velox::fuzzer::RepeatArgValuesGenerator;
 using facebook::velox::fuzzer::RoundArgValuesGenerator;
+using facebook::velox::fuzzer::TimestampAddDiffArgValuesGenerator;
 
 namespace {
 
@@ -218,6 +219,10 @@ int main(int argc, char** argv) {
           {"round", std::make_shared<RoundArgValuesGenerator>()},
           {"rpad", std::make_shared<PadArgValuesGenerator>()},
           {"split", std::make_shared<RegexpArgValuesGenerator>()},
+          {"timestampadd",
+           std::make_shared<TimestampAddDiffArgValuesGenerator>()},
+          {"timestampdiff",
+           std::make_shared<TimestampAddDiffArgValuesGenerator>()},
           {"try_make_timestamp",
            std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"try_make_timestamp_ntz",
