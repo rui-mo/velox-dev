@@ -18,8 +18,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <unordered_set>
 
 #include "velox/core/Expressions.h"
+#include "velox/core/QueryConfig.h"
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
 
 namespace facebook::velox::fuzzer::test {
@@ -262,6 +264,86 @@ TEST(ArgValuesGeneratorsTest, repeat) {
   }
   EXPECT_TRUE(hasNonPositiveCount);
   EXPECT_TRUE(hasLargeCount);
+}
+
+TEST(ArgValuesGeneratorsTest, regexp) {
+  VectorFuzzer::Options options;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  RegexpArgValuesGenerator generator;
+  const auto maxCompiledRegexes =
+      core::QueryConfig({}).exprMaxCompiledRegexes();
+
+  for (const auto& [name, args] :
+       std::vector<std::pair<std::string, std::vector<TypePtr>>>{
+           {"rlike", {VARCHAR(), VARCHAR()}},
+           {"regexp_extract", {VARCHAR(), VARCHAR(), INTEGER()}},
+           {"regexp_extract_all", {VARCHAR(), VARCHAR(), BIGINT()}},
+           {"regexp_instr", {VARCHAR(), VARCHAR()}},
+           {"regexp_replace", {VARCHAR(), VARCHAR(), VARCHAR(), INTEGER()}},
+           {"split", {VARCHAR(), VARCHAR(), INTEGER()}},
+       }) {
+    const CallableSignature signature{
+        .name = name,
+        .args = args,
+        .returnType = VARCHAR(),
+        .constantArgs = std::vector<bool>(args.size(), false),
+    };
+    // Velox requires constant patterns for rlike and regexp_extract.
+    const bool constantPattern = name == "rlike" || name == "regexp_extract";
+    bool hasColumnPattern = false;
+    for (auto i = 0; i < 100; ++i) {
+      state.reset();
+      const auto inputs = generator.generate(signature, options, rng, state);
+
+      // The fuzzer may generate the string to match, but no other argument.
+      ASSERT_EQ(inputs.size(), args.size());
+      for (auto j = 1; j < args.size(); ++j) {
+        ASSERT_NE(inputs[j], nullptr);
+      }
+
+      const auto pattern =
+          std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+              inputs[1]);
+      if (pattern == nullptr) {
+        EXPECT_NE(
+            std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[1]),
+            nullptr);
+      } else {
+        EXPECT_FALSE(constantPattern) << name;
+        hasColumnPattern = true;
+
+        // Velox throws if a function compiles more patterns than the limit.
+        const auto column = std::find(
+            state.inputRowNames_.begin(),
+            state.inputRowNames_.end(),
+            pattern->name());
+        ASSERT_NE(column, state.inputRowNames_.end());
+        const auto& patternGenerator =
+            state.customInputGenerators_[column - state.inputRowNames_.begin()];
+        ASSERT_NE(patternGenerator, nullptr);
+        std::unordered_set<std::string> patterns;
+        for (auto j = 0; j < 1'000; ++j) {
+          const auto value = patternGenerator->generate();
+          if (!value.isNull()) {
+            patterns.insert(value.value<std::string>());
+          }
+        }
+        EXPECT_LT(patterns.size(), maxCompiledRegexes);
+      }
+
+      if (name == "regexp_replace") {
+        // Spark requires the position to be a constant that is null or >= 1.
+        const auto position =
+            std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[3]);
+        ASSERT_NE(position, nullptr);
+        if (!position->value().isNull()) {
+          EXPECT_GE(position->value().value<int32_t>(), 1);
+        }
+      }
+    }
+    EXPECT_EQ(hasColumnPattern, !constantPattern) << name;
+  }
 }
 
 } // namespace
