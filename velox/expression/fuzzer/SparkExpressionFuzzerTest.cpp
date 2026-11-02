@@ -102,6 +102,12 @@ std::unordered_set<std::string> sparkSkippedFunctions() {
       // its generated code returns null, as Velox does. SparkQueryRunner
       // evaluates expressions without generated code.
       "levenshtein(varchar,varchar,integer) -> integer",
+      // Signatures that Spark doesn't have. Spark's element_at requires an
+      // integer index for arrays, its array_intersect requires two arrays and
+      // its array_position has no start position.
+      "element_at(array(T),bigint) -> T",
+      "array_intersect(array(array(T))) -> array(T)",
+      "array_position(array(T),T,bigint) -> bigint",
   };
   for (const auto& [name, _] : facebook::velox::getFunctionSignatures()) {
     if (!isSupportedFunction(name)) {
