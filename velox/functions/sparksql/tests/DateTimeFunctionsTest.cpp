@@ -16,6 +16,7 @@
 
 #include <folly/ScopeGuard.h>
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/functions/FunctionRegistry.h"
 #include "velox/functions/sparksql/tests/SparkFunctionBaseTest.h"
 #include "velox/type/Timestamp.h"
 #include "velox/type/tz/TimeZoneMap.h"
@@ -2102,6 +2103,17 @@ TEST_F(DateTimeFunctionsTest, timestampadd) {
   EXPECT_EQ(
       parseTimestamp("1968-02-28 12:00:00"),
       timestampadd("year", -1, parseTimestamp("1969-02-28 12:00:00")));
+}
+
+TEST_F(DateTimeFunctionsTest, constantTimestampUnits) {
+  for (const auto* name : {"timestampadd", "timestampdiff"}) {
+    const auto signatures = getFunctionSignatures(name);
+    ASSERT_FALSE(signatures.empty()) << name;
+    for (const auto* signature : signatures) {
+      EXPECT_TRUE(signature->constantArguments().at(0))
+          << name << ": " << signature->toString();
+    }
+  }
 }
 
 TEST_F(DateTimeFunctionsTest, timestampAddTimestampUtc) {
