@@ -229,31 +229,31 @@ void registerDatetimeFunctions(const std::string& prefix) {
   registerFunction<
       TimestampDiffFunction,
       int64_t,
-      Varchar,
+      Constant<Varchar>,
       Timestamp,
       Timestamp>({prefix + "timestampdiff"});
   registerFunction<
       ParameterBinder<TimestampAddFunction, Timestamp>,
       Timestamp,
-      Varchar,
+      Constant<Varchar>,
       int32_t,
       Timestamp>({prefix + "timestampadd"});
   registerFunction<
       ParameterBinder<TimestampAddFunction, Timestamp>,
       Timestamp,
-      Varchar,
+      Constant<Varchar>,
       int64_t,
       Timestamp>({prefix + "timestampadd"});
   registerFunction<
       ParameterBinder<TimestampAddFunction, TimestampUtc>,
       TimestampUtc,
-      Varchar,
+      Constant<Varchar>,
       int32_t,
       TimestampUtc>({prefix + "timestampadd"});
   registerFunction<
       ParameterBinder<TimestampAddFunction, TimestampUtc>,
       TimestampUtc,
-      Varchar,
+      Constant<Varchar>,
       int64_t,
       TimestampUtc>({prefix + "timestampadd"});
   registerFunction<MonthsBetweenFunction, double, Timestamp, Timestamp, bool>(
