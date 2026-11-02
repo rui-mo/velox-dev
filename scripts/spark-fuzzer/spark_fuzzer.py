@@ -373,6 +373,11 @@ def cmd_run(args, extra_flags):
                 timed_out = True
                 os.killpg(process.pid, signal.SIGKILL)
                 returncode = process.wait()
+            except BaseException:
+                # The fuzzer runs in its own session, so Ctrl-C doesn't reach it.
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                raise
         result = parse_log(log_path.read_text(errors="replace"))
         result.update(
             {
@@ -756,6 +761,9 @@ def main():
     sql.set_defaults(handler=cmd_sql)
 
     args = parser.parse_args(argv)
+    # Exit on SIGTERM like on Ctrl-C, so that the fuzzers are stopped and the
+    # temporary files are removed.
+    signal.signal(signal.SIGTERM, lambda signum, _: sys.exit(128 + signum))
     args.handler(args, extra_flags)
 
 
