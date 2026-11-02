@@ -774,6 +774,19 @@ TEST_F(RegexFunctionsTest, regexpReplacePreprocess) {
   EXPECT_EQ(testRegexpReplace("[{}]", "\\}\\]", "\\}"), "[{}");
 }
 
+// Spark follows java.util.regex.Matcher semantics: an empty match right after
+// a non-empty match is replaced, and the search resumes one character after an
+// empty match.
+TEST_F(RegexFunctionsTest, regexpReplaceEmptyMatch) {
+  EXPECT_EQ(testRegexpReplace("abc", "b*", "-"), "-a--c-");
+  EXPECT_EQ(testRegexpReplace("aab", "a*", "-"), "--b-");
+  EXPECT_EQ(testRegexpReplace("ab", "a|", "-"), "--b-");
+  EXPECT_EQ(testRegexpReplace("abab", "(ab)*", "x"), "xx");
+  EXPECT_EQ(testRegexpReplace("abc", "b*", "-", 2), "a--c-");
+  EXPECT_EQ(testRegexpReplace("a日b", "[a-c]*", "<$0>"), "<a><>日<b><>");
+  EXPECT_EQ(testRegexpReplace("", "b*", "-"), "-");
+}
+
 TEST_F(RegexFunctionsTest, regexpInstrBasic) {
   // Basic match at start.
   EXPECT_EQ(regexpInstr("hello world", "world"), 7);

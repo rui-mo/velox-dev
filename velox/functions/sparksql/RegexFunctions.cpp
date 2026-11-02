@@ -16,6 +16,7 @@
 #include <folly/container/F14Map.h>
 #include <limits>
 #include "velox/functions/lib/Re2Functions.h"
+#include "velox/functions/lib/Utf8Utils.h"
 #include "velox/functions/lib/string/StringImpl.h"
 
 namespace facebook::velox::functions::sparksql {
@@ -165,12 +166,60 @@ struct RegexpReplaceFunction {
         ? constantReplacement_.value()
         : prepareRegexpReplaceReplacement(re, replace);
 
-    std::string prefix(stringInput.data(), position);
-    std::string targetString(
-        stringInput.data() + position, stringInput.size() - position);
+    // Like RE2::GlobalReplace, keeps the input unchanged if the replacement
+    // refers to a missing group.
+    const int numSubmatches = 1 + RE2::MaxSubmatch(processedReplacement);
+    if (numSubmatches > 1 + re.NumberOfCapturingGroups()) {
+      result = stringInput;
+      return;
+    }
 
-    RE2::GlobalReplace(&targetString, re, processedReplacement);
-    result = prefix + targetString;
+    // Spark searches from 'position' as if the input started there, so '^'
+    // matches at 'position'.
+    const re2::StringPiece text(
+        stringInput.data() + position, stringInput.size() - position);
+    submatches_.resize(numSubmatches);
+    result.append(std::string_view(stringInput.data(), position));
+
+    // Unlike RE2::GlobalReplace, java.util.regex.Matcher allows an empty match
+    // right after a non-empty match, e.g. regexp_replace('abc', 'b*', '-')
+    // returns '-a--c-'. After an empty match, the search resumes one character
+    // later.
+    size_t searchPosition = 0;
+    size_t appendPosition = 0;
+    while (searchPosition <= text.size() &&
+           re.Match(
+               text,
+               searchPosition,
+               text.size(),
+               RE2::UNANCHORED,
+               submatches_.data(),
+               numSubmatches)) {
+      const size_t matchStart = submatches_[0].data() - text.data();
+      const size_t matchEnd = matchStart + submatches_[0].size();
+      result.append(
+          std::string_view(
+              text.data() + appendPosition, matchStart - appendPosition));
+      rewritten_.clear();
+      re.Rewrite(
+          &rewritten_, processedReplacement, submatches_.data(), numSubmatches);
+      result.append(rewritten_);
+      appendPosition = matchEnd;
+      if (matchStart != matchEnd) {
+        searchPosition = matchEnd;
+      } else if (matchEnd < text.size()) {
+        int32_t codePoint;
+        const auto charLength = tryGetUtf8CharLength(
+            text.data() + matchEnd, text.size() - matchEnd, codePoint);
+        // An invalid UTF-8 character has a length of -charLength.
+        searchPosition = matchEnd + std::abs(charLength);
+      } else {
+        break;
+      }
+    }
+    result.append(
+        std::string_view(
+            text.data() + appendPosition, text.size() - appendPosition));
   }
 
   RE2& ensurePattern(const arg_type<Varchar>& pattern) {
@@ -189,6 +238,12 @@ struct RegexpReplaceFunction {
 
   // Used when pattern is not constant.
   detail::ReCache cache_;
+
+  // Scratch memory for the submatches of a match.
+  std::vector<re2::StringPiece> submatches_;
+
+  // Scratch memory for the rewritten replacement of a match.
+  std::string rewritten_;
 };
 
 // Calls 'function' with a constant group id of 1 appended to the arguments.
