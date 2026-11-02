@@ -1216,7 +1216,12 @@ struct TimestampAddFunction {
       result = addToTimestamp(local, unit, static_cast<int32_t>(quantity));
       overflow = !inMicrosRange(result);
       if (!overflow && sessionTimeZone_ != nullptr) {
-        toGMTWithGapCorrection(result, *sessionTimeZone_);
+        // Like Java's ZonedDateTime.plusDays(), a local result in a DST
+        // overlap keeps the offset of 'timestamp' if valid.
+        toGMTWithPreferredOffset(
+            result,
+            *sessionTimeZone_,
+            local.getSeconds() - timestamp.getSeconds());
         overflow = !inMicrosRange(result);
       }
     }

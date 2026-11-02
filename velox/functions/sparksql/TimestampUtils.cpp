@@ -25,4 +25,20 @@ void toGMTWithGapCorrection(Timestamp& time, const tz::TimeZone& zone) {
   time.toGMT(zone);
 }
 
+void toGMTWithPreferredOffset(
+    Timestamp& time,
+    const tz::TimeZone& zone,
+    int64_t preferredOffset) {
+  const auto local =
+      zone.correct_nonexistent_time(std::chrono::seconds(time.getSeconds()));
+  // An offset is valid for 'local' if its instant maps back to 'local'.
+  const auto preferred = local - std::chrono::seconds(preferredOffset);
+  if (zone.toLocalChecked(preferred) == local) {
+    time = Timestamp(preferred.count(), time.getNanos());
+    return;
+  }
+  time = Timestamp(local.count(), time.getNanos());
+  time.toGMT(zone);
+}
+
 } // namespace facebook::velox::functions::sparksql

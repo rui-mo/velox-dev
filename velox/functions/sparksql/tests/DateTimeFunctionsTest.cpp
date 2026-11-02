@@ -2138,6 +2138,26 @@ TEST_F(DateTimeFunctionsTest, timestampadd) {
   EXPECT_EQ(
       parseTimestamp("1968-02-28 12:00:00"),
       timestampadd("year", -1, parseTimestamp("1969-02-28 12:00:00")));
+
+  setQueryTimeZone("America/Los_Angeles");
+  // A local result in the repeated hour of 2024-11-03 keeps the offset of the
+  // input: 01:30 PST, or 01:30 PDT.
+  EXPECT_EQ(
+      parseTimestamp("2024-11-03 09:30:00"),
+      timestampadd("day", -1, parseTimestamp("2024-11-04 09:30:00")));
+  EXPECT_EQ(
+      parseTimestamp("2024-11-03 09:30:00"),
+      timestampadd("week", -1, parseTimestamp("2024-11-10 09:30:00")));
+  EXPECT_EQ(
+      parseTimestamp("2024-11-03 09:30:00"),
+      timestampadd("month", 10, parseTimestamp("2024-01-03 09:30:00")));
+  EXPECT_EQ(
+      parseTimestamp("2024-11-03 08:30:00"),
+      timestampadd("day", 1, parseTimestamp("2024-11-02 08:30:00")));
+  // A local result in the skipped hour of 2024-03-10 moves forward an hour.
+  EXPECT_EQ(
+      parseTimestamp("2024-03-10 10:30:00"),
+      timestampadd("day", 1, parseTimestamp("2024-03-09 10:30:00")));
 }
 
 TEST_F(DateTimeFunctionsTest, timestampaddLargeQuantity) {
