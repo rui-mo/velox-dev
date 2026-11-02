@@ -237,6 +237,19 @@ TEST_F(RegexFunctionsTest, regexMatchRegistration) {
   EXPECT_EQ(regexp_extract("abc", "a(.)"), "b");
 }
 
+// The expression fuzzer generates only constant patterns for arguments that
+// the signatures mark constant.
+TEST_F(RegexFunctionsTest, constantPatternSignatures) {
+  for (const auto* name : {"rlike", "regexp_extract"}) {
+    const auto signatures = exec::getVectorFunctionSignatures(name);
+    ASSERT_TRUE(signatures.has_value()) << name;
+    for (const auto& signature : signatures.value()) {
+      EXPECT_TRUE(signature->constantArguments().at(1))
+          << name << ": " << signature->toString();
+    }
+  }
+}
+
 TEST_F(RegexFunctionsTest, regexpExtractDefaultGroupId) {
   // The group id defaults to 1.
   auto data = makeRowVector({
