@@ -1536,6 +1536,12 @@ Spark-specific Configuration
      - false
      - If true, Spark statistical aggregation functions including skewness, kurtosis, stddev, stddev_samp, variance,
        var_samp, covar_samp and corr will return NaN instead of NULL when dividing by zero during expression evaluation.
+   * - spark.legacy_truncate_for_empty_regex_split
+     - bool
+     - false
+     - If true, :spark:func:`split` with an empty delimiter drops the rest of the input when ``limit`` is smaller than
+       the number of characters, e.g. ``split('abc', '', 2)`` returns ``["a", "b"]`` instead of ``["a", "bc"]``. This
+       matches the behavior of Spark before 4.1.
    * - spark.json_ignore_null_fields
      - bool
      - true

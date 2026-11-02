@@ -492,10 +492,12 @@ String Functions
     the result can have any length.
 
     When ``delimiter`` is empty, the input is split into single characters. If ``limit`` is smaller than
-    ``string`` length, only ``limit`` characters are returned. If ``limit`` is not provided or is greater than
-    ``string`` length, all characters are returned without an empty trailing element.
+    ``string`` length, the first ``limit`` - 1 characters are returned followed by the rest of ``string``. If
+    ``limit`` is not provided or is greater than ``string`` length, all characters are returned without an empty
+    trailing element. If ``spark.legacy_truncate_for_empty_regex_split`` is true, only the first ``limit``
+    characters are returned, as in Spark before 4.1.
 
-    This behavior aligns with Spark 3.4+.
+    This behavior aligns with Spark 4.1+.
 
     Note that ``delimiter`` is always interpreted as a regular expression if it contains regex metacharacters.
     An example pitfall is ``split(path, '.')`` splits on any character rather than literal dots.
@@ -511,7 +513,7 @@ String Functions
         SELECT split('one', '1'); -- ["one"]
         SELECT split('aab', 'a*'); -- ["","","b",""]
         SELECT split('abcd', ''); -- ["a","b","c","d"]
-        SELECT split('abcd', '', 3); -- ["a","b","c"]
+        SELECT split('abcd', '', 3); -- ["a","b","cd"]
         SELECT split('abcd', '', 5); -- ["a","b","c","d"]
 
 .. spark:function:: startswith(left, right) -> boolean

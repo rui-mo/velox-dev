@@ -144,6 +144,16 @@ class SparkQueryConfig {
       false,
       "Return NaN instead of NULL for Spark statistical aggregation on divide-by-zero.")
 
+  /// If true, split with an empty delimiter drops the rest of the input when
+  /// limit is smaller than the number of characters, as in Spark before 4.1.
+  VELOX_SPARK_CONFIG(
+      kLegacyTruncateForEmptyRegexSplit,
+      legacyTruncateForEmptyRegexSplit,
+      "legacy_truncate_for_empty_regex_split",
+      bool,
+      false,
+      "Drop the rest of the input in Spark split with an empty delimiter and a limit.")
+
   /// If true, ignore null fields when generating JSON string.
   VELOX_SPARK_CONFIG(
       kJsonIgnoreNullFields,
