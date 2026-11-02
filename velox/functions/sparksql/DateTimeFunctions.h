@@ -1146,13 +1146,15 @@ struct TimestampDiffFunction {
       const arg_type<Varchar>& /*unitString*/,
       const arg_type<Timestamp>& timestamp1,
       const arg_type<Timestamp>& timestamp2) {
-    const auto unit = unit_.value();
-    result = diffTimestamp(
-        unit,
-        timestamp1,
-        timestamp2,
-        sessionTimeZone_,
-        /*respectLastDay=*/false);
+    // Spark compares the local date-times in the session time zone for every
+    // unit, so an hour skipped or repeated by a time zone transition counts.
+    Timestamp from = timestamp1;
+    Timestamp to = timestamp2;
+    if (sessionTimeZone_ != nullptr) {
+      from.toTimezone(*sessionTimeZone_);
+      to.toTimezone(*sessionTimeZone_);
+    }
+    result = diffTimestamp(unit_.value(), from, to, /*respectLastDay=*/false);
   }
 
  private:

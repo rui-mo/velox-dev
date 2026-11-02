@@ -1834,34 +1834,69 @@ TEST_F(DateTimeFunctionsTest, timestampdiff) {
           parseTimestamp("2021-03-14 01:00:00.000"),
           parseTimestamp("2022-03-14 01:00:00.000")));
 
-  /// When adjust_timestamp_to_timezone is on, respect Daylight saving in the
-  /// session time zone.
+  // When adjust_timestamp_to_timezone is on, every unit compares the local
+  // date-times in the session time zone. 2021-03-14 01:00 PST to 2021-03-15
+  // 02:00 PDT is 25 hours, although 24 hours pass.
   setQueryTimeZone("America/Los_Angeles");
 
   EXPECT_EQ(
-      1000 * 60 * 60 * 24,
+      1'000'000LL * 60 * 60 * 25,
+      timestampDiff(
+          "microsecond",
+          parseTimestamp("2021-03-14 09:00:00.000"),
+          parseTimestamp("2021-03-15 09:00:00.000")));
+  EXPECT_EQ(
+      1000 * 60 * 60 * 25,
       timestampDiff(
           "millisecond",
           parseTimestamp("2021-03-14 09:00:00.000"),
           parseTimestamp("2021-03-15 09:00:00.000")));
   EXPECT_EQ(
-      60 * 60 * 24,
+      60 * 60 * 25,
       timestampDiff(
           "second",
           parseTimestamp("2021-03-14 09:00:00.000"),
           parseTimestamp("2021-03-15 09:00:00.000")));
   EXPECT_EQ(
-      60 * 24,
+      60 * 25,
       timestampDiff(
           "minute",
           parseTimestamp("2021-03-14 09:00:00.000"),
           parseTimestamp("2021-03-15 09:00:00.000")));
   EXPECT_EQ(
-      24,
+      25,
       timestampDiff(
           "hour",
           parseTimestamp("2021-03-14 09:00:00.000"),
           parseTimestamp("2021-03-15 09:00:00.000")));
+  EXPECT_EQ(
+      -25,
+      timestampDiff(
+          "hour",
+          parseTimestamp("2021-03-15 09:00:00.000"),
+          parseTimestamp("2021-03-14 09:00:00.000")));
+  // 2024-11-03 00:30 PDT to 01:30 PST is 1 hour, although 2 hours pass.
+  EXPECT_EQ(
+      1,
+      timestampDiff(
+          "hour",
+          parseTimestamp("2024-11-03 07:30:00.000"),
+          parseTimestamp("2024-11-03 09:30:00.000")));
+  // 2024-03-10 01:59:59.999 PST to 03:00 PDT, 1 ms later.
+  EXPECT_EQ(
+      3'600'001,
+      timestampDiff(
+          "millisecond",
+          parseTimestamp("2024-03-10 09:59:59.999"),
+          parseTimestamp("2024-03-10 10:00:00.000")));
+  // Los Angeles used local mean time, 7:52:58 behind UTC, until 1883-11-18
+  // 12:07:02. 1883-11-18 06:00 LMT to 18:00 PST is 12 hours.
+  EXPECT_EQ(
+      60 * 12,
+      timestampDiff(
+          "minute",
+          parseTimestamp("1883-11-18 13:52:58.000"),
+          parseTimestamp("1883-11-19 02:00:00.000")));
   EXPECT_EQ(
       1,
       timestampDiff(
