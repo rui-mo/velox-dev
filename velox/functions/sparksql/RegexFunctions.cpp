@@ -435,7 +435,8 @@ std::shared_ptr<exec::VectorFunction> makeRegexExtractAll(
       inputArgs,
       config,
       /*emptyNoMatch=*/true,
-      /*checkGroupIdOnMatch=*/true);
+      /*checkGroupIdOnMatch=*/true,
+      /*advanceByCharOnEmptyMatch=*/true);
 }
 
 void registerRegexpReplace(const std::string& prefix) {
