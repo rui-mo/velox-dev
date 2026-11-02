@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/functions/FunctionRegistry.h"
 #include "velox/functions/sparksql/tests/SparkFunctionBaseTest.h"
 
 using namespace facebook::velox::test;
@@ -315,6 +316,14 @@ TEST_F(ArrayInsertTest, negativePosLegacy) {
       {"[null, null, null, 1]", "[null, null, 2, 2]", "[null, 3, 3, 3]"});
   testExpression(
       "array_insert(c0, -3, null::INTEGER, true)", {arrays}, expected);
+}
+
+TEST_F(ArrayInsertTest, constantLegacyNegativeIndex) {
+  const auto signatures = getFunctionSignatures("array_insert");
+  ASSERT_FALSE(signatures.empty());
+  for (const auto* signature : signatures) {
+    EXPECT_TRUE(signature->constantArguments().at(3)) << signature->toString();
+  }
 }
 
 } // namespace
