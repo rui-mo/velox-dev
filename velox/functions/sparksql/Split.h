@@ -19,6 +19,7 @@
 
 #include "velox/functions/Udf.h"
 #include "velox/functions/lib/Utf8Utils.h"
+#include "velox/functions/sparksql/SparkQueryConfig.h"
 
 namespace facebook::velox::functions::sparksql {
 
@@ -53,6 +54,8 @@ struct Split {
       const arg_type<Varchar>* delimiter,
       const arg_type<int32_t>* /*limit*/) {
     cache_.setMaxCompiledRegexes(config.exprMaxCompiledRegexes());
+    legacyTruncateForEmptyRegexSplit_ =
+        SparkQueryConfig{config}.legacyTruncateForEmptyRegexSplit();
     if (delimiter) {
       initializeFastPath(delimiter->data(), delimiter->size());
       isConstantDelimiter_ = true;
@@ -116,9 +119,10 @@ struct Split {
   // When pattern is empty, split each character out. Since Spark 3.4, when
   // delimiter is empty, the result does not include an empty tail string, e.g.
   // split('abc', '') outputs ["a", "b", "c"] instead of ["a", "b", "c", ""].
-  // The result does not include remaining string when limit is smaller than the
-  // string size, e.g. split('abc', '', 2) outputs ["a", "b"] instead of ["a",
-  // "bc"].
+  // When limit is smaller than the number of characters, the last element
+  // contains the rest of the input, e.g. split('abc', '', 2) outputs ["a",
+  // "bc"]. If 'legacyTruncateForEmptyRegexSplit_' is true, the rest of the
+  // input is dropped instead, e.g. split('abc', '', 2) outputs ["a", "b"].
   void splitEmptyDelimiter(
       out_type<Array<Varchar>>& result,
       const arg_type<Varchar>& input,
@@ -133,6 +137,10 @@ struct Split {
     size_t pos = 0;
     int32_t count = 0;
     while (pos < end && count < limit) {
+      if (count + 1 == limit && !legacyTruncateForEmptyRegexSplit_) {
+        result.add_item().setNoCopy(StringView(start + pos, end - pos));
+        return;
+      }
       int32_t codePoint;
       auto charLength = tryGetUtf8CharLength(start + pos, end - pos, codePoint);
       if (charLength <= 0) {
@@ -323,5 +331,6 @@ struct Split {
   // Non-empty delimiter for the literal-string fast path.
   std::string literalDelimiter_;
   bool isConstantDelimiter_{false};
+  bool legacyTruncateForEmptyRegexSplit_{false};
 };
 } // namespace facebook::velox::functions::sparksql

@@ -166,20 +166,21 @@ TEST_F(SplitTest, emptyDelimiter) {
   // High limit, the limit greater than the input string size.
   testSplit(input, "", 20, numRows, expected);
 
-  // Small limit, the limit is smaller than or equals to input string size.
+  // Small limit, the limit is smaller than or equals to input string size. The
+  // last element contains the rest of the input.
   expected = {
-      {"I", ",", "h"},
-      {"o", "n", "e"},
-      {"a", "\xED\xA0", "@"},
+      {"I", ",", "he,she,they"},
+      {"o", "n", "e,,,four,"},
+      {"a", "\xED\xA0", "@123"},
       {""},
   };
   testSplit(input, "", 3, numRows, expected);
 
   // limit = 1.
   expected = {
-      {"I"},
-      {"o"},
-      {"a"},
+      {"I,he,she,they"},
+      {"one,,,four,"},
+      {"a\xED\xA0@123"},
       {""},
   };
   testSplit(input, "", 1, numRows, expected);
@@ -200,12 +201,35 @@ TEST_F(SplitTest, emptyDelimiter) {
   testSplit(input, "", std::nullopt, numRows, expected);
 
   expected = {
+      {"с", "иняя赤いトマト緑の"},
+      {"H", "ello世界🙂"},
+      {"a", "\xED\xA0@123"},
+      {""},
+  };
+  testSplit(input, "", 2, numRows, expected);
+
+  // The rest of the input is dropped if legacy_truncate_for_empty_regex_split
+  // is true.
+  auto guard =
+      folly::makeGuard([&]() { queryCtx_->testingOverrideConfigUnsafe({}); });
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(
+            SparkQueryConfig::kLegacyTruncateForEmptyRegexSplit),
+        "true"}});
+  expected = {
       {"с", "и"},
       {"H", "e"},
       {"a", "\xED\xA0"},
       {""},
   };
   testSplit(input, "", 2, numRows, expected);
+  expected = {
+      {"с"},
+      {"H"},
+      {"a"},
+      {""},
+  };
+  testSplit(input, "", 1, numRows, expected);
 }
 
 TEST_F(SplitTest, regexDelimiter) {
