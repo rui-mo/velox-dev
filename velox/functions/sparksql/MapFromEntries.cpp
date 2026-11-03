@@ -115,8 +115,10 @@ class MapFromEntriesFunction : public exec::VectorFunction {
   static std::vector<std::shared_ptr<exec::FunctionSignature>> signatures() {
     return {
         // array(row(K,V)) -> map(K,V)
+        // Spark rejects keys that are or contain a map, which are the types
+        // that Velox can't order.
         exec::FunctionSignatureBuilder()
-            .typeVariable("K")
+            .orderableTypeVariable("K")
             .typeVariable("V")
             .returnType("map(K,V)")
             .argumentType("array(row(K,V))")

@@ -168,6 +168,22 @@ TEST_F(MapFromEntriesTest, unknownInputs) {
       "Scalar function signature is not supported: map_from_entries(UNKNOWN)");
 }
 
+TEST_F(MapFromEntriesTest, keysContainingMaps) {
+  auto mapKeys = makeMapVectorFromJson<int64_t, int64_t>({"{1: 2}"});
+  auto values = makeFlatVector<int64_t>({3});
+  auto mapFromEntries = [&](const VectorPtr& keys) {
+    return evaluate(
+        "map_from_entries(c0)",
+        makeRowVector({makeArrayVector({0}, makeRowVector({keys, values}))}));
+  };
+  VELOX_ASSERT_THROW(
+      mapFromEntries(mapKeys),
+      "Scalar function signature is not supported: map_from_entries(ARRAY<ROW<c0:MAP<BIGINT,BIGINT>,c1:BIGINT>>)");
+  VELOX_ASSERT_THROW(
+      mapFromEntries(makeArrayVector({0}, mapKeys)),
+      "Scalar function signature is not supported: map_from_entries(ARRAY<ROW<c0:ARRAY<MAP<BIGINT,BIGINT>>,c1:BIGINT>>)");
+}
+
 TEST_F(MapFromEntriesTest, nullRowEntriesWithSmallerChildren) {
   // Row vector is of size 3, children are of size 2 since row 2 is null.
   auto rowVector = makeRowVector(
