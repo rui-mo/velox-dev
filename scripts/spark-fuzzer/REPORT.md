@@ -21,11 +21,16 @@ results of the fuzzer runs. The work starts at commit `10d88f912`.
 - `scripts/spark-fuzzer/` persists the environment: it installs Java 21 and
   Spark 4.1.4, runs the Spark Connect server, runs fuzzer campaigns and
   triages failures.
-- 37 function fixes, one commit each, and 56 commits for the Spark query
-  runner, the fuzzers, their argument generators and the scripts, listed
-  below.
-- In the first campaign, all 30 seeds failed. In the last one, all 8 seeds
-  passed, and Spark verified 6973 of the 8528 test cases.
+- 48 function fixes, one commit each, and 61 commits for the Spark query
+  runner, the fuzzers, their argument generators, the scripts, the
+  `spark-fuzzer` skill and this report, listed below.
+- In the first campaign, all 30 seeds failed. In the one-hour run of the
+  expression fuzzer, 11 of the 12 seeds passed, and Spark verified 9333 of the
+  11169 test cases. The failed seed hit a known last-bit difference of `sinh`.
+  In the one-hour run of the aggregation fuzzer, all 11 seeds passed, and Spark
+  verified 8243 of the 8842 iterations. These runs and the shorter runs after
+  them led to fixes 38 to 48, 2fde421c4 and 189503ee0. With them, all 3 seeds
+  of the last expression run passed.
 
 ## Environment
 
@@ -86,7 +91,7 @@ These are unsupported, so the fuzzer doesn't verify them:
 | Spark requires a constant | `IN` lists, `LIKE` escapes, `to_json` time zones, `timestampadd` and `timestampdiff` units, the legacy flags of `size` and `array_insert`, frame offsets |
 | Spark can't express it | NULL or empty `IN` lists, null map keys, structs without fields, timestamps with nanoseconds or out of Spark's range, k `RANGE` frames, aggregates with sorting keys |
 | Spark returns no comparable result | `to_json` of maps with binary keys, which Spark writes as Java object identities, e.g. `[B@14b6cefd` |
-| Spark rejects it during analysis | map keys of map type (`INVALID_MAP_KEY_TYPE`), array functions that compare elements of map type (`INVALID_ORDERING_TYPE`), casts that Spark doesn't allow (`CAST_WITHOUT_SUGGESTION`), arguments of different types (`DATA_DIFF_TYPES`) |
+| Spark rejects it during analysis | casts that Spark doesn't allow (`CAST_WITHOUT_SUGGESTION`), arguments of different types (`DATA_DIFF_TYPES`), `mode` with `DISTINCT` (`INVALID_WITHIN_GROUP_EXPRESSION`) |
 
 `spark_fuzzer.py summary <run> --unsupported 20` prints the most common
 reasons of a run.
@@ -111,6 +116,7 @@ reasons of a run.
 | 147237ae9 | Generate single-character `mask` replacements. |
 | 91e465cc4, 4652a175c, 72a7a70b5 | Translate `to_json` with a time zone, skip binary map keys, and generate valid time zones. |
 | ecb3eab72 | Generate `LIKE` patterns with wildcards and escape sequences, and single-character escapes. |
+| 189503ee0 | Add `--velox_fuzzer_orderable_map_keys`, which the Spark fuzzer turns on. It generates map keys only of orderable types, because Spark rejects map keys that are or contain maps. |
 
 ### Spark aggregation fuzzer
 
@@ -118,6 +124,7 @@ reasons of a run.
 | --- | --- |
 | 03fcd2174 | Compare the results of `min` and `max` with Spark. They were exempt because DuckDB, the reference before Spark, returns null when it compares nested nulls. |
 | 1f3ec0b39 | Compare the results of functions with custom verification, e.g. `collect_list` and `first`, with Spark if an input column is DATE. The fuzzer skipped them because the Presto runner writes the input to DWRF files, which can't store DATE. |
+| 2fde421c4 | Generate positions in [0, 32768) for `bitmap_construct_agg` and 4096-byte bitmaps for `bitmap_or_agg`. Velox threw for random inputs in every iteration, so Spark never verified them. |
 
 ### Scripts
 
@@ -130,6 +137,9 @@ reasons of a run.
 | 1371b9db3 | `summary --unsupported N` counts the unsupported test cases by reason. |
 | 32a8d78ec | `run` and `summary` report the verified and unsupported iterations of the aggregation fuzzer. |
 | 2f8228869 | `sql` starts the Spark Connect server if it is down, e.g. after a reboot. |
+| 6386a14c0 | Add this report. |
+| 43172b25c | Add the `spark-fuzzer` skill and agent, which run the fuzzers, triage the failures and commit the fixes. |
+| 6946ee1f4 | The skill fixes functions that accept argument types that Spark rejects, by restricting their signatures. |
 
 ## Function fixes
 
@@ -175,6 +185,17 @@ from Spark 4.1.4.
 | 35 | 2b34f9408 | `mask` | Keep a NUL replacement character. |
 | 36 | - | `mask` | Dropped. Spark 4.3 treats a supplementary character as one character, as Velox does. |
 | 37 | 10bf95100 | `like` | Escape with `\` by default, and throw for `\` before other characters or at the end. |
+| 38 | 2eb19b81a | `map` | Reject keys that are or contain maps. |
+| 39 | 8c7ab33f0 | `map_from_arrays` | Reject keys that are or contain maps. |
+| 40 | ee2896f55 | `map_from_entries` | Reject keys that are or contain maps. |
+| 41 | 5e3790f2b | `array_remove` | Reject elements that are or contain maps. |
+| 42 | 469b878ed | `array_union` | Reject elements that are or contain maps. |
+| 43 | c8e8885d0 | `array_distinct` | Reject elements that are or contain maps. |
+| 44 | 5eee347af | `array_intersect` | Reject elements that are or contain maps. |
+| 45 | d4e51a38e | `array_except` | Reject elements that are or contain maps. |
+| 46 | d29a19a73 | `array_contains` | Reject elements that are or contain maps. |
+| 47 | e71fafcac | `array_position` | Reject elements that are or contain maps. |
+| 48 | a79c4aa87 | `cast` from string | Parse REAL and DOUBLE as Java does, with type suffixes, e.g. `9f`, and hexadecimal numbers, e.g. `0x1.8p1`. |
 
 ## Known differences
 
@@ -184,6 +205,7 @@ runs.
 | Function | Difference |
 | --- | --- |
 | `acos`, `asin`, `atan`, `atan2`, `cbrt`, `cosh`, `hypot`, `log10` | glibc and Java's fdlibm or HotSpot intrinsics differ in the last bit for 3% to 55% of random inputs. Discontinuous functions, e.g. `width_bucket`, `floor` and casts to strings, amplify the difference. |
+| `sin`, `cos`, `tan`, `sinh`, `tanh`, `exp`, `log` and other math functions | glibc and Java differ in the last bit for less than 1% of random inputs, so the fuzzer doesn't skip them. Seed 90010 failed for `width_bucket(cos(c1), tanh(sinh(c2)), c3, c4)` with 800317658043838737 buckets. `sinh` returned 0.19130470795657534 in Velox and 0.19130470795657536 in Spark, which moved the result from bucket 462593777917631553 in Spark to 462593777917631617 in Velox. |
 | `asinh`, `acosh` | Spark 4.1 loses precision, e.g. `asinh(-1E10)` is `-Infinity`. Fixed in Spark master by SPARK-56089. |
 | `array_repeat`, `array_insert` | Velox returns at most 10000 elements. |
 | `repeat`, `lpad`, `rpad` | Velox returns at most 1 MB. |
@@ -221,11 +243,32 @@ Spark error that Velox suppresses on rows that it doesn't evaluate.
 | campaign5 | 988eb044d | 24 | 7 | 7471 | 5345 | 1867 |
 | campaign6 | 3eb43728c | 12 | 9 | 10302 | 7365 | 2511 |
 | campaign7 | 72a7a70b5 | 8 | 8 | 8528 | 6973 | 1010 |
+| campaign8 | 43172b25c | 12 | 11 | 11169 | 9333 | 1179 |
+| campaign9 | ee2896f55 | 3 | 3 | 2983 | 2585 | 246 |
+| campaign10 | 189503ee0 | 3 | 2 | 2423 | 2129 | 104 |
+| campaign11 | a79c4aa87 | 3 | 3 | 2693 | 2379 | 144 |
 
 Each seed ran for 2 to 5 minutes and stopped at the first failure. The test
 cases are those of the passed seeds. The failures were fixed or classified
 above, except for single failures that later builds no longer reproduce. In
-campaign 1, Spark threw `DUPLICATED_MAP_KEY` in 15 of the 30 seeds.
+campaign 1, Spark threw `DUPLICATED_MAP_KEY` in 15 of the 30 seeds. After a
+reboot of the machine, an expression run with seeds 87000 and 87001 started the
+Spark Connect server and passed, and Spark verified 923 of the 1088 test cases.
+
+Campaign 8 is the one-hour run, 12 seeds of 5 minutes. Seed 90010 failed for
+the last-bit difference of `sinh` that is listed under known differences.
+Spark rejected 391 of the test cases for map keys that are or contain maps, and
+311 for comparing maps, mostly in array functions. Fixes 38 to 47 make Velox
+reject the same function calls, so the fuzzer no longer generates them.
+Campaign 9 ran after fixes 38 to 40, and still had 54 test cases with constant
+maps whose keys are maps. 189503ee0 stops the fuzzer from generating such
+constants.
+
+Campaign 10 ran with all of these changes. Spark rejected none of its test
+cases for map keys or array elements that are maps, and the unsupported test
+cases dropped from 8.2% in campaign 9 to 4.3%. Seed 94000 failed because Velox
+returned NULL for `try_cast('9f' AS FLOAT)`, which fix 48 corrects. All 3 seeds
+of campaign 11 passed after fix 48.
 
 Runs of single functions verified the fixes and generators:
 
@@ -242,36 +285,53 @@ The unsupported `to_json` test cases convert scalars, which Spark and Velox
 reject. The other `like` test cases have invalid escapes, and both Spark and
 Velox throw for them.
 
-The aggregation fuzzer ran with seeds 86000 to 86002 for 2 minutes each at
-1f3ec0b39. All 3 passed, and Spark verified 872 of the 934 iterations, up from
-845 of 999 at 03fcd2174. Velox threw for 58 iterations, mostly for
-`bitmap_construct_agg` positions out of range and `bitmap_or_agg` bitmaps that
-aren't 4096 bytes long. A run of `min` and `max` with seeds 85000 to 85002
-compared all 824 iterations with Spark. After a reboot of the machine, an
-expression run with seeds 87000 and 87001 started the Spark Connect server and
-passed, and Spark verified 923 of the 1088 test cases.
+The aggregation fuzzer ran all aggregate functions except where the table
+names them. It runs the Spark query only if Velox succeeds, so iterations in
+which Velox throws are neither verified nor unsupported.
+
+| Run | Build | Functions | Seeds | Passed | Iterations | Verified | Unsupported |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| agg-smoke2 | 03fcd2174 | all | 3 | 3 | 999 | 845 | 3 |
+| agg-smoke3 | 1f3ec0b39 | all | 3 | 3 | 934 | 872 | 4 |
+| verify-agg-minmax | 2f8228869 | `min`, `max` | 3 | 3 | 824 | 824 | 0 |
+| agg-campaign1 | 43172b25c | all | 11 | 11 | 8842 | 8243 | 35 |
+| bitmap-agg | 2fde421c4 | `bitmap_construct_agg`, `bitmap_or_agg` | 2 | 2 | 430 | 430 | 0 |
+| agg-campaign2 | ee2896f55 | all | 2 | 2 | 1281 | 1276 | 5 |
+
+agg-campaign1 is the one-hour run, 11 seeds of 5 minutes. Velox threw in 564
+of its iterations, all of them for `bitmap_construct_agg` positions out of
+range and `bitmap_or_agg` bitmaps that aren't 4096 bytes long. After
+2fde421c4, Velox threw in none of the iterations of agg-campaign2. In
+agg-smoke2, the fuzzer also skipped functions with custom verification if an
+input column was DATE, which 1f3ec0b39 fixes. All unsupported iterations are
+`mode` with `DISTINCT`, which Spark rejects.
 
 ## Limitations and next steps
 
-- The aggregation fuzzer has only had short runs. It runs the Spark query only
-  if Velox succeeds, so it doesn't compare Velox's errors with Spark. For
-  example, Velox throws for `bitmap_or_agg` bitmaps that aren't 4096 bytes
-  long, which Spark accepts. For functions whose results depend on the order
-  of the input rows, e.g. `first`, `max_by` and `mode`, it compares only the
-  number of result rows with Spark.
+- The aggregation fuzzer runs the Spark query only if Velox succeeds, so it
+  doesn't compare Velox's errors with Spark. For example, Velox throws for
+  `bitmap_or_agg` bitmaps that aren't 4096 bytes long, which Spark accepts.
+  For functions whose results depend on the order of the input rows, e.g.
+  `first`, `max_by` and `mode`, it compares only the number of result rows
+  with Spark. Spark rejects `mode` with `DISTINCT`, so these iterations are
+  unsupported.
 - The runner translates window functions, which `SparkQueryRunnerTest`
   verifies against Spark, but no window fuzzer uses the Spark query runner.
 - Unsupported test cases dropped from 24% of all in campaign 6 to 12% in
-  campaign 7. The fuzzer skips signatures that Spark doesn't have, the runner
-  translates legacy `array_insert` and `to_json` with a time zone, and the
-  generators produce the constant `timestampadd` and `timestampdiff` units
-  that Spark requires. The largest remaining groups are map keys of map type
-  (288), which Spark rejects, array functions that compare map elements (240),
-  `IN` with NULL or empty lists (118), which Spark SQL can't express, and
-  `LIKE` escapes that are NULL or not single characters (77), which the new
-  `LIKE` generator avoids.
-- Velox's variadic `map` signature accepts an odd number of arguments, which
-  both Spark and Velox reject, so these test cases are unsupported.
+  campaign 7, and to 4.3% and 5.3% in campaigns 10 and 11. The fuzzer skips
+  signatures that Spark doesn't have, the runner translates legacy
+  `array_insert` and `to_json` with a time zone, and the generators produce
+  the constant arguments that Spark requires. Velox now rejects maps as map
+  keys and in array functions that compare elements, as Spark does. The
+  largest remaining groups in campaign 11 are `IN` with NULL or empty lists
+  (38), which Spark SQL can't express, `to_json` of scalars (25) and casts
+  that Spark doesn't allow (20). An argument generator for `in` could avoid
+  the NULL and empty lists. Campaign 10 also had year-month intervals in
+  arrays, maps or structs (7). The Parquet input stores intervals as integers,
+  and the runner converts only top-level columns back.
+- Velox's variadic `map` signature accepts any arguments after the first key
+  and value, e.g. an odd number of arguments or keys of different types. Both
+  Spark and Velox reject these calls, so these test cases are unsupported.
 - Random strings only have characters of the Basic Multilingual Plane, so the
   fuzzer doesn't cover supplementary characters, e.g. emojis.
 - Spark-only behaviors of Spark 4.1 that differ from Spark master, e.g.
