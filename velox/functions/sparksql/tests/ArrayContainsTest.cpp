@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/functions/sparksql/tests/SparkFunctionBaseTest.h"
 
 using namespace facebook::velox::test;
@@ -55,6 +56,20 @@ TEST_F(ArrayContainsTest, nestedNulls) {
   result =
       evaluate("array_contains(c0, c1)", makeRowVector({arrays, elements}));
   assertEqualVectors(expected, result);
+}
+
+TEST_F(ArrayContainsTest, elementsContainingMaps) {
+  auto maps = makeMapVectorFromJson<int64_t, int64_t>({"{1: 2}"});
+  for (const auto& elements : std::vector<VectorPtr>{
+           maps, makeArrayVector({0}, maps), makeRowVector({maps})}) {
+    auto arrays = makeArrayVector({0}, elements);
+    VELOX_ASSERT_USER_THROW(
+        evaluate("array_contains(c0, c1)", makeRowVector({arrays, elements})),
+        fmt::format(
+            "Scalar function signature is not supported: array_contains({}, {})",
+            arrays->type()->toString(),
+            elements->type()->toString()));
+  }
 }
 
 } // namespace

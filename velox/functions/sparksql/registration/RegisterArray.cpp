@@ -87,6 +87,7 @@ void registerSparkArrayFunctions(const std::string& prefix) {
   // Spark compares nulls nested in complex types as values.
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_$internal$contains, prefix + "array_contains");
+  restrictToOrderableTypes(prefix + "array_contains");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_distinct, prefix + "array_distinct");
   restrictToOrderableTypes(prefix + "array_distinct");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, prefix + "array_except");
