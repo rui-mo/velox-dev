@@ -213,4 +213,57 @@ TEST_F(ExpressionFuzzerUnitTest, exprBank) {
   }
 }
 
+namespace {
+// Returns true if 'type' or a type nested in it is a map with a key that is
+// not orderable.
+bool hasUnorderableMapKey(const TypePtr& type) {
+  if (type->isMap() && !type->childAt(0)->isOrderable()) {
+    return true;
+  }
+  for (auto i = 0; i < type->size(); ++i) {
+    if (hasUnorderableMapKey(type->childAt(i))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool hasUnorderableMapKey(const core::TypedExprPtr& expression) {
+  if (hasUnorderableMapKey(expression->type())) {
+    return true;
+  }
+  if (auto lambda =
+          std::dynamic_pointer_cast<const core::LambdaTypedExpr>(expression)) {
+    return hasUnorderableMapKey(lambda->signature()) ||
+        hasUnorderableMapKey(lambda->body());
+  }
+  for (const auto& input : expression->inputs()) {
+    if (hasUnorderableMapKey(input)) {
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace
+
+TEST_F(ExpressionFuzzerUnitTest, orderableMapKeys) {
+  velox::functions::prestosql::registerAllScalarFunctions();
+  ExpressionFuzzer::Options options;
+  options.enableComplexTypes = true;
+  options.orderableMapKeys = true;
+  // filter(array(T), ...) can return ARRAY<MAP>, which binds K of
+  // map_keys(map(K,V)) to a map. element_at(map(K,V), K) leaves K unbound.
+  options.useOnlyFunctions = "element_at,filter,map_keys";
+  ExpressionFuzzer fuzzer{
+      velox::getFunctionSignatures(), 0, vectorfuzzer, options};
+
+  for (int i = 0; i < 1000; ++i) {
+    const auto data = fuzzer.fuzzExpression();
+    ASSERT_FALSE(hasUnorderableMapKey(data.inputType))
+        << data.inputType->toString();
+    ASSERT_FALSE(hasUnorderableMapKey(data.expressions[0]))
+        << data.expressions[0]->toString();
+  }
+}
+
 } // namespace facebook::velox::fuzzer::test

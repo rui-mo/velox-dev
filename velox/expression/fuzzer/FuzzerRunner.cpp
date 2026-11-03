@@ -155,6 +155,12 @@ DEFINE_bool(
     "Enable generation of expressions that re-uses already generated "
     "subexpressions.");
 
+DEFINE_bool(
+    velox_fuzzer_orderable_map_keys,
+    false,
+    "Bind the type variables that appear in map keys only to orderable "
+    "types, so that generated map keys never contain maps.");
+
 DEFINE_string(
     assign_function_tickets,
     "",
@@ -200,6 +206,7 @@ ExpressionFuzzer::Options getExpressionFuzzerOptions(
   opts.enableDecimalType = FLAGS_velox_fuzzer_enable_decimal_type;
   opts.enableColumnReuse = FLAGS_velox_fuzzer_enable_column_reuse;
   opts.enableExpressionReuse = FLAGS_velox_fuzzer_enable_expression_reuse;
+  opts.orderableMapKeys = FLAGS_velox_fuzzer_orderable_map_keys;
   opts.functionTickets = FLAGS_assign_function_tickets;
   opts.nullRatio = FLAGS_null_ratio;
   opts.specialForms = FLAGS_special_forms;

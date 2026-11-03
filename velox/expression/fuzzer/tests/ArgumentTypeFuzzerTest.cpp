@@ -420,6 +420,57 @@ TEST_F(ArgumentTypeFuzzerTest, orderableConstraint) {
   }
 }
 
+TEST_F(ArgumentTypeFuzzerTest, orderableMapKeys) {
+  // The return type binds K, which is the key of the argument map.
+  auto mapKeys = exec::FunctionSignatureBuilder()
+                     .typeVariable("K")
+                     .typeVariable("V")
+                     .returnType("array(K)")
+                     .argumentType("map(K,V)")
+                     .build();
+  const auto mapKeyedReturnType = ARRAY(MAP(BIGINT(), BIGINT()));
+  {
+    FuzzerGenerator rng{0};
+    ArgumentTypeFuzzer fuzzer{*mapKeys, mapKeyedReturnType, rng};
+    ASSERT_TRUE(fuzzer.fuzzArgumentTypes(kMaxVariadicArgs));
+  }
+  {
+    FuzzerGenerator rng{0};
+    ArgumentTypeFuzzer fuzzer{
+        *mapKeys, mapKeyedReturnType, rng, defaultScalarTypes(), true};
+    ASSERT_FALSE(fuzzer.fuzzArgumentTypes(kMaxVariadicArgs));
+  }
+
+  // K appears inside a map key. The return type leaves it unbound.
+  auto elementAt = exec::FunctionSignatureBuilder()
+                       .typeVariable("K")
+                       .typeVariable("V")
+                       .returnType("V")
+                       .argumentType("map(array(K),V)")
+                       .argumentType("array(K)")
+                       .build();
+  auto mapIdentity = exec::FunctionSignatureBuilder()
+                         .typeVariable("K")
+                         .typeVariable("V")
+                         .returnType("map(K,V)")
+                         .argumentType("map(K,V)")
+                         .build();
+  for (size_t i = 0; i < 100; ++i) {
+    FuzzerGenerator rng(i);
+    ArgumentTypeFuzzer argumentFuzzer{
+        *elementAt, BIGINT(), rng, defaultScalarTypes(), true};
+    ASSERT_TRUE(argumentFuzzer.fuzzArgumentTypes(kMaxVariadicArgs));
+    const auto& mapType = argumentFuzzer.argumentTypes()[0];
+    ASSERT_TRUE(mapType->childAt(0)->isOrderable()) << mapType->toString();
+
+    ArgumentTypeFuzzer returnFuzzer{
+        *mapIdentity, rng, defaultScalarTypes(), true};
+    const auto returnType = returnFuzzer.fuzzReturnType();
+    ASSERT_TRUE(returnType->childAt(0)->isOrderable())
+        << returnType->toString();
+  }
+}
+
 TEST_F(ArgumentTypeFuzzerTest, fuzzDecimalArgumentTypes) {
   auto fuzzArgumentTypes = [](const exec::FunctionSignature& signature,
                               const TypePtr& returnType) {

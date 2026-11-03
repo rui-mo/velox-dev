@@ -64,6 +64,10 @@ class ExpressionFuzzer {
     // subexpressions.
     bool enableExpressionReuse = false;
 
+    // Bind the type variables that appear in map keys only to orderable types.
+    // Then generated map keys never contain maps, which Spark rejects.
+    bool orderableMapKeys = false;
+
     std::shared_ptr<ReferenceQueryRunner> referenceQueryRunner{nullptr};
 
     int32_t maxLevelOfNesting = 10;

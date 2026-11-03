@@ -176,6 +176,8 @@ Expression Fuzzer supports a number of powerful command line arguments.
 
 * ``--velox_fuzzer_enable_expression_reuse``: Enable generation of expressions that re-uses already generated subexpressions. Default is false.
 
+* ``--velox_fuzzer_orderable_map_keys``: Bind the type variables that appear in map keys only to orderable types, so that generated map keys never contain maps. Default is false. Spark Expression Fuzzer turns it on because Spark rejects such map keys.
+
 * ``--assign_function_tickets``: Comma separated list of function names and their tickets in the format <function_name>=<tickets>. Every ticket represents an opportunity for a function to be chosen from a pool of candidates. By default, every function has one ticket, and the likelihood of a function being picked can be increased by allotting it more tickets. Note that in practice, increasing the number of tickets does not proportionally increase the likelihood of selection, as the selection process involves filtering the pool of candidates by a required return type so not all functions may compete against the same number of functions at every instance. Number of tickets must be a positive integer. Example: eq=3,floor=5.
 
 * ``--max_expression_trees_per_step``: This sets an upper limit on the number of expression trees to generate per step. These trees would be executed in the same ExprSet and can re-use already generated columns and subexpressions (if re-use is enabled). Default is 1.

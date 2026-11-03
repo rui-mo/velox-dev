@@ -1009,9 +1009,15 @@ const SignatureTemplate* ExpressionFuzzer::chooseRandomSignatureTemplate(
   for (auto signatureTemplate : signatureTemplates) {
     exec::ReverseSignatureBinder binder{
         *signatureTemplate->signature, returnType};
-    if (binder.tryBind()) {
-      eligible.push_back(signatureTemplate);
+    if (!binder.tryBind()) {
+      continue;
     }
+    if (options_.orderableMapKeys &&
+        !hasOrderableMapKeys(
+            *signatureTemplate->signature, binder.bindings())) {
+      continue;
+    }
+    eligible.push_back(signatureTemplate);
   }
   if (eligible.empty()) {
     return nullptr;
@@ -1069,7 +1075,11 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromSignatureTemplate(
 
   auto chosenSignature = *chosen->signature;
   ArgumentTypeFuzzer fuzzer{
-      chosenSignature, returnType, rng_, supportedScalarTypes_};
+      chosenSignature,
+      returnType,
+      rng_,
+      supportedScalarTypes_,
+      options_.orderableMapKeys};
 
   std::vector<TypePtr> argumentTypes;
   // Check if a custom argument type generator exists for this function.
@@ -1196,7 +1206,10 @@ TypePtr ExpressionFuzzer::fuzzReturnType() {
         !signatureTemplates_.empty(), "No function signature available.");
     size_t idx = rand32(0, signatureTemplates_.size() - 1);
     ArgumentTypeFuzzer typeFuzzer{
-        *signatureTemplates_[idx].signature, rng_, supportedScalarTypes_};
+        *signatureTemplates_[idx].signature,
+        rng_,
+        supportedScalarTypes_,
+        options_.orderableMapKeys};
     rootType = typeFuzzer.fuzzReturnType();
   }
   return rootType;

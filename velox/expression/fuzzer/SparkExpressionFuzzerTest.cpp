@@ -78,6 +78,8 @@ DEFINE_string(
     "built-in skip list, e.g. to exclude functions with known issues. "
     "Example: --skip_functions=\"array_sort,sequence\"");
 
+DECLARE_bool(velox_fuzzer_orderable_map_keys);
+
 using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::fuzzer::ArrayInsertArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
@@ -129,6 +131,10 @@ int main(int argc, char** argv) {
   facebook::velox::functions::sparksql::registerFunctions("");
 
   ::testing::InitGoogleTest(&argc, argv);
+
+  // Spark rejects map keys that contain maps. Set this before folly::Init so
+  // that the command line can still turn it off.
+  FLAGS_velox_fuzzer_orderable_map_keys = true;
 
   // Calls common init functions in the necessary order, initializing
   // singletons, installing proper signal handlers for better debugging
