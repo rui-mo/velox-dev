@@ -135,7 +135,7 @@ inline void registerArrayRemoveFunctions(const std::string& prefix) {
   registerArrayRemoveFunctions<Timestamp>(prefix);
   registerArrayRemoveFunctions<Date>(prefix);
   registerArrayRemoveFunctions<Varbinary>(prefix);
-  registerArrayRemoveFunctions<Generic<T1>>(prefix);
+  registerArrayRemoveFunctions<Orderable<T1>>(prefix);
   registerFunction<
       ArrayRemoveFunctionString,
       Array<Varchar>,

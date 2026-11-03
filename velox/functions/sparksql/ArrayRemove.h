@@ -51,9 +51,9 @@ struct ArrayRemoveFunction {
 
   // Generic implementation.
   void call(
-      out_type<Array<Generic<T1>>>& out,
-      const arg_type<Array<Generic<T1>>>& array,
-      const arg_type<Generic<T1>>& element) {
+      out_type<Array<Orderable<T1>>>& out,
+      const arg_type<Array<Orderable<T1>>>& array,
+      const arg_type<Orderable<T1>>& element) {
     static constexpr CompareFlags kFlags =
         CompareFlags::equality(CompareFlags::NullHandlingMode::kNullAsValue);
     for (const auto& item : array) {
