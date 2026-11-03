@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/expression/ExprRewriteRegistry.h"
+#include "velox/expression/VectorFunction.h"
 #include "velox/functions/lib/ArrayRemoveNullFunction.h"
 #include "velox/functions/lib/ArrayShuffle.h"
 #include "velox/functions/lib/RegistrationHelpers.h"
@@ -32,6 +33,50 @@
 #include "velox/functions/sparksql/SparkQueryConfig.h"
 
 namespace facebook::velox::functions {
+namespace {
+
+// Registers the vector function 'name' again with its type variables limited
+// to orderable types. Spark requires orderable elements in functions that
+// compare them, which excludes elements that are or contain maps.
+void restrictToOrderableTypes(const std::string& name) {
+  auto entry =
+      exec::vectorFunctionFactories().withRLock([&](const auto& functions) {
+        return functions.at(exec::sanitizeName(name));
+      });
+  std::vector<exec::FunctionSignaturePtr> signatures;
+  for (const auto& signature : entry.signatures) {
+    std::unordered_map<std::string, exec::SignatureVariable> variables;
+    for (const auto& [variableName, variable] : signature->variables()) {
+      if (variable.isTypeParameter()) {
+        variables.emplace(
+            variableName,
+            exec::SignatureVariable(
+                variableName,
+                std::nullopt,
+                exec::ParameterType::kTypeParameter,
+                variable.knownTypesOnly(),
+                /*orderableTypesOnly=*/true,
+                /*comparableTypesOnly=*/true));
+      } else {
+        variables.emplace(variableName, variable);
+      }
+    }
+    signatures.push_back(
+        std::make_shared<exec::FunctionSignature>(
+            std::move(variables),
+            signature->returnType(),
+            signature->argumentTypes(),
+            signature->constantArguments(),
+            signature->variableArity()));
+  }
+  exec::registerStatefulVectorFunction(
+      name,
+      std::move(signatures),
+      std::move(entry.factory),
+      std::move(entry.metadata));
+}
+
+} // namespace
 
 // VELOX_REGISTER_VECTOR_FUNCTION must be invoked in the same namespace as the
 // vector function definition.
@@ -43,6 +88,7 @@ void registerSparkArrayFunctions(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_$internal$contains, prefix + "array_contains");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_distinct, prefix + "array_distinct");
+  restrictToOrderableTypes(prefix + "array_distinct");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, prefix + "array_except");
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_array_intersect, prefix + "array_intersect");
