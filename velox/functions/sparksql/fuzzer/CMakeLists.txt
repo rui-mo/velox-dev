@@ -123,6 +123,7 @@ if(VELOX_ENABLE_PARQUET)
     GTest::gtest
     GTest::gtest_main
   )
+  velox_add_test_headers(spark_aggregation_fuzzer_test BitmapAggregateInputGenerator.h)
 
   if(${VELOX_BUILD_TESTING})
     add_subdirectory(tests)
