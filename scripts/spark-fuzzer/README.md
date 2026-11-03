@@ -34,6 +34,7 @@ scripts/spark-fuzzer/spark_fuzzer.py run --runs 10 --duration-sec 300
 | `known-issues.txt` | Functions that `spark_fuzzer.py run` skips because of known issues. |
 | `env.sh` | Common settings, sourced by the shell scripts. |
 | `conf/` | Spark configs that `setup.sh` copies to `$SPARK_HOME/conf`. |
+| `REPORT.md` | The framework changes, function fixes, known differences and fuzzer runs so far. |
 
 `$SPARK_FUZZER_HOME` contains:
 
