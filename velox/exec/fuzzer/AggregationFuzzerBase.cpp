@@ -91,21 +91,6 @@ int32_t AggregationFuzzerBase::randInt(int32_t min, int32_t max) {
   return boost::random::uniform_int_distribution<int32_t>(min, max)(rng_);
 }
 
-bool AggregationFuzzerBase::isSupportedType(const TypePtr& type) const {
-  // Date / IntervalDayTime/ Unknown are not currently supported by DWRF.
-  if (type->isDate() || type->isIntervalDayTime() || type->isUnknown()) {
-    return false;
-  }
-
-  for (auto i = 0; i < type->size(); ++i) {
-    if (!isSupportedType(type->childAt(i))) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 bool AggregationFuzzerBase::addSignature(
     const std::string& name,
     const FunctionSignaturePtr& signature) {

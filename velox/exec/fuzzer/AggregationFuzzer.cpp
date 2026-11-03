@@ -117,7 +117,6 @@ class AggregationFuzzer : public AggregationFuzzerBase {
   bool compareEquivalentPlanResults(
       const std::vector<PlanWithSplits>& plans,
       bool customVerification,
-      const std::vector<RowVectorPtr>& input,
       const std::shared_ptr<ResultVerifier>& customVerifier,
       int32_t maxDrivers = 2,
       bool testWithSpilling = true);
@@ -805,7 +804,7 @@ bool AggregationFuzzer::verifyAggregation(
   }
 
   return compareEquivalentPlanResults(
-      plans, customVerification, input, customVerifier);
+      plans, customVerification, customVerifier);
 }
 
 bool AggregationFuzzer::verifySortedAggregation(
@@ -912,10 +911,10 @@ bool AggregationFuzzer::verifySortedAggregation(
     // 4) the custom verifier supports compare.
     // keep the custom verifier enabled.
     return compareEquivalentPlanResults(
-        plans, customVerification, input, customVerifier, 1);
+        plans, customVerification, customVerifier, 1);
   } else {
     // If custom verification is not enabled, then compare the results directly.
-    return compareEquivalentPlanResults(plans, false, input, nullptr, 1);
+    return compareEquivalentPlanResults(plans, false, nullptr, 1);
   }
 }
 
@@ -1033,7 +1032,6 @@ void AggregationFuzzer::Stats::print(size_t numIterations) const {
 bool AggregationFuzzer::compareEquivalentPlanResults(
     const std::vector<PlanWithSplits>& plans,
     bool customVerification,
-    const std::vector<RowVectorPtr>& input,
     const std::shared_ptr<ResultVerifier>& customVerifier,
     int32_t maxDrivers,
     bool testWithSpilling) {
@@ -1073,21 +1071,18 @@ bool AggregationFuzzer::compareEquivalentPlanResults(
           LOG(INFO) << "Verified results against reference DB";
         }
       } else if (referenceQueryRunner_->supportsVeloxVectorResults()) {
-        if (isSupportedType(firstPlan->outputType()) &&
-            isSupportedType(input.front()->type())) {
-          auto referenceResult = computeReferenceResultsAsVector(
-              firstPlan, referenceQueryRunner_.get());
-          stats_.updateReferenceQueryStats(referenceResult.second);
+        auto referenceResult = computeReferenceResultsAsVector(
+            firstPlan, referenceQueryRunner_.get());
+        stats_.updateReferenceQueryStats(referenceResult.second);
 
-          if (referenceResult.first && !referenceResult.first.value().empty()) {
-            velox::fuzzer::ResultOrError expected;
-            expected.result = fuzzer::mergeRowVectors(
-                referenceResult.first.value(), pool_.get());
+        if (referenceResult.first && !referenceResult.first.value().empty()) {
+          velox::fuzzer::ResultOrError expected;
+          expected.result = fuzzer::mergeRowVectors(
+              referenceResult.first.value(), pool_.get());
 
-            compare(
-                resultOrError, customVerification, {customVerifier}, expected);
-            ++stats_.numVerified;
-          }
+          compare(
+              resultOrError, customVerification, {customVerifier}, expected);
+          ++stats_.numVerified;
         }
       }
     }
@@ -1204,7 +1199,7 @@ bool AggregationFuzzer::verifyDistinctAggregation(
   // Distinct aggregation must run single-threaded or data must be partitioned
   // on group-by keys among threads.
   return compareEquivalentPlanResults(
-      plans, customVerification, input, customVerifier, 1, false);
+      plans, customVerification, customVerifier, 1, false);
 }
 
 } // namespace
