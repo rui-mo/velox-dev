@@ -363,6 +363,21 @@ class MaskArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark to_json. Spark takes the time zone as a
+/// constant option, so the time zone is a constant valid time zone, and the
+/// fuzzer generates the value to convert. Random strings are almost never valid
+/// time zones.
+class ToJsonArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~ToJsonArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 /// Generates arguments for Spark make_timestamp, make_timestamp_ntz,
 /// try_make_timestamp and try_make_timestamp_ntz. Reads the fields from input
 /// columns with years in [1800, 2200] and other fields within or just outside

@@ -25,6 +25,7 @@
 #include "velox/core/Expressions.h"
 #include "velox/core/QueryConfig.h"
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
+#include "velox/type/tz/TimeZoneMap.h"
 
 namespace facebook::velox::fuzzer::test {
 namespace {
@@ -483,6 +484,36 @@ TEST(ArgValuesGeneratorsTest, mask) {
               [](const auto& replacement) { return replacement.size() == 4; }));
     }
   }
+}
+
+TEST(ArgValuesGeneratorsTest, toJson) {
+  VectorFuzzer::Options options;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  ToJsonArgValuesGenerator generator;
+  const CallableSignature signature{
+      .name = "to_json",
+      .args = {ARRAY(TIMESTAMP()), VARCHAR()},
+      .returnType = VARCHAR(),
+      .constantArgs = {false, false},
+  };
+  std::unordered_set<std::string> timeZones;
+  for (auto i = 0; i < 100; ++i) {
+    state.reset();
+    const auto inputs = generator.generate(signature, options, rng, state);
+
+    // The fuzzer generates the value, and Spark requires a constant time zone.
+    ASSERT_EQ(inputs.size(), 2);
+    EXPECT_EQ(inputs[0], nullptr);
+    const auto timeZone =
+        std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[1]);
+    ASSERT_NE(timeZone, nullptr);
+    ASSERT_FALSE(timeZone->isNull());
+    const auto& name = timeZone->value().value<TypeKind::VARCHAR>();
+    EXPECT_NO_THROW(tz::locateZone(name)) << name;
+    timeZones.insert(name);
+  }
+  EXPECT_GT(timeZones.size(), 10);
 }
 
 TEST(ArgValuesGeneratorsTest, regexp) {
