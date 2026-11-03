@@ -267,6 +267,13 @@ TEST_F(MaskTest, mask) {
 
   // Case to cover input is ASCII but replacement character is wide-character.
   EXPECT_EQ(maskWithThreeArg("ABCabc", "🚀", "🚀"), "🚀🚀🚀🚀🚀🚀");
+
+  // NUL is a single character.
+  const std::string nul(1, '\0');
+  EXPECT_EQ(maskWithTwoArg("AbC", nul), nul + "x" + nul);
+  EXPECT_EQ(
+      maskWithFiveArg("A-1", std::nullopt, std::nullopt, std::nullopt, nul),
+      "A" + nul + "1");
 }
 
 TEST_F(MaskTest, maskWithError) {
