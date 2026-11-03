@@ -30,21 +30,32 @@ namespace facebook::velox::fuzzer {
 /// random type that can bind to the function's return type.
 class ArgumentTypeFuzzer {
  public:
+  /// If 'orderableMapKeys' is true, binds the type variables that appear in
+  /// map keys only to orderable types. Then generated map keys never contain
+  /// maps.
   ArgumentTypeFuzzer(
       const exec::FunctionSignature& signature,
       FuzzerGenerator& rng,
-      const std::vector<TypePtr>& scalarTypes = velox::defaultScalarTypes())
-      : ArgumentTypeFuzzer(signature, nullptr, rng, scalarTypes) {}
+      const std::vector<TypePtr>& scalarTypes = velox::defaultScalarTypes(),
+      bool orderableMapKeys = false)
+      : ArgumentTypeFuzzer(
+            signature,
+            nullptr,
+            rng,
+            scalarTypes,
+            orderableMapKeys) {}
 
   ArgumentTypeFuzzer(
       const exec::FunctionSignature& signature,
       const TypePtr& returnType,
       FuzzerGenerator& rng,
-      const std::vector<TypePtr>& scalarTypes = velox::defaultScalarTypes())
+      const std::vector<TypePtr>& scalarTypes = velox::defaultScalarTypes(),
+      bool orderableMapKeys = false)
       : signature_{signature},
         returnType_{returnType},
         rng_{rng},
-        scalarTypes_(scalarTypes) {}
+        scalarTypes_(scalarTypes),
+        orderableMapKeys_{orderableMapKeys} {}
 
   /// Generate random argument types. If the desired returnType has been
   /// specified, checks that it can be bound to the return type of signature_.
@@ -129,7 +140,15 @@ class ArgumentTypeFuzzer {
 
   /// The set of scalar types that can be used in random argument types.
   const std::vector<TypePtr> scalarTypes_;
+
+  const bool orderableMapKeys_;
 };
+
+/// Returns true if 'bindings' bind every type variable that appears in a map
+/// key of 'signature' to an orderable type or leave it unbound.
+bool hasOrderableMapKeys(
+    const exec::FunctionSignature& signature,
+    const std::unordered_map<std::string, TypePtr>& bindings);
 
 /// Return the kind name of type in lower case. This is expected to match the
 /// TypeSignature::baseName_ corresponding to type.

@@ -16,6 +16,8 @@
 
 #include "velox/expression/fuzzer/ArgumentTypeFuzzer.h"
 
+#include <unordered_set>
+
 #include <boost/algorithm/string.hpp>
 #include <boost/random/uniform_int_distribution.hpp>
 
@@ -65,7 +67,54 @@ bool isPositiveInteger(const std::string& str) {
       }) == str.end();
 }
 
+// Adds to 'result' the type variables of 'variables' that appear in 'type'
+// inside a map key. 'inMapKey' tells whether 'type' itself is in a map key.
+void collectMapKeyVariables(
+    const exec::TypeSignature& type,
+    const std::unordered_map<std::string, exec::SignatureVariable>& variables,
+    bool inMapKey,
+    std::unordered_set<std::string>& result) {
+  if (inMapKey) {
+    auto it = variables.find(type.baseName());
+    if (it != variables.end() && it->second.isTypeParameter()) {
+      result.insert(type.baseName());
+    }
+  }
+  const bool isMap = boost::algorithm::iequals(type.baseName(), "map");
+  const auto& parameters = type.parameters();
+  for (auto i = 0; i < parameters.size(); ++i) {
+    collectMapKeyVariables(
+        parameters[i], variables, inMapKey || (isMap && i == 0), result);
+  }
+}
+
+// Returns the type variables that appear in a map key in the argument or
+// return types of 'signature'.
+std::unordered_set<std::string> mapKeyVariables(
+    const exec::FunctionSignature& signature) {
+  std::unordered_set<std::string> result;
+  for (const auto& type : signature.argumentTypes()) {
+    collectMapKeyVariables(type, signature.variables(), false, result);
+  }
+  collectMapKeyVariables(
+      signature.returnType(), signature.variables(), false, result);
+  return result;
+}
+
 } // namespace
+
+bool hasOrderableMapKeys(
+    const exec::FunctionSignature& signature,
+    const std::unordered_map<std::string, TypePtr>& bindings) {
+  for (const auto& name : mapKeyVariables(signature)) {
+    auto it = bindings.find(name);
+    if (it != bindings.end() && it->second != nullptr &&
+        !it->second->isOrderable()) {
+      return false;
+    }
+  }
+  return true;
+}
 
 void ArgumentTypeFuzzer::determineUnboundedIntegerVariables(
     const exec::TypeSignature& type) {
@@ -154,6 +203,9 @@ void ArgumentTypeFuzzer::determineUnboundedEnumVariables(
 }
 
 void ArgumentTypeFuzzer::determineUnboundedTypeVariables() {
+  const auto keyVariables = orderableMapKeys_
+      ? mapKeyVariables(signature_)
+      : std::unordered_set<std::string>{};
   for (auto& [variableName, variableInfo] : variables()) {
     if (!variableInfo.isTypeParameter()) {
       continue;
@@ -166,7 +218,8 @@ void ArgumentTypeFuzzer::determineUnboundedTypeVariables() {
     // Random randomType() never generates unknown here.
     // TODO: we should extend randomType types and exclude unknown based
     // on variableInfo.
-    if (variableInfo.orderableTypesOnly()) {
+    if (variableInfo.orderableTypesOnly() ||
+        keyVariables.count(variableName) > 0) {
       bindings_[variableName] = randOrderableType();
     } else {
       bindings_[variableName] = randType();
@@ -190,6 +243,11 @@ bool ArgumentTypeFuzzer::fuzzArgumentTypes(uint32_t maxVariadicArgs) {
   } else {
     exec::ReverseSignatureBinder binder{signature_, returnType_};
     if (!binder.tryBind()) {
+      return false;
+    }
+
+    if (orderableMapKeys_ &&
+        !hasOrderableMapKeys(signature_, binder.bindings())) {
       return false;
     }
 
