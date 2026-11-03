@@ -994,8 +994,9 @@ class LikeWithRe2 final : public exec::VectorFunction {
 // compiled are not counted.
 class LikeGeneric final : public exec::VectorFunction {
  public:
-  explicit LikeGeneric(int64_t maxCompiledRegexes)
-      : maxCompiledRegexes_(maxCompiledRegexes) {}
+  LikeGeneric(int64_t maxCompiledRegexes, std::optional<char> defaultEscapeChar)
+      : maxCompiledRegexes_(maxCompiledRegexes),
+        defaultEscapeChar_(defaultEscapeChar) {}
 
   void apply(
       const SelectivityVector& rows,
@@ -1083,7 +1084,7 @@ class LikeGeneric final : public exec::VectorFunction {
       context.applyToSelectedNoThrow(rows, [&](auto row) {
         vectorWriter.setOffset(row);
         vectorWriter.current() =
-            applyRow(inputReader[row], patternReader[row], std::nullopt);
+            applyRow(inputReader[row], patternReader[row], defaultEscapeChar_);
         vectorWriter.commit(true);
       });
     } else {
@@ -1144,6 +1145,8 @@ class LikeGeneric final : public exec::VectorFunction {
       std::unique_ptr<RE2>>
       compiledRegularExpressions_;
   int64_t maxCompiledRegexes_;
+  // The escape character of patterns if the call has no escape argument.
+  std::optional<char> defaultEscapeChar_;
 };
 
 // Returns true if 'groupId' is a group of 're'. Otherwise, throws if
@@ -2444,17 +2447,22 @@ PatternMetadata determinePatternKind(
   return PatternMetadata::generic();
 }
 
-std::shared_ptr<exec::VectorFunction> makeLike(
-    const std::string& name,
+namespace {
+
+// Returns the like function. Patterns use 'defaultEscapeChar' as the escape
+// character if the call has no escape argument.
+std::shared_ptr<exec::VectorFunction> makeLikeFunction(
     const std::vector<exec::VectorFunctionArg>& inputArgs,
-    const core::QueryConfig& config) {
+    const core::QueryConfig& config,
+    std::optional<char> defaultEscapeChar) {
   auto numArgs = inputArgs.size();
 
-  std::optional<char> escapeChar;
+  std::optional<char> escapeChar = defaultEscapeChar;
   if (numArgs == 3) {
     BaseVector* escape = inputArgs[2].constantValue.get();
     if (!escape) {
-      return std::make_shared<LikeGeneric>(config.exprMaxCompiledRegexes());
+      return std::make_shared<LikeGeneric>(
+          config.exprMaxCompiledRegexes(), defaultEscapeChar);
     }
 
     auto constantEscape = escape->as<ConstantVector<StringView>>();
@@ -2480,7 +2488,8 @@ std::shared_ptr<exec::VectorFunction> makeLike(
 
   BaseVector* constantPattern = inputArgs[1].constantValue.get();
   if (!constantPattern) {
-    return std::make_shared<LikeGeneric>(config.exprMaxCompiledRegexes());
+    return std::make_shared<LikeGeneric>(
+        config.exprMaxCompiledRegexes(), defaultEscapeChar);
   }
 
   if (constantPattern->isNullAt(0)) {
@@ -2543,6 +2552,23 @@ std::shared_ptr<exec::VectorFunction> makeLike(
     default:
       return std::make_shared<LikeWithRe2>(pattern, escapeChar);
   }
+}
+
+} // namespace
+
+std::shared_ptr<exec::VectorFunction> makeLike(
+    const std::string& /*name*/,
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config) {
+  return makeLikeFunction(inputArgs, config, std::nullopt);
+}
+
+std::shared_ptr<exec::VectorFunction> makeLikeWithDefaultEscape(
+    const std::string& /*name*/,
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config,
+    char escapeChar) {
+  return makeLikeFunction(inputArgs, config, escapeChar);
 }
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> likeSignatures() {

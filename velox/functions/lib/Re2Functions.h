@@ -225,10 +225,20 @@ PatternMetadata determinePatternKind(
     std::string_view pattern,
     std::optional<char> escapeChar);
 
+/// Returns the like function. Patterns have no escape character if the call
+/// has no escape argument, as in Presto.
 std::shared_ptr<exec::VectorFunction> makeLike(
     const std::string& name,
     const std::vector<exec::VectorFunctionArg>& inputArgs,
     const core::QueryConfig& config);
+
+/// Returns the like function whose patterns use 'escapeChar' as the escape
+/// character if the call has no escape argument, e.g. '\' in Spark.
+std::shared_ptr<exec::VectorFunction> makeLikeWithDefaultEscape(
+    const std::string& name,
+    const std::vector<exec::VectorFunctionArg>& inputArgs,
+    const core::QueryConfig& config,
+    char escapeChar);
 
 std::vector<std::shared_ptr<exec::FunctionSignature>> likeSignatures();
 

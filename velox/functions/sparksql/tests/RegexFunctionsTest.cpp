@@ -250,6 +250,47 @@ TEST_F(RegexFunctionsTest, constantPatternSignatures) {
   }
 }
 
+// Spark escapes patterns with '\' if the call has no escape argument.
+TEST_F(RegexFunctionsTest, likeDefaultEscape) {
+  const auto like = [&](const std::string& input, const std::string& pattern) {
+    return evaluateOnce<bool>(
+        fmt::format("like(c0, '{}')", pattern),
+        std::optional<std::string>(input));
+  };
+  EXPECT_EQ(like("a%", R"(a\%)"), true);
+  EXPECT_EQ(like("ab", R"(a\%)"), false);
+  EXPECT_EQ(like("a_", R"(a\_)"), true);
+  EXPECT_EQ(like("ab", R"(a\_)"), false);
+  EXPECT_EQ(like(R"(a\b)", R"(a\\b)"), true);
+  EXPECT_EQ(like(R"(a\\b)", R"(a\\b)"), false);
+  EXPECT_EQ(like(R"(a\b)", R"(%\\_)"), true);
+  VELOX_ASSERT_USER_THROW(
+      like("ab", R"(a\b)"),
+      "Escape character must be followed by '%', '_' or the escape character itself");
+  VELOX_ASSERT_USER_THROW(
+      like("a", R"(a\)"),
+      "Escape character must be followed by '%', '_' or the escape character itself");
+  EXPECT_EQ(
+      evaluateOnce<bool>(
+          R"(like(c0, 'a\b'))", std::optional<std::string>(std::nullopt)),
+      std::nullopt);
+
+  // An escape argument replaces the default.
+  EXPECT_EQ(
+      evaluateOnce<bool>(
+          R"(like(c0, 'a\b', '#'))", std::optional<std::string>(R"(a\b)")),
+      true);
+
+  // Patterns that aren't constant.
+  auto data = makeRowVector({
+      makeFlatVector<std::string>({"a%", "ab", R"(a\b)", "a_"}),
+      makeFlatVector<std::string>({R"(a\%)", R"(a\%)", R"(a\\b)", R"(a\_)"}),
+  });
+  assertEqualVectors(
+      makeFlatVector<bool>({true, false, true, true}),
+      evaluate("like(c0, c1)", data));
+}
+
 TEST_F(RegexFunctionsTest, regexpExtractDefaultGroupId) {
   // The group id defaults to 1.
   auto data = makeRowVector({
