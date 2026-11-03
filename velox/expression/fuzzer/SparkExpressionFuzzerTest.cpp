@@ -82,6 +82,7 @@ using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::fuzzer::ArrayInsertArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
+using facebook::velox::fuzzer::LikeArgValuesGenerator;
 using facebook::velox::fuzzer::MakeTimestampArgValuesGenerator;
 using facebook::velox::fuzzer::MaskArgValuesGenerator;
 using facebook::velox::fuzzer::PadArgValuesGenerator;
@@ -207,6 +208,7 @@ int main(int argc, char** argv) {
       argValuesGenerators = {
           {"array_insert", std::make_shared<ArrayInsertArgValuesGenerator>()},
           {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()},
+          {"like", std::make_shared<LikeArgValuesGenerator>()},
           {"lpad", std::make_shared<PadArgValuesGenerator>()},
           {"make_timestamp",
            std::make_shared<MakeTimestampArgValuesGenerator>()},

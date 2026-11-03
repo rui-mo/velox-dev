@@ -596,5 +596,74 @@ TEST(ArgValuesGeneratorsTest, regexp) {
   }
 }
 
+TEST(ArgValuesGeneratorsTest, like) {
+  VectorFuzzer::Options options;
+  options.nullRatio = 0.1;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  LikeArgValuesGenerator generator;
+  for (auto numArgs = 2; numArgs <= 3; ++numArgs) {
+    std::vector<bool> constantArgs(numArgs, true);
+    constantArgs[0] = false;
+    const CallableSignature signature{
+        .name = "like",
+        .args = std::vector<TypePtr>(numArgs, VARCHAR()),
+        .returnType = BOOLEAN(),
+        .constantArgs = constantArgs,
+    };
+    SCOPED_TRACE(signature.toString());
+    std::unordered_set<char> escapes;
+    int32_t numWildcards = 0;
+    int32_t numEscaped = 0;
+    int32_t numSubjectColumns = 0;
+    for (auto i = 0; i < 100; ++i) {
+      state.reset();
+      const auto inputs = generator.generate(signature, options, rng, state);
+      ASSERT_EQ(inputs.size(), numArgs);
+      if (inputs[0] != nullptr) {
+        ++numSubjectColumns;
+      }
+
+      // Spark requires an escape argument to be a single-character literal,
+      // and Velox only supports ASCII ones. Spark escapes with '\' by default.
+      char escape = '\\';
+      if (numArgs == 3) {
+        const auto escapeArg =
+            std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[2]);
+        ASSERT_NE(escapeArg, nullptr);
+        ASSERT_FALSE(escapeArg->isNull());
+        const auto& value = escapeArg->value().value<TypeKind::VARCHAR>();
+        ASSERT_EQ(value.size(), 1);
+        ASSERT_LT(static_cast<unsigned char>(value[0]), 0x80);
+        escape = value[0];
+        escapes.insert(escape);
+      }
+
+      // Velox requires a constant pattern.
+      const auto pattern =
+          std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[1]);
+      ASSERT_NE(pattern, nullptr);
+      if (pattern->isNull()) {
+        continue;
+      }
+      const auto& value = pattern->value().value<TypeKind::VARCHAR>();
+      for (auto j = 0; j < value.size(); ++j) {
+        if (value[j] == escape && j + 1 < value.size()) {
+          ++numEscaped;
+          ++j;
+        } else if (value[j] == '%' || value[j] == '_') {
+          ++numWildcards;
+        }
+      }
+    }
+    EXPECT_GT(numSubjectColumns, 20);
+    EXPECT_GT(numWildcards, 50);
+    EXPECT_GT(numEscaped, 10);
+    if (numArgs == 3) {
+      EXPECT_GT(escapes.size(), 4);
+    }
+  }
+}
+
 } // namespace
 } // namespace facebook::velox::fuzzer::test
