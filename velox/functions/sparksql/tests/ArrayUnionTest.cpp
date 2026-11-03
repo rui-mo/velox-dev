@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/functions/sparksql/tests/SparkFunctionBaseTest.h"
 
 using namespace facebook::velox::test;
@@ -44,6 +45,20 @@ TEST_F(ArrayUnionTest, nestedNull) {
   });
 
   testExpression("array_union(c0, c1)", {array1, array2}, expected);
+}
+
+TEST_F(ArrayUnionTest, elementsContainingMaps) {
+  auto maps = makeMapVectorFromJson<int64_t, int64_t>({"{1: 2}"});
+  for (const auto& elements : std::vector<VectorPtr>{
+           maps, makeArrayVector({0}, maps), makeRowVector({maps})}) {
+    auto arrays = makeArrayVector({0}, elements);
+    VELOX_ASSERT_USER_THROW(
+        evaluate("array_union(c0, c1)", makeRowVector({arrays, arrays})),
+        fmt::format(
+            "Scalar function signature is not supported: array_union({}, {})",
+            arrays->type()->toString(),
+            arrays->type()->toString()));
+  }
 }
 
 } // namespace
