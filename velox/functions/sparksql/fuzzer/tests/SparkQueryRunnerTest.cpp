@@ -586,7 +586,7 @@ TEST_F(SparkQueryRunnerTest, DISABLED_expressions) {
   // Spark cannot read struct fields with empty or case-insensitively duplicate
   // names, and reads intervals as integers from Parquet.
   auto input = makeRowVector(
-      {"id", "c0", "c1", "b", "s", "arr", "r", "e", "iv", "dec", "a b"},
+      {"id", "c0", "c1", "b", "s", "arr", "r", "e", "iv", "dec", "a b", "tsr"},
       {makeFlatVector<int64_t>({0, 1, 2, 3, 4}),
        makeNullableFlatVector<int32_t>(
            {1, -2, std::nullopt, 4, std::numeric_limits<int32_t>::max()}),
@@ -608,7 +608,15 @@ TEST_F(SparkQueryRunnerTest, DISABLED_expressions) {
            {0, 14, std::nullopt, -3, 1'000}, INTERVAL_YEAR_MONTH()),
        makeNullableFlatVector<int64_t>(
            {12'345, -1, std::nullopt, 0, 99'999}, DECIMAL(10, 2)),
-       makeFlatVector<int64_t>({10, 20, 30, 40, 50})});
+       makeFlatVector<int64_t>({10, 20, 30, 40, 50}),
+       makeRowVector(
+           {"t"},
+           {makeNullableFlatVector<Timestamp>(
+               {Timestamp(0, 0),
+                Timestamp(1'700'000'000, 123'456'000),
+                Timestamp(-2'000'000'000, 0),
+                std::nullopt,
+                Timestamp(-5'000'000'000, 0)})})});
 
   parse::ParseOptions options;
   options.parseDecimalAsDouble = false;
@@ -650,6 +658,8 @@ TEST_F(SparkQueryRunnerTest, DISABLED_expressions) {
       "array_contains(arr, -3)",
       // Duplicate map keys.
       "str_to_map(concat(s, ',', s), ',', ':')",
+      // Offsets that are not whole hours, including a local mean time.
+      "to_json(tsr, 'Asia/Kathmandu')",
   };
   for (const auto& expression : expressions) {
     verify(
