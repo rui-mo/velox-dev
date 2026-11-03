@@ -770,6 +770,9 @@ def cmd_sql(args, _):
     python = HOME / "venv" / "bin" / "python"
     if Path(sys.prefix).resolve() != (HOME / "venv").resolve() and python.exists():
         os.execv(str(python), [str(python), __file__] + sys.argv[1:])
+    # The Spark Connect client retries a server that is down for minutes.
+    if not server_is_up(args.spark_url):
+        restart_server(args.spark_url)
     from pyspark.sql import SparkSession
 
     host, port = server_address(args.spark_url)
