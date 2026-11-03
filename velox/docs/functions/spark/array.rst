@@ -52,7 +52,8 @@ Array Functions
 
 .. spark:function:: array_except(array(E) x, array(E) y) -> array(E)
 
-    Returns an array of the elements in array ``x`` but not in array ``y``, without duplicates. ::
+    Returns an array of the elements in array ``x`` but not in array ``y``, without duplicates.
+    Elements can't be or contain maps. ::
 
         SELECT array_except(ARRAY [1, 2, 3], ARRAY [4, 5, 6]); -- [1, 2, 3]
         SELECT array_except(ARRAY [1, 2, 3], ARRAY [1, 2]); -- [3]

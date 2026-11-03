@@ -90,6 +90,7 @@ void registerSparkArrayFunctions(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_distinct, prefix + "array_distinct");
   restrictToOrderableTypes(prefix + "array_distinct");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, prefix + "array_except");
+  restrictToOrderableTypes(prefix + "array_except");
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_array_intersect, prefix + "array_intersect");
   restrictToOrderableTypes(prefix + "array_intersect");
