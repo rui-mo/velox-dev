@@ -646,9 +646,15 @@ std::string toCallSql(const core::CallTypedExpr& call) {
       inputs[1]->type()->size() != 3) {
     VELOX_UNSUPPORTED("Spark does not support array_sort with a key function");
   }
-  // Spark takes options, not a time zone.
-  if (name == "to_json" && inputs.size() != 1) {
-    VELOX_UNSUPPORTED("Spark does not support to_json with a time zone");
+  // Spark takes the time zone as an option.
+  if (name == "to_json" && inputs.size() == 2) {
+    if (!toConstantValue(inputs[1]).has_value()) {
+      VELOX_UNSUPPORTED("Spark requires a constant time zone for to_json");
+    }
+    return fmt::format(
+        "to_json({}, map('timeZone', {}))",
+        toSparkSql(inputs[0]),
+        toSparkSql(inputs[1]));
   }
 
   static const std::unordered_map<std::string, std::string> kRenamedFunctions{

@@ -397,6 +397,12 @@ TEST_F(SparkSqlTest, functions) {
       "extract(YEAROFWEEK FROM CAST(ts AS DATE))");
   EXPECT_EQ(toSql("get_timestamp(s, 'yyyy')"), "to_timestamp(s, 'yyyy')");
   EXPECT_EQ(
+      toSql("to_json(r, 'Asia/Kolkata')"),
+      "to_json(r, map('timeZone', 'Asia/Kolkata'))");
+  VELOX_ASSERT_UNSUPPORTED_THROW(
+      toSql("to_json(r, s)"),
+      "Spark requires a constant time zone for to_json");
+  EXPECT_EQ(
       toSql("array_sort(arr, (x, y) -> if(lessthan(x, y), 1, 0))"),
       "array_sort(arr, (x, y) -> IF((x < y), 1, 0))");
   VELOX_ASSERT_UNSUPPORTED_THROW(
