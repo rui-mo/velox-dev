@@ -131,7 +131,8 @@ Array Functions
 
 .. spark:function:: array_position(x, element) -> bigint
 
-    Returns the position (1-based) of the first occurrence of the ``element`` in array ``x`` (or 0 if not found). ::
+    Returns the position (1-based) of the first occurrence of the ``element`` in array ``x`` (or 0 if not found).
+    Elements can't be or contain maps. ::
 
         SELECT array_position(array(1, 2, 3), 2); -- 2
         SELECT array_position(array(1, 2, 3), 4); -- 0
