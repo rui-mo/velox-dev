@@ -61,7 +61,7 @@ Map Functions
 .. spark:function:: map_from_entries(array(struct(K,V))) -> map(K,V)
 
     Returns a map created from the given array of entries. Throws exception if duplicate key or NULL
-    key is found. Returns NULL if NULL entry exists. ::
+    key is found. Returns NULL if NULL entry exists. Keys can't be or contain maps. ::
 
         SELECT map_from_entries(array(struct(1, 'a'), struct(2, 'null'))); -- {1 -> 'a', 2 -> 'null'}
         SELECT map_from_entries(array(struct(1, 'a'), null)); -- {null}
