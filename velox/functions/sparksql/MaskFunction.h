@@ -197,7 +197,7 @@ struct MaskFunction {
       auto maskCharData = maskChar->data();
       auto maskCharSize = maskChar->size();
       if (maskCharSize == 1) {
-        return std::string_view(maskCharData);
+        return std::string_view(maskCharData, maskCharSize);
       }
 
       VELOX_USER_CHECK_NE(
