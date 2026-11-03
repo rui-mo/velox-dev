@@ -420,4 +420,22 @@ class RegexpArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark like. Patterns are constants, as Velox
+/// requires, of literal characters, wildcards and escape sequences, and rarely
+/// have invalid escapes. Random patterns rarely have wildcards. Escapes are
+/// constant single ASCII characters, since Spark requires a single-character
+/// literal and Velox only supports ASCII escapes. Without an escape argument,
+/// patterns escape with '\', as in Spark. Strings to match are sometimes short
+/// strings of the characters of the patterns.
+class LikeArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~LikeArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer

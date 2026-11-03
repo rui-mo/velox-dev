@@ -245,6 +245,11 @@ replacements for the patterns, see ``RegexpArgValuesGenerator``. A column of pat
 few distinct values, since Velox compiles at most ``expression.max_compiled_regexes`` patterns
 per function.
 
+Random strings rarely have the wildcards of ``like`` patterns, and Spark requires the escape to be
+a single-character literal. So Spark Expression Fuzzer generates constant ``like`` patterns of
+literal characters, wildcards and escape sequences, which rarely have invalid escapes, and
+single ASCII escape characters, see ``LikeArgValuesGenerator``.
+
 The scripts in ``scripts/spark-fuzzer`` set up a Spark Connect server for the Spark fuzzers, run
 Spark Expression Fuzzer with Spark as the source of truth with many seeds, group the failures
 by their causes and reproduce them. See ``scripts/spark-fuzzer/README.md``.

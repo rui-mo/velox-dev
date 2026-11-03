@@ -1432,4 +1432,107 @@ std::vector<core::TypedExprPtr> RegexpArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+namespace {
+
+// Literal characters of like patterns and the strings to match, including
+// characters that regular expressions treat specially, line feeds and
+// multi-byte characters.
+const std::vector<std::string>& likeCharacters() {
+  static const std::vector<std::string> kCharacters{
+      "a", "b", "A", "1", ".", "*", "[", "(", "$", "^", "|", "\n", "é", "日"};
+  return kCharacters;
+}
+
+// Generates short strings of the characters of like patterns, including
+// wildcards and escape characters.
+class LikeSubjectGenerator : public AbstractInputGenerator {
+ public:
+  LikeSubjectGenerator(size_t seed, const TypePtr& type, double nullRatio)
+      : AbstractInputGenerator(seed, type, nullptr, nullRatio) {}
+
+  variant generate() override {
+    if (coinToss(rng_, nullRatio_)) {
+      return variant::null(type_->kind());
+    }
+    static const std::vector<std::string> kSpecialCharacters{
+        "%", "_", "\\", "#", "/", "!", "'"};
+    std::string subject;
+    const auto length = rand<int32_t>(rng_, 0, 6);
+    for (auto i = 0; i < length; ++i) {
+      subject += coinToss(rng_, 0.2) ? randElement(kSpecialCharacters, rng_)
+                                     : randElement(likeCharacters(), rng_);
+    }
+    return variant(subject);
+  }
+};
+
+// Returns a like pattern of literal characters, wildcards and sequences of
+// 'escape' and the character it escapes. Rarely, 'escape' precedes another
+// character or ends the pattern, for which Velox and Spark throw.
+std::string makeLikePattern(char escape, FuzzerGenerator& rng) {
+  const std::string escapeString(1, escape);
+  const std::vector<std::string> escaped{"%", "_", escapeString};
+  std::string pattern;
+  const auto length = rand<int32_t>(rng, 0, 6);
+  for (auto i = 0; i < length; ++i) {
+    const auto kind = rand<int32_t>(rng, 0, 9);
+    std::string part;
+    if (kind < 4) {
+      part = randElement(likeCharacters(), rng);
+    } else if (kind < 8) {
+      part = coinToss(rng, 0.6) ? "%" : "_";
+    } else {
+      part = escapeString + randElement(escaped, rng);
+    }
+    // A single escape character would escape the next part.
+    if (part != escapeString) {
+      pattern += part;
+    }
+  }
+  if (coinToss(rng, 0.03)) {
+    pattern += escape;
+    if (coinToss(rng, 0.5)) {
+      pattern += escape == 'a' ? 'b' : 'a';
+    }
+  }
+  return pattern;
+}
+
+} // namespace
+
+std::vector<core::TypedExprPtr> LikeArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  const auto& args = signature.args;
+  VELOX_CHECK_GE(args.size(), 2);
+  VELOX_CHECK_LE(args.size(), 3);
+
+  // The fuzzer generates the string to match half of the time.
+  std::vector<core::TypedExprPtr> inputExpressions(args.size(), nullptr);
+  if (coinToss(rng, 0.5)) {
+    inputExpressions[0] = addColumn(
+        args[0],
+        std::make_shared<LikeSubjectGenerator>(
+            rand<uint32_t>(rng), args[0], options.nullRatio),
+        state);
+  }
+
+  char escape = '\\';
+  if (args.size() == 3) {
+    static const std::vector<char> kEscapes{
+        '\\', '#', '/', '!', '\'', 'a', '%', '_'};
+    escape = randElement(kEscapes, rng);
+    inputExpressions[2] =
+        makeConstant(args[2], variant(std::string(1, escape)));
+  }
+
+  inputExpressions[1] = makeConstant(
+      args[1],
+      coinToss(rng, options.nullRatio) ? variant::null(TypeKind::VARCHAR)
+                                       : variant(makeLikePattern(escape, rng)));
+  return inputExpressions;
+}
+
 } // namespace facebook::velox::fuzzer
