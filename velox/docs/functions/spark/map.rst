@@ -11,7 +11,8 @@ Map Functions
     Returns a map created using the given key/value pairs. If there is duplicate key, by default that
     key's value comes from last value for that key in the arguments.
     If configuration `throw_exception_on_duplicate_map_keys` is set true,
-    throws exception for duplicate keys. Keys are not allowed to be null. ::
+    throws exception for duplicate keys. Keys are not allowed to be null. Keys can't be or contain
+    maps. ::
 
         SELECT map(1, 2, 3, 4); -- {1 -> 2, 3 -> 4}
         SELECT map(1, 2, 3, 4, 1, 5); -- {1 -> 5, 3 -> 4} (LAST_WIN behavior)

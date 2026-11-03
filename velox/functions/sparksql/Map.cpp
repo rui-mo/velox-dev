@@ -344,9 +344,18 @@ class MapFunction : public exec::VectorFunction {
     std::vector<std::shared_ptr<exec::FunctionSignature>> signatures;
     constexpr int kNumberOfSignatures = 10;
     signatures.reserve(kNumberOfSignatures + 1);
+    // Spark rejects keys that are or contain a map, which are the types that
+    // Velox can't order.
+    const exec::SignatureVariable keyType(
+        "K",
+        "",
+        exec::ParameterType::kTypeParameter,
+        /*knownTypesOnly=*/true,
+        /*orderableTypesOnly=*/true,
+        /*comparableTypesOnly=*/true);
     for (int i = 1; i <= kNumberOfSignatures; i++) {
       auto builder = exec::FunctionSignatureBuilder()
-                         .knownTypeVariable("K")
+                         .variable(keyType)
                          .typeVariable("V")
                          .returnType("map(K,V)");
       for (int arg = 0; arg < i; arg++) {
@@ -356,7 +365,7 @@ class MapFunction : public exec::VectorFunction {
     }
     signatures.push_back(
         exec::FunctionSignatureBuilder()
-            .knownTypeVariable("K")
+            .variable(keyType)
             .typeVariable("V")
             .returnType("map(K,V)")
             .argumentType("K")

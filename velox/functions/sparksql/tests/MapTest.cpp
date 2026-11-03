@@ -314,6 +314,38 @@ TEST_F(MapTest, errorCases) {
       "Cannot use null as map key");
 }
 
+TEST_F(MapTest, keysContainingMaps) {
+  auto mapKeys = makeMapVectorFromJson<int64_t, int64_t>({"{1: 2}"});
+  auto values = makeFlatVector<int64_t>({3});
+  testMapFails(
+      "map(c0, c1)",
+      {mapKeys, values},
+      "Scalar function signature is not supported: map(MAP<BIGINT,BIGINT>, BIGINT)");
+  testMapFails(
+      "map(c0, c1)",
+      {makeArrayVector({0}, mapKeys), values},
+      "Scalar function signature is not supported: map(ARRAY<MAP<BIGINT,BIGINT>>, BIGINT)");
+  testMapFails(
+      "map(c0, c1)",
+      {makeRowVector({mapKeys}), values},
+      "Scalar function signature is not supported: map(ROW<c0:MAP<BIGINT,BIGINT>>, BIGINT)");
+
+  // The variadic signature for more than 10 pairs.
+  constexpr int32_t kNumPairs{11};
+  std::vector<VectorPtr> args;
+  std::vector<std::string> names;
+  for (int32_t i{0}; i < kNumPairs; ++i) {
+    args.push_back(mapKeys);
+    args.push_back(values);
+    names.push_back(fmt::format("c{}", 2 * i));
+    names.push_back(fmt::format("c{}", 2 * i + 1));
+  }
+  testMapFails(
+      fmt::format("map({})", fmt::join(names, ", ")),
+      args,
+      "Scalar function signature is not supported");
+}
+
 TEST_F(MapTest, complexTypes) {
   auto makeSingleMapVector = [&](const VectorPtr& keyVector,
                                  const VectorPtr& valueVector) {
@@ -349,13 +381,11 @@ TEST_F(MapTest, complexTypes) {
   testSingleMap(arrayKey, arrayValue);
 
   testSingleMap(
-      makeSingleMapVector(makeSingleRowVector(), makeSingleRowVector(1, 3)),
+      makeSingleRowVector(),
       makeSingleMapVector(makeSingleRowVector(), makeSingleRowVector(1, 2)));
 
   testSingleMap(
-      makeSingleMapVector(
-          makeSingleMapVector(makeSingleRowVector(), makeSingleRowVector()),
-          makeSingleRowVector()),
+      arrayKey,
       makeSingleMapVector(
           arrayKey,
           makeSingleMapVector(makeSingleRowVector(), makeSingleRowVector())));
@@ -436,20 +466,6 @@ TEST_F(MapTest, complexTypesWithNestedNullsDuplicateMapKey) {
   auto valuesForKey2 = makeArrayVector<std::string>(
       {{"x", "y", "z"}, {"p", "q", "r"}, {"s", "t", "u"}});
 
-  // Create complex type with map containing null values.
-  auto mapKey1 = makeMapVector<int64_t, int64_t>(
-      {{{1, 10}, {2, std::nullopt}},
-       {{3, 30}, {4, std::nullopt}},
-       {{5, 50}, {6, 60}}});
-  auto valueForMapKey1 = makeFlatVector<int64_t>({100, 200, 300});
-
-  // Create duplicate complex map key with the same null pattern.
-  auto mapKey2 = makeMapVector<int64_t, int64_t>(
-      {{{1, 10}, {2, std::nullopt}},
-       {{30, 300}, {40, 400}},
-       {{50, 500}, {60, 600}}});
-  auto valueForMapKey2 = makeFlatVector<int64_t>({1000, 2000, 3000});
-
   // Deduplicate map keys based on LAST_WIN policy.
   queryCtx_->testingOverrideConfigUnsafe(
       {{core::QueryConfig::kThrowExceptionOnDuplicateMapKeys, "false"}});
@@ -476,49 +492,29 @@ TEST_F(MapTest, complexTypesWithNestedNullsDuplicateMapKey) {
       {arrayKeysWithNull1, valuesForKey1, arrayKeysWithNull2, valuesForKey2},
       expectedArrayMap);
 
-  // Test case 2: Map keys with nulls.
-  // Expected: {{1, 10}, {2, null}} appears twice, last value 1000 wins.
-  auto expectedMapOfMap = makeMapVector(
-      {0, 1, 3},
-      makeMapVector<int64_t, int64_t>(
-          {{{1, 10}, {2, std::nullopt}},
-           {{3, 30}, {4, std::nullopt}},
-           {{30, 300}, {40, 400}},
-           {{5, 50}, {6, 60}},
-           {{50, 500}, {60, 600}}}),
-      makeFlatVector<int64_t>({1000, 200, 2000, 300, 3000}));
-
-  testMap(
-      "map(c0, c1, c2, c3)",
-      {mapKey1, valueForMapKey1, mapKey2, valueForMapKey2},
-      expectedMapOfMap);
-
-  // Test case 3: Test with deeply nested structures containing nulls.
-  auto rowKey1 = makeRowVector(
-      {makeNullableArrayVector<int64_t>({{1, std::nullopt, 3}}),
-       makeMapVector<int64_t, int64_t>({{{1, 10}, {2, std::nullopt}}})});
+  // Test case 2: Test with deeply nested structures containing nulls.
+  auto makeRowKey = [&]() {
+    return makeRowVector(
+        {makeNullableArrayVector<int64_t>({{1, std::nullopt, 3}}),
+         makeRowVector({makeNullableFlatVector<int64_t>({std::nullopt})})});
+  };
+  auto rowKey1 = makeRowKey();
   auto valueForRow1 = makeFlatVector<std::string>({"first"});
 
   // Duplicate row key with same null pattern.
-  auto rowKey2 = makeRowVector(
-      {makeNullableArrayVector<int64_t>({{1, std::nullopt, 3}}),
-       makeMapVector<int64_t, int64_t>({{{1, 10}, {2, std::nullopt}}})});
+  auto rowKey2 = makeRowKey();
   auto valueForRow2 = makeFlatVector<std::string>({"last"});
 
   // Expected: Complex row with nulls appears twice, last value "last" wins.
-  auto expectedRowMap = makeMapVector(
-      {0},
-      makeRowVector(
-          {makeNullableArrayVector<int64_t>({{1, std::nullopt, 3}}),
-           makeMapVector<int64_t, int64_t>({{{1, 10}, {2, std::nullopt}}})}),
-      makeFlatVector<std::string>({"last"}));
+  auto expectedRowMap =
+      makeMapVector({0}, makeRowKey(), makeFlatVector<std::string>({"last"}));
 
   testMap(
       "map(c0, c1, c2, c3)",
       {rowKey1, valueForRow1, rowKey2, valueForRow2},
       expectedRowMap);
 
-  // Test case 4: Test with exception throwing enabled.
+  // Test case 3: Test with exception throwing enabled.
   queryCtx_->testingOverrideConfigUnsafe(
       {{core::QueryConfig::kThrowExceptionOnDuplicateMapKeys, "true"}});
 
@@ -526,11 +522,6 @@ TEST_F(MapTest, complexTypesWithNestedNullsDuplicateMapKey) {
       "map(c0, c1, c2, c3)",
       {arrayKeysWithNull1, valuesForKey1, arrayKeysWithNull2, valuesForKey2},
       "Duplicate map key was found: {1, null, 3}");
-
-  testMapFails(
-      "map(c0, c1, c2, c3)",
-      {mapKey1, valueForMapKey1, mapKey2, valueForMapKey2},
-      "Duplicate map key was found: {1 => 10, 2 => null}");
 }
 
 TEST_F(MapTest, lastWinKeepsFirstPositionAndLastValue) {
