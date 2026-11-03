@@ -16,8 +16,16 @@
 
 #include "velox/functions/sparksql/specialforms/SparkCastHooks.h"
 
+#include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <limits>
+#include <optional>
+#include <string_view>
+
+#include <folly/Range.h>
 
 #include "velox/common/base/VeloxException.h"
 #include "velox/functions/lib/string/StringImpl.h"
@@ -34,6 +42,209 @@ namespace {
 // Max DATE magnitude before TIMESTAMP_NTZ's microseconds-since-epoch range
 // overflows. Spark throws here unconditionally, ANSI or not.
 constexpr int64_t kMaxTimestampUtcDays = 106'751'991;
+
+bool equalsIgnoreAsciiCase(std::string_view text, std::string_view expected) {
+  return text.size() == expected.size() &&
+      std::equal(
+             text.begin(),
+             text.end(),
+             expected.begin(),
+             folly::AsciiCaseInsensitive{});
+}
+
+bool isAsciiDigit(char c) {
+  return c >= '0' && c <= '9';
+}
+
+// Returns the value of hexadecimal digit 'c', or -1 if 'c' is not one.
+int hexDigitValue(char c) {
+  if (isAsciiDigit(c)) {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
+
+// Returns true if 'text' is a decimal number as Java writes it, without sign
+// and type suffix: digits with an optional decimal point, then an optional
+// exponent. For example, '5.', '.5' and '1.5e-3'.
+bool isJavaDecimal(std::string_view text) {
+  size_t pos = 0;
+  size_t numDigits = 0;
+  bool seenDot = false;
+  for (; pos < text.size(); ++pos) {
+    if (isAsciiDigit(text[pos])) {
+      ++numDigits;
+    } else if (text[pos] == '.' && !seenDot) {
+      seenDot = true;
+    } else {
+      break;
+    }
+  }
+  if (numDigits == 0) {
+    return false;
+  }
+  if (pos < text.size() && (text[pos] == 'e' || text[pos] == 'E')) {
+    ++pos;
+    if (pos < text.size() && (text[pos] == '+' || text[pos] == '-')) {
+      ++pos;
+    }
+    const size_t exponentStart = pos;
+    while (pos < text.size() && isAsciiDigit(text[pos])) {
+      ++pos;
+    }
+    if (pos == exponentStart) {
+      return false;
+    }
+  }
+  return pos == text.size();
+}
+
+// Parses a hexadecimal number as Java writes it, after the sign and '0x' and
+// without type suffix. For example, '1.8p1' for '-0x1.8p1f'. The binary
+// exponent after 'p' is required. Rounds to the nearest value of T, and to the
+// even one for ties. Returns std::nullopt if 'text' is malformed.
+template <typename T>
+std::optional<T> parseHexFloatingPoint(std::string_view text, bool negative) {
+  // The value is significand * 2^exponent. The significand keeps the leading
+  // 61 to 64 bits. Rounding only needs to know if the other digits are zero.
+  uint64_t significand = 0;
+  bool sticky = false;
+  int64_t exponent = 0;
+  size_t numDigits = 0;
+  bool seenDot = false;
+  size_t pos = 0;
+  for (; pos < text.size(); ++pos) {
+    if (text[pos] == '.' && !seenDot) {
+      seenDot = true;
+      continue;
+    }
+    const int digit = hexDigitValue(text[pos]);
+    if (digit < 0) {
+      break;
+    }
+    ++numDigits;
+    if (significand < (uint64_t{1} << 60)) {
+      significand = significand * 16 + digit;
+      if (seenDot) {
+        exponent -= 4;
+      }
+    } else {
+      sticky |= digit != 0;
+      if (!seenDot) {
+        exponent += 4;
+      }
+    }
+  }
+  if (numDigits == 0 || pos == text.size() ||
+      (text[pos] != 'p' && text[pos] != 'P')) {
+    return std::nullopt;
+  }
+  ++pos;
+  bool negativeExponent = false;
+  if (pos < text.size() && (text[pos] == '+' || text[pos] == '-')) {
+    negativeExponent = text[pos] == '-';
+    ++pos;
+  }
+  const size_t exponentStart = pos;
+  int64_t binaryExponent = 0;
+  for (; pos < text.size() && isAsciiDigit(text[pos]); ++pos) {
+    if (binaryExponent <= std::numeric_limits<int32_t>::max()) {
+      binaryExponent = binaryExponent * 10 + (text[pos] - '0');
+    }
+  }
+  if (pos == exponentStart || pos != text.size()) {
+    return std::nullopt;
+  }
+
+  using Limits = std::numeric_limits<T>;
+  const T zero = negative ? -T(0) : T(0);
+  const T infinity = negative ? -Limits::infinity() : Limits::infinity();
+  if (significand == 0) {
+    return zero;
+  }
+  // Java reads the exponent as an int. Larger ones give zero or infinity.
+  if (binaryExponent > std::numeric_limits<int32_t>::max()) {
+    return negativeExponent ? zero : infinity;
+  }
+  exponent += negativeExponent ? -binaryExponent : binaryExponent;
+
+  // Move the leading one bit to bit 63. The value is then in
+  // [2^topExponent, 2^(topExponent + 1)).
+  const int shift = std::countl_zero(significand);
+  significand <<= shift;
+  exponent -= shift;
+  const int64_t topExponent = exponent + 63;
+  if (topExponent > Limits::max_exponent - 1) {
+    return infinity;
+  }
+  // Subnormal values keep fewer bits.
+  const int64_t keptBits = Limits::digits -
+      std::max<int64_t>(0, Limits::min_exponent - 1 - topExponent);
+  if (keptBits < 0) {
+    return zero;
+  }
+  const int droppedBits = static_cast<int>(64 - keptBits);
+  uint64_t kept = droppedBits == 64 ? 0 : significand >> droppedBits;
+  const uint64_t remainder = droppedBits == 64
+      ? significand
+      : significand & ((uint64_t{1} << droppedBits) - 1);
+  const uint64_t half = uint64_t{1} << (droppedBits - 1);
+  if (remainder > half || (remainder == half && (sticky || (kept & 1)))) {
+    ++kept;
+  }
+  const T value = std::ldexp(
+      static_cast<T>(kept), static_cast<int>(exponent + droppedBits));
+  return negative ? -value : value;
+}
+
+// Spark parses the string with Java's Float.parseFloat or Double.parseDouble.
+// If that fails, Spark accepts 'inf', 'infinity' and 'nan' in any letter case,
+// the first two with an optional sign.
+template <typename T>
+Expected<T> castStringToFloatingPoint(std::string_view input) {
+  using Limits = std::numeric_limits<T>;
+  const bool negative = !input.empty() && input[0] == '-';
+  const size_t signLength =
+      !input.empty() && (input[0] == '+' || input[0] == '-') ? 1 : 0;
+  std::string_view text = input.substr(signLength);
+  // Java accepts 'NaN' with an optional sign.
+  if (text == "NaN" ||
+      (signLength == 0 && equalsIgnoreAsciiCase(text, "nan"))) {
+    return Limits::quiet_NaN();
+  }
+  if (equalsIgnoreAsciiCase(text, "inf") ||
+      equalsIgnoreAsciiCase(text, "infinity")) {
+    return negative ? -Limits::infinity() : Limits::infinity();
+  }
+  // Java accepts a type suffix after a number, e.g. '1.5f' or '0x1p3d'.
+  if (!text.empty() &&
+      (text.back() == 'f' || text.back() == 'F' || text.back() == 'd' ||
+       text.back() == 'D')) {
+    text.remove_suffix(1);
+  }
+  if (text.size() >= 2 && text[0] == '0' &&
+      (text[1] == 'x' || text[1] == 'X')) {
+    if (const auto value = parseHexFloatingPoint<T>(text.substr(2), negative)) {
+      return *value;
+    }
+  } else if (isJavaDecimal(text)) {
+    constexpr auto kKind =
+        std::is_same_v<T, float> ? TypeKind::REAL : TypeKind::DOUBLE;
+    return util::Converter<kKind>::tryCast(
+        input.substr(0, signLength + text.size()));
+  }
+  if (threadSkipErrorDetails()) {
+    return folly::makeUnexpected(Status::UserError());
+  }
+  return folly::makeUnexpected(
+      Status::UserError("Invalid floating-point number"));
+}
 
 } // namespace
 
@@ -184,12 +395,12 @@ Expected<int64_t> SparkCastHooks::castStringToTime(
 }
 
 Expected<float> SparkCastHooks::castStringToReal(const StringView& data) const {
-  return util::Converter<TypeKind::REAL>::tryCast(data);
+  return castStringToFloatingPoint<float>(data);
 }
 
 Expected<double> SparkCastHooks::castStringToDouble(
     const StringView& data) const {
-  return util::Converter<TypeKind::DOUBLE>::tryCast(data);
+  return castStringToFloatingPoint<double>(data);
 }
 
 StringView SparkCastHooks::removeWhiteSpaces(const StringView& view) const {

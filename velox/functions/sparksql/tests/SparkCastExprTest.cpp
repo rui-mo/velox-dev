@@ -1746,18 +1746,139 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
     EXPECT_TRUE(realSignBit("-0"));
     EXPECT_FALSE(doubleSignBit("+0"));
     EXPECT_TRUE(doubleSignBit("-0"));
+    EXPECT_TRUE(realSignBit("-0x0p0"));
+    EXPECT_TRUE(doubleSignBit("-0d"));
+    EXPECT_TRUE(doubleSignBit("-0x1p-1076"));
 
     // Overflow yields Infinity rather than an error, matching Spark.
     testCast<std::string, float>("real", {"1e39"}, {kInf});
     testCast<std::string, float>("real", {"-1e39"}, {-kInf});
     testCast<std::string, double>("double", {"1e309"}, {doubleInfinity});
     testCast<std::string, double>("double", {"-1e309"}, {-doubleInfinity});
+
+    // Spark parses strings with Java's Float.parseFloat and Double.parseDouble.
+    // They accept a type suffix, hexadecimal significands with a binary
+    // exponent, and a sign before NaN.
+    const std::vector<std::optional<std::string>> javaLiterals{
+        "9f",
+        "1.5D",
+        "+.5e1F",
+        "5.d",
+        "0x1p3",
+        "-0X1.8P1f",
+        "0x.8p1",
+        "0xAbC.dEfp-4",
+        "0x0000001p0",
+        "+NaN",
+        "-NaN",
+        "+Infinity",
+        "+inf"};
+    testCast<std::string, float>(
+        "real",
+        javaLiterals,
+        {9.0f,
+         1.5f,
+         5.0f,
+         5.0f,
+         8.0f,
+         -3.0f,
+         1.0f,
+         0xAbC.dEfp-4f,
+         1.0f,
+         kNan,
+         kNan,
+         kInf,
+         kInf});
+    testCast<std::string, double>(
+        "double",
+        javaLiterals,
+        {9.0,
+         1.5,
+         5.0,
+         5.0,
+         8.0,
+         -3.0,
+         1.0,
+         0xAbC.dEfp-4,
+         1.0,
+         doubleNan,
+         doubleNan,
+         doubleInfinity,
+         doubleInfinity});
+
+    // Hexadecimal significands round to the nearest value, and to the even one
+    // for ties. A zero significand is zero for any exponent. Other exponents
+    // beyond the range of int are zero or Infinity.
+    testCast<std::string, float>(
+        "real",
+        {"0x1.000001p0",
+         "0x1.000003p0",
+         "0x1.0000010000001p0",
+         "0x1FFFFFFp0",
+         "0x1.fffffefffffffp127",
+         "0x1.ffffffp127",
+         "0x1p200d",
+         "0x1.8p-149",
+         "0x1p-150",
+         "0x1.0000000000001p-150",
+         "0x0p99999999999",
+         "0x1p2147483647",
+         "0x1p-2147483648",
+         "-0x1p2147483648"},
+        {1.0f,
+         0x1.000004p0f,
+         0x1.000002p0f,
+         0x2000000p0f,
+         std::numeric_limits<float>::max(),
+         kInf,
+         kInf,
+         0x1p-148f,
+         0.0f,
+         std::numeric_limits<float>::denorm_min(),
+         0.0f,
+         kInf,
+         0.0f,
+         -kInf});
+    testCast<std::string, double>(
+        "double",
+        {"0x1.00000000000008p0",
+         "0x1.000000000000080000001p0",
+         "0x1.000000000000180p0",
+         "0x123456789abcdef0123p0",
+         "0x1.fffffffffffff7ffp1023",
+         "0x1.fffffffffffff8p1023",
+         "0x1p200f",
+         "0x1.8p-1075",
+         "0x1p-1075",
+         "0x1.0000001p-1075",
+         "0x0.0000000000001p-1022",
+         "0x0p99999999999",
+         "0x1p2147483647",
+         "0x1p-2147483648",
+         "-0x1p2147483648"},
+        {1.0,
+         0x1.0000000000001p0,
+         0x1.0000000000002p0,
+         0x1.23456789abcdfp72,
+         std::numeric_limits<double>::max(),
+         doubleInfinity,
+         0x1p200,
+         std::numeric_limits<double>::denorm_min(),
+         0.0,
+         std::numeric_limits<double>::denorm_min(),
+         std::numeric_limits<double>::denorm_min(),
+         0.0,
+         doubleInfinity,
+         0.0,
+         -doubleInfinity});
   }
 
   // Malformed string-to-real/double inputs. ANSI mode throws on these; legacy
   // mode returns NULL. Both fixtures share this input set.
   static std::vector<std::string> invalidStringToRealDoubleInputs() {
-    return {"abc", "1.2a", "1.2.3", "xyz123"};
+    return {"abc",    "1.2a", "1.2.3", "xyz123", "-nan",   "+nan",   "NaNf",
+            "9ff",    "9 f",  "1L",    "f",      ".e5",    "1e",     "0x1",
+            "0x1.8f", "0x1p", "0xp3",  "0x.p0",  "00x1p3", "0x1p3.5"};
   }
 
   template <typename T>

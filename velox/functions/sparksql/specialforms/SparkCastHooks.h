@@ -62,12 +62,14 @@ class SparkCastHooks : public exec::CastHooks {
       const tz::TimeZone* timeZone,
       int64_t sessionStartTimeMs) const override;
 
-  // Allows casting 'NaN', 'Infinity', '-Infinity', 'Inf', '-Inf', and these
-  // strings with different letter cases to real.
+  // Parses the string as Java's Float.parseFloat does, e.g. '1.5f' and
+  // '0x1.8p1'. Also allows 'inf', 'infinity' and 'nan' in any letter case, the
+  // first two with an optional sign.
   Expected<float> castStringToReal(const StringView& data) const override;
 
-  // Allows casting 'NaN', 'Infinity', '-Infinity', 'Inf', '-Inf', and these
-  // strings with different letter cases to double.
+  // Parses the string as Java's Double.parseDouble does, e.g. '1.5d' and
+  // '0x1.8p1'. Also allows 'inf', 'infinity' and 'nan' in any letter case, the
+  // first two with an optional sign.
   Expected<double> castStringToDouble(const StringView& data) const override;
 
   /// When casting from string to integral, floating-point, decimal, date, and
