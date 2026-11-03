@@ -83,7 +83,8 @@ Array Functions
 
 .. spark:function:: array_intersect(array(E), array(E1)) -> array(E2)
 
-    Returns an array of the elements in the intersection of array1 and array2, without duplicates. ::
+    Returns an array of the elements in the intersection of array1 and array2, without duplicates.
+    Elements can't be or contain maps. ::
 
         SELECT array_intersect(array(1, 2, 3), array(1, 3, 5)); -- [1,3]
 
