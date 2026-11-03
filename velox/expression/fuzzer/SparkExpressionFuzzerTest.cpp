@@ -83,6 +83,7 @@ using facebook::velox::fuzzer::ArrayInsertArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
 using facebook::velox::fuzzer::MakeTimestampArgValuesGenerator;
+using facebook::velox::fuzzer::MaskArgValuesGenerator;
 using facebook::velox::fuzzer::PadArgValuesGenerator;
 using facebook::velox::fuzzer::RegexpArgValuesGenerator;
 using facebook::velox::fuzzer::RepeatArgValuesGenerator;
@@ -210,6 +211,7 @@ int main(int argc, char** argv) {
            std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"make_timestamp_ntz",
            std::make_shared<MakeTimestampArgValuesGenerator>()},
+          {"mask", std::make_shared<MaskArgValuesGenerator>()},
           {"regexp_extract", std::make_shared<RegexpArgValuesGenerator>()},
           {"regexp_extract_all", std::make_shared<RegexpArgValuesGenerator>()},
           {"regexp_instr", std::make_shared<RegexpArgValuesGenerator>()},

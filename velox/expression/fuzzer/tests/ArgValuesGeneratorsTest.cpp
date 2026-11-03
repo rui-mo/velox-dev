@@ -427,6 +427,64 @@ TEST(ArgValuesGeneratorsTest, timestampAddDiff) {
   }
 }
 
+TEST(ArgValuesGeneratorsTest, mask) {
+  VectorFuzzer::Options options;
+  options.nullRatio = 0.2;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  MaskArgValuesGenerator generator;
+  for (auto numArgs = 1; numArgs <= 5; ++numArgs) {
+    const CallableSignature signature{
+        .name = "mask",
+        .args = std::vector<TypePtr>(numArgs, VARCHAR()),
+        .returnType = VARCHAR(),
+        .constantArgs = std::vector<bool>(numArgs, false),
+    };
+    SCOPED_TRACE(signature.toString());
+    int32_t numNulls = 0;
+    std::unordered_set<std::string> replacements;
+    for (auto i = 0; i < 100; ++i) {
+      state.reset();
+      const auto inputs = generator.generate(signature, options, rng, state);
+
+      // The fuzzer generates the string to mask. Spark requires each
+      // replacement to be a constant NULL or single character.
+      ASSERT_EQ(inputs.size(), numArgs);
+      EXPECT_EQ(inputs[0], nullptr);
+      for (auto j = 1; j < numArgs; ++j) {
+        const auto replacement =
+            std::dynamic_pointer_cast<const core::ConstantTypedExpr>(inputs[j]);
+        ASSERT_NE(replacement, nullptr);
+        if (replacement->isNull()) {
+          ++numNulls;
+          continue;
+        }
+        const auto& value = replacement->value().value<TypeKind::VARCHAR>();
+        ASSERT_GE(value.size(), 1);
+        ASSERT_LE(value.size(), 4);
+        EXPECT_EQ(
+            std::count_if(
+                value.begin(),
+                value.end(),
+                [](char c) { return (c & 0xC0) != 0x80; }),
+            1)
+            << value;
+        replacements.insert(value);
+      }
+    }
+    if (numArgs > 1) {
+      EXPECT_GT(numNulls, 0);
+      EXPECT_GT(replacements.size(), 10);
+      // Includes supplementary characters, which have 4 bytes.
+      EXPECT_TRUE(
+          std::any_of(
+              replacements.begin(),
+              replacements.end(),
+              [](const auto& replacement) { return replacement.size() == 4; }));
+    }
+  }
+}
+
 TEST(ArgValuesGeneratorsTest, regexp) {
   VectorFuzzer::Options options;
   FuzzerGenerator rng{0};

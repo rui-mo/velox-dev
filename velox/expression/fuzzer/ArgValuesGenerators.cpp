@@ -971,6 +971,53 @@ std::vector<core::TypedExprPtr> TimestampAddDiffArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+std::vector<core::TypedExprPtr> MaskArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& /*state*/) {
+  const auto& args = signature.args;
+  VELOX_CHECK_GE(args.size(), 1);
+  VELOX_CHECK_LE(args.size(), 5);
+
+  // Characters of 1 to 4 bytes, including the quote and backslash that Spark
+  // SQL escapes.
+  static const std::vector<std::string> kReplacements{
+      "X",
+      "x",
+      "n",
+      "Q",
+      "q",
+      "0",
+      "*",
+      "#",
+      " ",
+      "'",
+      "\\",
+      "é",
+      "Ω",
+      "ж",
+      "€",
+      "い",
+      "𝐀",
+      "🚀"};
+
+  // The fuzzer generates the string to mask.
+  std::vector<core::TypedExprPtr> inputExpressions{nullptr};
+  for (auto i = 1; i < args.size(); ++i) {
+    VELOX_CHECK_EQ(args[i]->kind(), TypeKind::VARCHAR);
+    inputExpressions.push_back(
+        std::make_shared<core::ConstantTypedExpr>(
+            args[i],
+            coinToss(rng, options.nullRatio)
+                ? variant::null(TypeKind::VARCHAR)
+                : variant(
+                      kReplacements[rand<size_t>(
+                          rng, 0, kReplacements.size() - 1)])));
+  }
+  return inputExpressions;
+}
+
 std::vector<core::TypedExprPtr> MakeTimestampArgValuesGenerator::generate(
     const CallableSignature& signature,
     const VectorFuzzer::Options& options,

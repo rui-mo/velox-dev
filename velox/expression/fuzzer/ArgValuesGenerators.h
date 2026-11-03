@@ -349,6 +349,20 @@ class TimestampAddDiffArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark mask. Spark requires each replacement to be a
+/// constant that is NULL or a single character, so the replacements are such
+/// constants, and the fuzzer generates the string to mask.
+class MaskArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~MaskArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 /// Generates arguments for Spark make_timestamp, make_timestamp_ntz,
 /// try_make_timestamp and try_make_timestamp_ntz. Reads the fields from input
 /// columns with years in [1800, 2200] and other fields within or just outside
