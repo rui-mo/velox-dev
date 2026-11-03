@@ -92,6 +92,7 @@ void registerSparkArrayFunctions(const std::string& prefix) {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_except, prefix + "array_except");
   VELOX_REGISTER_VECTOR_FUNCTION(
       udf_array_intersect, prefix + "array_intersect");
+  restrictToOrderableTypes(prefix + "array_intersect");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_position, prefix + "array_position");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_zip, prefix + "arrays_zip");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_any_match, prefix + "exists");
