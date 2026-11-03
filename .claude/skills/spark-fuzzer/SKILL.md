@@ -122,7 +122,10 @@ scripts/spark-fuzzer/spark_fuzzer.py summary $SPARK_FUZZER_HOME/runs/<name> --ex
 ```
 
 Improve the largest groups as framework issues in step 5, unless Spark can't
-express them, e.g. map keys of map type.
+express them, e.g. `IN` with a NULL list. If Spark rejects argument types that
+Velox accepts, e.g. maps as map keys, fix the function: restrict its signature,
+e.g. with `Orderable<T>` or an orderable type variable, so that Velox rejects
+these types too and the fuzzer no longer generates them.
 
 ## 4. Fix a function
 
