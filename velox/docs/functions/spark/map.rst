@@ -50,8 +50,8 @@ Map Functions
 
     Creates a map by pairing up the given key and value arrays. Returns NULL if either array is
     NULL. Throws if a top-level key is NULL, or if the two arrays have different lengths. Array and
-    row keys may contain nested NULL values. When a key is repeated, the behavior depends on the
-    ``throw_exception_on_duplicate_map_keys`` configuration
+    row keys may contain nested NULL values. Keys can't be or contain maps. When a key is repeated,
+    the behavior depends on the ``throw_exception_on_duplicate_map_keys`` configuration
     property: if true, throws; otherwise the last value wins and the key keeps the position of its
     first occurrence. ::
 
