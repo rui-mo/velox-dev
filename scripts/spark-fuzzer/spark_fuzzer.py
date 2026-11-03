@@ -198,21 +198,27 @@ def parse_log(text):
     """Extracts the stats and the failure of the last iteration from a log."""
     lines = text.splitlines()
     result = {"stats": {}}
+    stats = result["stats"]
     for line in lines:
         message = strip_prefix(line)
         if message.startswith("Velox suppressed an error that the reference DB"):
-            result["stats"]["suppressed"] = result["stats"].get("suppressed", 0) + 1
+            stats["suppressed"] = stats.get("suppressed", 0) + 1
         for key, pattern in [
             ("total", r"Total test cases: (\d+)"),
             ("verified", r"Total test cases verified in the reference DB: (\d+)"),
             ("both_failed", r"Total test cases failed in both .*: (\d+)"),
             ("unsupported", r"Total test cases unsupported in the reference DB: (\d+)"),
-            # Aggregation fuzzer.
-            ("total", r"Total masked aggregations: \d+ .*"),
+            # Aggregation fuzzer. Its test cases are iterations.
+            ("verified", r"Total iterations verified against reference DB: (\d+)"),
+            # The second of 'skipped / not supported / failed'.
+            (
+                "unsupported",
+                r"Total functions not verified \(.*\): \d+ \(.*?\) / (\d+)",
+            ),
         ]:
             match = re.match(pattern, message)
-            if match and match.groups():
-                result["stats"][key] = int(match.group(1))
+            if match:
+                stats[key] = int(match.group(1))
 
     # Only the last iteration matters for a failure.
     start = 0
@@ -222,6 +228,9 @@ def parse_log(text):
             start = i
             result["iteration"] = int(match.group(1))
             result["iteration_seed"] = int(match.group(2))
+    # The aggregation fuzzer doesn't log its number of iterations.
+    if "verified" in stats and "total" not in stats and "iteration" in result:
+        stats["total"] = result["iteration"] + 1
     tail = lines[start:]
     tail_text = "\n".join(strip_prefix(line) for line in tail)
 
@@ -546,6 +555,11 @@ def count_unsupported(results):
         # Failed runs don't report their unsupported test cases.
         if result["category"] != "pass" or not path.is_file():
             continue
+        # The expression fuzzer logs each unsupported test case after the reason
+        # of its query. The aggregation fuzzer only logs the reasons.
+        test_case_counts = {}
+        query_counts = {}
+        aggregation = False
         reason = None
         with path.open(errors="replace") as file:
             for line in file:
@@ -553,6 +567,8 @@ def count_unsupported(results):
                 for marker in markers:
                     if message.startswith(marker):
                         reason = message[len(marker) :]
+                        key = unsupported_key(reason)
+                        query_counts[key] = query_counts.get(key, 0) + 1
                 key = None
                 if message == "Reference DB doesn't support this query":
                     key = unsupported_key(reason) if reason else "Unknown"
@@ -561,7 +577,11 @@ def count_unsupported(results):
                     if message.startswith(prefix):
                         key = error_key
                 if key:
-                    counts[key] = counts.get(key, 0) + 1
+                    test_case_counts[key] = test_case_counts.get(key, 0) + 1
+                if message.startswith("Total iterations verified against"):
+                    aggregation = True
+        for key, count in (query_counts if aggregation else test_case_counts).items():
+            counts[key] = counts.get(key, 0) + count
     return counts
 
 
