@@ -44,7 +44,7 @@ Array Functions
 
 .. spark:function:: array_distinct(array(E)) -> array(E)
 
-    Remove duplicate values from the input array. ::
+    Remove duplicate values from the input array. Elements can't be or contain maps. ::
 
         SELECT array_distinct(ARRAY [1, 2, 3]); -- [1, 2, 3]
         SELECT array_distinct(ARRAY [1, 2, 1]); -- [1, 2]
