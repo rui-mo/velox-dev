@@ -26,6 +26,7 @@
 #include "velox/exec/fuzzer/TransformResultVerifier.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
+#include "velox/functions/sparksql/fuzzer/BitmapAggregateInputGenerator.h"
 #include "velox/functions/sparksql/fuzzer/SparkQueryRunner.h"
 #include "velox/serializers/CompactRowSerializer.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -145,10 +146,18 @@ int main(int argc, char** argv) {
   using Runner = facebook::velox::exec::test::AggregationFuzzerRunner;
   using Options = facebook::velox::exec::test::AggregationFuzzerOptions;
 
+  auto bitmapInputGenerator =
+      std::make_shared<facebook::velox::functions::sparksql::fuzzer::
+                           BitmapAggregateInputGenerator>();
+
   Options options;
   options.onlyFunctions = FLAGS_only;
   options.skipFunctions = skipFunctions;
   options.customVerificationFunctions = customVerificationFunctions;
+  options.customInputGenerators = {
+      {"bitmap_construct_agg", bitmapInputGenerator},
+      {"bitmap_or_agg", bitmapInputGenerator},
+  };
   options.orderableGroupKeys = true;
   options.timestampPrecision =
       facebook::velox::VectorFuzzer::Options::TimestampPrecision::kMicroSeconds;
