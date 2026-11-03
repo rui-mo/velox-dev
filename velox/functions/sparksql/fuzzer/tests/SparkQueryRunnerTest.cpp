@@ -796,6 +796,23 @@ TEST_F(SparkQueryRunnerTest, classifyError) {
           "",
           "INVALID_FORMAT.UNEXPECTED_TOKEN")),
       ReferenceQueryErrorCode::kReferenceQueryUnsupported);
+  // Spark raises analysis errors for escape characters in LIKE patterns while
+  // evaluating expressions.
+  for (const auto& condition :
+       {"INVALID_FORMAT.ESC_IN_THE_MIDDLE", "INVALID_FORMAT.ESC_AT_THE_END"}) {
+    EXPECT_EQ(
+        SparkQueryRunner::classifyError(makeSparkError(
+            fmt::format(
+                "[{}] The format is invalid: 'a\\b'. ... SQLSTATE: 42601",
+                condition),
+            "42601",
+            "org.apache.spark.sql.AnalysisException",
+            R"(["org.apache.spark.sql.AnalysisException",)"
+            R"("org.apache.spark.SparkThrowable","java.lang.Exception"])",
+            condition)),
+        ReferenceQueryErrorCode::kReferenceQueryFail)
+        << condition;
+  }
   // A Spark executor ran out of memory.
   EXPECT_EQ(
       SparkQueryRunner::classifyError(makeSparkError(

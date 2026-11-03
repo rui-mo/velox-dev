@@ -117,7 +117,9 @@ DB and the results are not verified. Other errors, e.g. division by zero with AN
 enabled, are reported as a reference query failure. So are the errors with SQLSTATE
 42K0B that Spark raises for datetime patterns and strings while evaluating expressions,
 e.g. ``INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION`` for the
-week-based pattern ``YYYY``. A syntax
+week-based pattern ``YYYY``, and the analysis errors ``INVALID_FORMAT.ESC_IN_THE_MIDDLE``
+and ``INVALID_FORMAT.ESC_AT_THE_END`` that Spark raises for invalid escapes in LIKE
+patterns while evaluating expressions. A syntax
 error means the SQL generated from the Velox plan is invalid and fails the test. A stopped SparkContext
 fails the test as well because all following queries would fail. A query that runs
 longer than the timeout, 5 minutes by default, is interrupted and reported as not
