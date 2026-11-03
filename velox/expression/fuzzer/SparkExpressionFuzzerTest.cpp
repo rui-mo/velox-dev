@@ -89,6 +89,7 @@ using facebook::velox::fuzzer::RegexpArgValuesGenerator;
 using facebook::velox::fuzzer::RepeatArgValuesGenerator;
 using facebook::velox::fuzzer::RoundArgValuesGenerator;
 using facebook::velox::fuzzer::TimestampAddDiffArgValuesGenerator;
+using facebook::velox::fuzzer::ToJsonArgValuesGenerator;
 
 namespace {
 
@@ -225,6 +226,7 @@ int main(int argc, char** argv) {
            std::make_shared<TimestampAddDiffArgValuesGenerator>()},
           {"timestampdiff",
            std::make_shared<TimestampAddDiffArgValuesGenerator>()},
+          {"to_json", std::make_shared<ToJsonArgValuesGenerator>()},
           {"try_make_timestamp",
            std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"try_make_timestamp_ntz",

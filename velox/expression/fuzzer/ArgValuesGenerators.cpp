@@ -1018,6 +1018,61 @@ std::vector<core::TypedExprPtr> MaskArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+namespace {
+
+// Time zones with DST, offsets that are not whole hours, and a zone that
+// skipped a day.
+const std::vector<std::string>& timeZoneNames() {
+  static const std::vector<std::string> kTimeZones{
+      "UTC",
+      "America/Los_Angeles",
+      "America/New_York",
+      "America/Sao_Paulo",
+      "America/St_Johns",
+      "Europe/London",
+      "Europe/Berlin",
+      "Europe/Moscow",
+      "Asia/Shanghai",
+      "Asia/Kolkata",
+      "Asia/Kathmandu",
+      "Asia/Tokyo",
+      "Australia/Lord_Howe",
+      "Pacific/Apia",
+      "Pacific/Chatham",
+      "Pacific/Kiritimati",
+      "+00:00",
+      "-03:30",
+      "+05:45",
+      "+08:00",
+      "-12:00",
+      "+14:00"};
+  return kTimeZones;
+}
+
+} // namespace
+
+std::vector<core::TypedExprPtr> ToJsonArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& /*options*/,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& /*state*/) {
+  const auto& args = signature.args;
+  VELOX_CHECK_GE(args.size(), 1);
+  VELOX_CHECK_LE(args.size(), 2);
+
+  // The fuzzer generates the value to convert.
+  std::vector<core::TypedExprPtr> inputExpressions{nullptr};
+  if (args.size() == 2) {
+    VELOX_CHECK_EQ(args[1]->kind(), TypeKind::VARCHAR);
+    const auto& timeZones = timeZoneNames();
+    inputExpressions.push_back(
+        std::make_shared<core::ConstantTypedExpr>(
+            args[1],
+            variant(timeZones[rand<size_t>(rng, 0, timeZones.size() - 1)])));
+  }
+  return inputExpressions;
+}
+
 std::vector<core::TypedExprPtr> MakeTimestampArgValuesGenerator::generate(
     const CallableSignature& signature,
     const VectorFuzzer::Options& options,
@@ -1050,31 +1105,7 @@ std::vector<core::TypedExprPtr> MakeTimestampArgValuesGenerator::generate(
           args[5], -1'000'000, maxSeconds, options, rng, state));
 
   if (args.size() == 7) {
-    // Zones with DST, offsets that are not whole hours, and a zone that
-    // skipped a day.
-    static const std::vector<std::string> kTimeZones{
-        "UTC",
-        "America/Los_Angeles",
-        "America/New_York",
-        "America/Sao_Paulo",
-        "America/St_Johns",
-        "Europe/London",
-        "Europe/Berlin",
-        "Europe/Moscow",
-        "Asia/Shanghai",
-        "Asia/Kolkata",
-        "Asia/Kathmandu",
-        "Asia/Tokyo",
-        "Australia/Lord_Howe",
-        "Pacific/Apia",
-        "Pacific/Chatham",
-        "Pacific/Kiritimati",
-        "+00:00",
-        "-03:30",
-        "+05:45",
-        "+08:00",
-        "-12:00",
-        "+14:00"};
+    const auto& kTimeZones = timeZoneNames();
     if (coinToss(rng, 0.5)) {
       inputExpressions.push_back(
           std::make_shared<core::ConstantTypedExpr>(
