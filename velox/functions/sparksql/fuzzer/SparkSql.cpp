@@ -542,6 +542,20 @@ std::string toTimestampAddOrDiffSql(const core::CallTypedExpr& call) {
       toSparkSql(inputs[2]));
 }
 
+// Returns true if 'type' contains a map with keys that contain binary values.
+bool hasBinaryMapKeys(const Type& type, bool isMapKey = false) {
+  if (isMapKey && type.kind() == TypeKind::VARBINARY) {
+    return true;
+  }
+  for (auto i = 0; i < type.size(); ++i) {
+    if (hasBinaryMapKeys(
+            *type.childAt(i), isMapKey || (type.isMap() && i == 0))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::string toCallSql(const core::CallTypedExpr& call) {
   const auto& name = call.name();
   if (isUnsupportedFunction(name)) {
@@ -645,6 +659,10 @@ std::string toCallSql(const core::CallTypedExpr& call) {
   if (name == "array_sort" && inputs.size() == 2 &&
       inputs[1]->type()->size() != 3) {
     VELOX_UNSUPPORTED("Spark does not support array_sort with a key function");
+  }
+  // Spark writes binary map keys as Java object identities, e.g. [B@1b6d3586.
+  if (name == "to_json" && hasBinaryMapKeys(*inputs[0]->type())) {
+    VELOX_UNSUPPORTED("Spark writes binary map keys of to_json as identities");
   }
   // Spark takes the time zone as an option.
   if (name == "to_json" && inputs.size() == 2) {

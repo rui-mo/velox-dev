@@ -402,6 +402,21 @@ TEST_F(SparkSqlTest, functions) {
   VELOX_ASSERT_UNSUPPORTED_THROW(
       toSql("to_json(r, s)"),
       "Spark requires a constant time zone for to_json");
+  const auto toJsonSql = [&](const TypePtr& type) {
+    return toSparkSql(call(
+        VARCHAR(),
+        "to_json",
+        {std::make_shared<core::FieldAccessTypedExpr>(type, "x")}));
+  };
+  EXPECT_EQ(toJsonSql(MAP(BIGINT(), VARBINARY())), "to_json(x)");
+  for (const auto& type : std::vector<TypePtr>{
+           MAP(VARBINARY(), BIGINT()),
+           ARRAY(MAP(ROW({"k"}, {VARBINARY()}), BIGINT())),
+           MAP(BIGINT(), MAP(ARRAY(VARBINARY()), BIGINT()))}) {
+    VELOX_ASSERT_UNSUPPORTED_THROW(
+        toJsonSql(type),
+        "Spark writes binary map keys of to_json as identities");
+  }
   EXPECT_EQ(
       toSql("array_sort(arr, (x, y) -> if(lessthan(x, y), 1, 0))"),
       "array_sort(arr, (x, y) -> IF((x < y), 1, 0))");
