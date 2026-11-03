@@ -207,7 +207,8 @@ Array Functions
 
 .. spark:function:: array_union(array(E) x, array(E) y) -> array(E)
 
-    Returns an array of the elements in the union of ``x`` and ``y``, without duplicates. ::
+    Returns an array of the elements in the union of ``x`` and ``y``, without duplicates.
+    Elements can't be or contain maps. ::
 
         SELECT array_union(array(1, 2, 3), array(1, 3, 5)); -- [1, 2, 3, 5]
         SELECT array_union(array(1, 3, 5), array(1, 2, 3)); -- [1, 3, 5, 2]
