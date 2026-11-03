@@ -189,10 +189,14 @@ From strings
 
 *(ANSI compliant)*
 
-Casting a string to ``REAL`` or ``DOUBLE`` accepts decimal and scientific
-notation, an optional leading sign, and the case-insensitive special literals
-``nan``, ``inf``, ``infinity`` (optionally signed). Values that overflow the
-target type produce ``Infinity`` rather than an error, matching Spark.
+Casting a string to ``REAL`` or ``DOUBLE`` accepts the numbers that Java's
+``Float.parseFloat`` and ``Double.parseDouble`` accept: decimal and scientific
+notation, an optional leading sign, an optional type suffix ``f``, ``F``, ``d``
+or ``D``, and hexadecimal notation with a binary exponent, such as ``0x1.8p1``.
+It also accepts the special literals ``NaN`` (optionally signed), and the
+case-insensitive ``nan``, ``inf`` and ``infinity``, the last two optionally
+signed. Values that overflow the target type produce ``Infinity`` rather than an
+error, matching Spark.
 
 Casting from invalid strings returns NULL when ANSI mode is disabled; throws an
 error otherwise.
@@ -204,7 +208,10 @@ Valid examples
   SELECT cast('1.5' as double); -- 1.5
   SELECT cast('-3.14E-2' as real); -- -0.0314
   SELECT cast('1.5e10' as double); -- 1.5E10
+  SELECT cast('9f' as real); -- 9.0
+  SELECT cast('-0x1.8p1d' as double); -- -3.0
   SELECT cast('nan' as double); -- NaN (case insensitive)
+  SELECT cast('-NaN' as double); -- NaN
   SELECT cast('-Infinity' as double); -- -Infinity (case insensitive)
   SELECT cast('1e39' as real); -- Infinity (overflow)
   SELECT cast('1e309' as double); -- Infinity (overflow)
@@ -216,6 +223,8 @@ Invalid examples
   SELECT cast('abc' as double); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('1.2a' as double); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('1.2.3' as real); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('-nan' as double); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('0x1.8' as double); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('' as double); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
 Cast to Boolean
