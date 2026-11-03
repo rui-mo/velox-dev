@@ -20,8 +20,10 @@ See https://github.com/google/re2/wiki/Syntax for more information.
 
     Evaluates if the ``string`` matches the ``pattern``. Patterns can contain
     regular characters as well as wildcards. Wildcard characters can be escaped
-    using the single character specified for the ``escape`` parameter. Only ASCII
-    characters are supported for the ``escape`` parameter. Matching is case sensitive.
+    using the single character specified for the ``escape`` parameter, ``\`` by
+    default. Only ASCII characters are supported for the ``escape`` parameter.
+    The escape character must be followed by a wildcard or by itself. Matching
+    is case sensitive.
 
     Note: The wildcard '%' represents 0, 1 or multiple characters and the
     wildcard '_' represents exactly one character.
@@ -36,6 +38,7 @@ See https://github.com/google/re2/wiki/Syntax for more information.
 
         SELECT like('abc', '%b%'); -- true
         SELECT like('a_c', '%#_%', '#'); -- true
+        SELECT like('a_c', 'a\_c'); -- true
 
 .. spark:function:: regexp_extract(string, pattern) -> varchar
 

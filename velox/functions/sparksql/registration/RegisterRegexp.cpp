@@ -28,8 +28,15 @@ void registerRegexpFunctions(const std::string& prefix) {
       makeRegexExtractAll);
   exec::registerStatefulVectorFunction(
       prefix + "rlike", rlikeSignatures(), makeRLike);
+  // Spark escapes patterns with '\' by default.
   exec::registerStatefulVectorFunction(
-      prefix + "like", likeSignatures(), makeLike);
+      prefix + "like",
+      likeSignatures(),
+      [](const std::string& name,
+         const std::vector<exec::VectorFunctionArg>& inputArgs,
+         const core::QueryConfig& config) {
+        return makeLikeWithDefaultEscape(name, inputArgs, config, '\\');
+      });
   registerRegexpReplace(prefix);
   registerRegexpInstr(prefix);
 }
