@@ -43,6 +43,11 @@ See [scripts/review/REVIEW_GUIDE.md](../scripts/review/REVIEW_GUIDE.md).
 
 When asked a question about the PR or codebase (via `/query`), use the /query skill.
 
+## Spark Fuzzer
+
+When asked to run the Spark fuzzer against Spark, or to triage or fix its
+failures (via `/spark-fuzzer`), use the /spark-fuzzer skill.
+
 ## Overview
 
 Velox is an open source C++ library for composable data processing and

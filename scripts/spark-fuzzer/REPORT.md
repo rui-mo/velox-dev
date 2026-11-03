@@ -6,6 +6,9 @@ changes, the function fixes, the known differences, the open issues and the
 results of the fuzzer runs. The work starts at commit `10d88f912`.
 
 - [README.md](README.md): how to set up the environment and run the fuzzers.
+- [.claude/skills/spark-fuzzer/SKILL.md](../../.claude/skills/spark-fuzzer/SKILL.md):
+  the workflow to run the fuzzers, triage failures and commit fixes, also used
+  by the `spark-fuzzer` agent in `.github/agents/`.
 
 ## Summary
 
