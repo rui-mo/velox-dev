@@ -135,6 +135,11 @@ scripts/spark-fuzzer/spark_fuzzer.py sql "SELECT concat_ws(',', c0) FROM T" --va
 # and group the failures that remain.
 scripts/spark-fuzzer/spark_fuzzer.py recheck runs/<run>
 scripts/spark-fuzzer/spark_fuzzer.py summary runs/<run> --rechecked
+
+# Print the 20 most common reasons why Spark can't verify test cases, e.g.
+# arguments that Spark requires to be constant. These show the functions that
+# need argument generators or a better Spark SQL generation.
+scripts/spark-fuzzer/spark_fuzzer.py summary runs/<run> --unsupported 20
 ```
 
 An iteration seed reproduces a failure only with the candidate functions and

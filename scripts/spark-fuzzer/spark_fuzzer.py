@@ -18,7 +18,8 @@ failures.
 
 Subcommands:
   run      Runs a fuzzer with a number of seeds and records the results.
-  summary  Groups the failures recorded by 'run' by their errors.
+  summary  Groups the failures recorded by 'run' by their errors, and counts
+           the test cases that Spark can't verify by their reason.
   repro    Reruns one fuzzer iteration and prints its expressions, the Spark
            SQL and the error.
   recheck  Reruns the failed iterations of runs with the current build, e.g.
@@ -498,10 +499,90 @@ def summarize(paths, examples=3):
                 )
 
 
+def unsupported_key(message):
+    """Returns the normalized reason why Spark can't verify a query."""
+    # Spark errors start with their error class, possibly after a prefix of the
+    # runner, e.g. '[WRONG_NUM_ARGS.WITHOUT_SUGGESTION] The `array_intersect`
+    # requires 2 parameters but the actual number is 1.'
+    match = re.match(r"(.{0,40}?)\[([A-Z_]+(?:\.[A-Z_]+)*)\](.*)", message)
+    if match:
+        key = f"{match.group(1)}[{match.group(2)}]"
+        function = re.search(
+            r'Cannot resolve "(\w+)\(|The `(\w+)` requires', match.group(3)
+        )
+        if function:
+            key += " " + (function.group(1) or function.group(2))
+        return key
+    # Errors of tasks are wrapped, e.g. 'Job aborted due to stage failure: ...
+    # most recent failure: Lost task ... (TID 1) (...): <exception>'.
+    task_error = re.search(r"most recent failure: .*?\): (.*)", message)
+    if task_error:
+        message = task_error.group(1)
+    # Messages of the Spark SQL generation end with the value they reject,
+    # except for unsupported functions and types, e.g. 'Function is not
+    # supported in Spark SQL: rand'.
+    prefix, separator, _ = message.partition(": ")
+    if separator and not task_error and "not supported in Spark SQL" not in prefix:
+        message = prefix + ": ?"
+    return normalize_reason(message)[:120]
+
+
+def count_unsupported(results):
+    """Counts the unsupported test cases of passed runs by their reason. These
+    are the queries that Spark can't run, and the errors that only one engine
+    throws for rows that the other doesn't evaluate."""
+    counts = {}
+    markers = ("Spark query not supported: ", "Spark query unsupported: ")
+    one_sided_errors = {
+        "Velox suppressed an error that the reference DB throws": (
+            "Velox suppressed an error that Spark throws"
+        ),
+        "The reference DB skipped an error that Velox throws": (
+            "Spark skipped an error that Velox throws"
+        ),
+    }
+    for result in results:
+        path = Path(result.get("log", ""))
+        # Failed runs don't report their unsupported test cases.
+        if result["category"] != "pass" or not path.is_file():
+            continue
+        reason = None
+        with path.open(errors="replace") as file:
+            for line in file:
+                message = strip_prefix(line)
+                for marker in markers:
+                    if message.startswith(marker):
+                        reason = message[len(marker) :]
+                key = None
+                if message == "Reference DB doesn't support this query":
+                    key = unsupported_key(reason) if reason else "Unknown"
+                    reason = None
+                for prefix, error_key in one_sided_errors.items():
+                    if message.startswith(prefix):
+                        key = error_key
+                if key:
+                    counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def cmd_summary(args, _):
     run_dirs = [Path(d) for d in args.run_dirs] or latest_run_dirs()
     name = "recheck.jsonl" if args.rechecked else "results.jsonl"
-    summarize([d / name for d in run_dirs], args.examples)
+    paths = [d / name for d in run_dirs]
+    summarize(paths, args.examples)
+    if args.unsupported:
+        results = []
+        for path in paths:
+            results += read_results(path)
+        counts = count_unsupported(results)
+        log(
+            f"\nUnsupported test cases of passed runs by reason, "
+            f"{sum(counts.values())} in total:"
+        )
+        for key, count in sorted(counts.items(), key=lambda item: -item[1])[
+            : args.unsupported
+        ]:
+            log(f"  {count} {key}")
 
 
 def iteration_command(args, seed, extra_flags):
@@ -752,6 +833,13 @@ def main():
         "--rechecked",
         action="store_true",
         help="Summarize the results of the last 'recheck' instead of the run.",
+    )
+    summary.add_argument(
+        "--unsupported",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Print the N most common reasons why Spark can't verify test cases.",
     )
     summary.set_defaults(handler=cmd_summary)
 
