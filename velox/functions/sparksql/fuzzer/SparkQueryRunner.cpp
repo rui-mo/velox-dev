@@ -460,21 +460,25 @@ exec::test::ReferenceQueryErrorCode SparkQueryRunner::classifyError(
       return kUnsupported;
     }
   }
+  // Spark raises these errors for datetime patterns and strings, and for
+  // escape characters in LIKE patterns, while evaluating expressions, although
+  // their SQLSTATEs 42K0B and 42601 are in class 42. The LIKE errors are even
+  // analysis errors.
+  static const std::unordered_set<std::string> kRuntimeConditions{
+      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION",
+      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_WEEK_BASED_PATTERN",
+      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.PARSE_DATETIME_BY_NEW_PARSER",
+      "INVALID_FORMAT.ESC_AT_THE_END",
+      "INVALID_FORMAT.ESC_IN_THE_MIDDLE"};
+  if (kRuntimeConditions.contains(error.condition)) {
+    return exec::test::ReferenceQueryErrorCode::kReferenceQueryFail;
+  }
   // Analysis errors mean that Spark cannot run the query, e.g. because of an
   // unknown function or unexpected argument types, not that the query fails on
   // the data. Legacy analysis errors have no SQLSTATE.
   if (error.exceptionClasses.find(
           "\"org.apache.spark.sql.AnalysisException\"") != std::string::npos) {
     return kUnsupported;
-  }
-  // Spark raises these errors for datetime patterns and strings while
-  // evaluating expressions, although their SQLSTATE 42K0B is in class 42.
-  static const std::unordered_set<std::string> kRuntimeConditions{
-      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION",
-      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_WEEK_BASED_PATTERN",
-      "INCONSISTENT_BEHAVIOR_CROSS_VERSION.PARSE_DATETIME_BY_NEW_PARSER"};
-  if (kRuntimeConditions.contains(error.condition)) {
-    return exec::test::ReferenceQueryErrorCode::kReferenceQueryFail;
   }
   // Syntax errors and access rule violations (42), unsupported features (0A),
   // resource limits (53, 54) and internal errors (XX).
