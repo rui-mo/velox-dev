@@ -130,7 +130,16 @@ MapFromArraysFunction::signatures() {
   // array(K), array(V) -> map(K,V)
   return {
       exec::FunctionSignatureBuilder()
-          .knownTypeVariable("K")
+          // Spark rejects keys that are or contain a map, which are the types
+          // that Velox can't order.
+          .variable(
+              exec::SignatureVariable(
+                  "K",
+                  "",
+                  exec::ParameterType::kTypeParameter,
+                  /*knownTypesOnly=*/true,
+                  /*orderableTypesOnly=*/true,
+                  /*comparableTypesOnly=*/true))
           .typeVariable("V")
           .returnType("map(K,V)")
           .argumentType("array(K)")

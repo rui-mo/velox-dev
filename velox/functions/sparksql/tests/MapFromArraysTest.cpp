@@ -272,6 +272,19 @@ TEST_F(MapFromArraysTest, complexTypeKeys) {
   testMapFromArrays(keys, values, expected);
 }
 
+TEST_F(MapFromArraysTest, keysContainingMaps) {
+  auto mapKeys = makeMapVectorFromJson<int64_t, int64_t>({"{1: 2}"});
+  auto values = makeArrayVectorFromJson<int64_t>({"[3]"});
+  testMapFromArraysFails(
+      makeArrayVector({0}, mapKeys),
+      values,
+      "Scalar function signature is not supported: map_from_arrays(ARRAY<MAP<BIGINT,BIGINT>>, ARRAY<BIGINT>)");
+  testMapFromArraysFails(
+      makeArrayVector({0}, makeRowVector({mapKeys})),
+      values,
+      "Scalar function signature is not supported: map_from_arrays(ARRAY<ROW<c0:MAP<BIGINT,BIGINT>>>, ARRAY<BIGINT>)");
+}
+
 TEST_F(MapFromArraysTest, complexTypeKeysDuplicate) {
   setThrowExceptionOnDuplicateMapKeys(false);
 
