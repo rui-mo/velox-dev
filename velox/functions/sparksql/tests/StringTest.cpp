@@ -1416,6 +1416,13 @@ TEST_F(StringTest, substringIndex) {
   EXPECT_EQ(substringIndex("aaaaa", "aa", 0), "");
   EXPECT_EQ(substringIndex("aaaaa", "aa", 5), "aaaaa");
   EXPECT_EQ(substringIndex("aaaaa", "aa", -5), "aaaaa");
+
+  // Negating the minimum count must not overflow.
+  constexpr auto kMin = std::numeric_limits<int32_t>::min();
+  EXPECT_EQ(substringIndex("www.apache.org", ".", kMin), "www.apache.org");
+  EXPECT_EQ(substringIndex("大千世界大千世界", "千", kMin), "大千世界大千世界");
+  EXPECT_EQ(substringIndex("||||||", "|||", kMin), "||||||");
+  EXPECT_EQ(substringIndex("", ".", kMin), "");
 }
 
 TEST_F(StringTest, translate) {
