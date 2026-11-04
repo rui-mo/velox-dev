@@ -15,6 +15,7 @@
  */
 #include "velox/exec/AggregateCompanionAdapter.h"
 #include "velox/functions/lib/aggregates/SetBaseAggregate.h"
+#include "velox/functions/sparksql/aggregates/NormalizeNegativeZeros.h"
 
 namespace facebook::velox::functions::aggregate::sparksql {
 namespace {
@@ -80,6 +81,18 @@ class SparkCollectSetAggregate
         accumulator->addValue(SBase::decoded_, i, SBase::allocator_);
       }
     });
+  }
+
+  void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
+      override {
+    Base::extractValues(groups, numGroups, result);
+    // NaNs are deduplicated by the accumulator, and -0.0 by its equality with
+    // 0.0. Like Spark, return -0.0 as 0.0, also when nested.
+    if constexpr (
+        std::is_floating_point_v<T> || std::is_same_v<T, ComplexType>) {
+      normalizeNegativeZeros(
+          *(*result)->template as<ArrayVector>()->elements());
+    }
   }
 
   void toIntermediate(
@@ -221,15 +234,9 @@ std::unique_ptr<exec::Aggregate> createSetAgg(
           "Non-decimal use of HUGEINT is not supported");
       return std::make_unique<SparkCollectSetAggregate<int128_t>>(resultType);
     case TypeKind::REAL:
-      return std::make_unique<SparkCollectSetAggregate<
-          float,
-          velox::aggregate::prestosql::FloatSetAccumulatorNaNUnaware<float>>>(
-          resultType);
+      return std::make_unique<SparkCollectSetAggregate<float>>(resultType);
     case TypeKind::DOUBLE:
-      return std::make_unique<SparkCollectSetAggregate<
-          double,
-          velox::aggregate::prestosql::FloatSetAccumulatorNaNUnaware<double>>>(
-          resultType);
+      return std::make_unique<SparkCollectSetAggregate<double>>(resultType);
     case TypeKind::TIMESTAMP:
       VELOX_DCHECK(inputType->equivalent(*TIMESTAMP()));
       return std::make_unique<SparkCollectSetAggregate<Timestamp>>(resultType);

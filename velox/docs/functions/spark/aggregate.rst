@@ -119,7 +119,8 @@ General Aggregate Functions
 
     Returns an array consisting of all unique values from the input ``x`` elements.
     When ``ignoreNulls`` is ``true``, null inputs are excluded and an all-null
-    input returns an empty array. NaN values are considered distinct.
+    input returns an empty array. NaN values are considered equal, as are -0.0
+    and 0.0, also when nested in arrays or structs. -0.0 is returned as 0.0.
 
     When ``ignoreNulls`` is set to ``false`` (RESPECT NULLS), null values are
     included in the result set. In this mode, an all-null input produces an
