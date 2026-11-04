@@ -25,6 +25,7 @@
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/exec/fuzzer/TransformResultVerifier.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/functions/sparksql/SparkQueryConfig.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
 #include "velox/functions/sparksql/fuzzer/BitmapAggregateInputGenerator.h"
 #include "velox/functions/sparksql/fuzzer/SparkQueryRunner.h"
@@ -51,6 +52,13 @@ DEFINE_string(
 DEFINE_int64(allocator_capacity, 8L << 30, "Allocator capacity in bytes.");
 
 DEFINE_int64(arbitrator_capacity, 6L << 30, "Arbitrator capacity in bytes.");
+
+DEFINE_bool(
+    ansi_enabled,
+    false,
+    "Runs the queries with ANSI mode on, i.e. with the Velox config "
+    "'spark.ansi_enabled' and the Spark config 'spark.sql.ansi.enabled' set to "
+    "true.");
 
 int main(int argc, char** argv) {
   facebook::velox::functions::aggregate::sparksql::registerAggregateFunctions(
@@ -141,7 +149,14 @@ int main(int argc, char** argv) {
       facebook::velox::memory::memoryManager()->addRootPool()};
   auto sparkQueryRunner = std::make_unique<
       facebook::velox::functions::sparksql::fuzzer::SparkQueryRunner>(
-      rootPool.get(), "localhost:15002", "fuzzer", "aggregate");
+      rootPool.get(),
+      "localhost:15002",
+      "fuzzer",
+      "aggregate",
+      facebook::velox::functions::sparksql::fuzzer::SparkQueryRunner::
+          kDefaultQueryTimeout,
+      std::unordered_map<std::string, std::string>{
+          {"spark.sql.ansi.enabled", FLAGS_ansi_enabled ? "true" : "false"}});
 
   using Runner = facebook::velox::exec::test::AggregationFuzzerRunner;
   using Options = facebook::velox::exec::test::AggregationFuzzerOptions;
@@ -161,6 +176,11 @@ int main(int argc, char** argv) {
   options.orderableGroupKeys = true;
   options.timestampPrecision =
       facebook::velox::VectorFuzzer::Options::TimestampPrecision::kMicroSeconds;
+  options.queryConfigs = {
+      {facebook::velox::functions::sparksql::SparkQueryConfig::qualify(
+           facebook::velox::functions::sparksql::SparkQueryConfig::
+               kAnsiEnabled),
+       FLAGS_ansi_enabled ? "true" : "false"}};
   options.hiveConfigs = {
       {facebook::velox::connector::hive::HiveConfig::kReadTimestampUnit, "6"}};
   return Runner::run(initialSeed, std::move(sparkQueryRunner), options);

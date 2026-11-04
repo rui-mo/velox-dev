@@ -78,6 +78,13 @@ DEFINE_string(
     "built-in skip list, e.g. to exclude functions with known issues. "
     "Example: --skip_functions=\"array_sort,sequence\"");
 
+DEFINE_bool(
+    ansi_enabled,
+    false,
+    "Evaluates the expressions with ANSI mode on, i.e. with the Velox config "
+    "'spark.ansi_enabled' and the Spark config 'spark.sql.ansi.enabled' set to "
+    "true.");
+
 DECLARE_bool(velox_fuzzer_orderable_map_keys);
 
 using facebook::velox::fuzzer::ArgValuesGenerator;
@@ -166,7 +173,9 @@ int main(int argc, char** argv) {
   std::unordered_map<std::string, std::string> queryConfigs = {
       {SparkQueryConfig::qualify(SparkQueryConfig::kPartitionId), "123"},
       {facebook::velox::core::QueryConfig::kSessionTimezone,
-       "America/Los_Angeles"}};
+       "America/Los_Angeles"},
+      {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled),
+       FLAGS_ansi_enabled ? "true" : "false"}};
 
   std::unordered_map<std::string, std::shared_ptr<ArgTypesGenerator>>
       argTypesGenerators = {
@@ -258,14 +267,18 @@ int main(int argc, char** argv) {
     // Spark interprets timestamps in the session time zone.
     queryConfigs.emplace(
         facebook::velox::core::QueryConfig::kAdjustTimestampToTimezone, "true");
+    auto sessionConfigs = SparkQueryRunner::projectionSessionConfigs();
+    sessionConfigs["spark.sql.ansi.enabled"] =
+        FLAGS_ansi_enabled ? "true" : "false";
     referenceQueryRunner = std::make_shared<SparkQueryRunner>(
         rootPool.get(),
         FLAGS_spark_url,
         "fuzzer",
         "expression",
         std::chrono::seconds(FLAGS_spark_query_timeout_sec),
-        SparkQueryRunner::projectionSessionConfigs());
-    LOG(INFO) << "Using Spark as the reference DB.";
+        sessionConfigs);
+    LOG(INFO) << "Using Spark as the reference DB with ANSI mode "
+              << (FLAGS_ansi_enabled ? "on." : "off.");
 #else
     LOG(ERROR) << "Spark as the reference DB requires Parquet support. "
                << "Build with VELOX_ENABLE_PARQUET=ON.";
