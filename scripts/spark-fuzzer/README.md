@@ -115,6 +115,25 @@ Each seed has one of these results:
 | `crash`, `hang` | The fuzzer crashed or didn't finish in time. |
 | `other` | Another failure. See the log. |
 
+### ANSI mode
+
+`run --ansi on` sets the Velox config `spark.ansi_enabled` and the Spark config
+`spark.sql.ansi.enabled` to true. The fuzzers then verify the errors that
+functions raise in ANSI mode, e.g. for overflows, against Spark. `repro` and
+`recheck` use the ANSI mode of the run. `sql --ansi both` runs a query in both
+modes:
+
+```bash
+scripts/spark-fuzzer/spark_fuzzer.py run --ansi on --runs 5 --out runs/ansi1
+scripts/spark-fuzzer/spark_fuzzer.py sql --ansi both "SELECT c0 + c1 FROM T" --values "(9223372036854775807L, 1L) AS t(c0, c1)"
+```
+
+With ANSI mode on, many batches have rows for which both engines throw. The
+expression fuzzer then reruns the expression with try() and verifies the other
+rows, and verifies 3 of the rows that throw one at a time. The aggregation
+fuzzer runs a query in Spark also when Velox throws, and reports the errors
+that only one engine raises.
+
 ## Triaging failures
 
 ```bash

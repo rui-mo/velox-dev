@@ -25,6 +25,10 @@ Read these before the first run in a session:
   purpose, or the behavior depends on a Spark config, ask the user before
   changing it. Offer a Velox config that keeps the old behavior, like
   `spark.legacy_truncate_for_empty_regex_split`.
+- Velox's `spark.ansi_enabled`, read with `SparkQueryConfig::ansiEnabled()`,
+  is Spark's `spark.sql.ansi.enabled`. A function reads it only if Spark's
+  implementation depends on it, e.g. through `failOnError` or `EvalMode`.
+  Other functions behave the same in both modes.
 - Fix one function per commit. Framework changes, i.e. to the fuzzer, the
   verifier, the Spark query runner or the scripts, go into separate commits.
 - Start every fix with a test that fails without it. Take the expected values
@@ -66,6 +70,9 @@ scripts/spark-fuzzer/spark_fuzzer.py run --only split,regexp_replace --runs 5 --
 
 # Aggregate functions.
 scripts/spark-fuzzer/spark_fuzzer.py run --fuzzer aggregation --runs 5 --duration-sec 300 --out ...
+
+# ANSI mode on in Velox and Spark. Off by default.
+scripts/spark-fuzzer/spark_fuzzer.py run --ansi on --runs 10 --duration-sec 300 --out ...
 ```
 
 - A run takes about `runs * duration-sec` seconds. Run it in the background and
@@ -73,10 +80,12 @@ scripts/spark-fuzzer/spark_fuzzer.py run --fuzzer aggregation --runs 5 --duratio
 - `run` copies the fuzzer binary into the run directory, so rebuilding Velox
   during a run is safe.
 - Name run directories after their purpose, e.g. `campaign7` or `regex2`.
-- The aggregation fuzzer uses the server on port 15002. It compares results
-  with Spark only if Velox runs the query without an error. For functions whose
-  results depend on the order of the input rows, e.g. `first`, it compares only
-  the number of result rows.
+- The aggregation fuzzer uses the server on port 15002. It reports the errors
+  that only one engine raises. For functions whose results depend on the order
+  of the input rows, e.g. `first`, it compares only the number of result rows.
+- Test both ANSI modes after changing a function that reads ANSI mode. Runs
+  stop at their first failure, so skip the functions with known ANSI failures
+  with `--skip` until they are fixed.
 
 ## 3. Triage
 
@@ -104,7 +113,8 @@ its failures. For each group:
 
    `--values` writes the rows to Parquet, like the fuzzer does, because Spark
    evaluates queries on literal rows while it optimizes them. `--conf` changes
-   a config and `--explain` prints the plans.
+   a config, `--ansi both` runs the query with ANSI mode off and on, and
+   `--explain` prints the plans.
 3. Evaluate the same call in Velox in a unit test, e.g. with `evaluateOnce` in
    `velox/functions/sparksql/tests`.
 4. Classify the failure:
@@ -135,7 +145,8 @@ these types too and the fuzzer no longer generates them.
    `velox_functions_spark_test`, `velox_functions_spark_aggregates_test` or
    `velox_functions_lib_test` and check that the test fails. If the fix comes
    first, stash the fixed sources with `git stash push -- <files>`, rebuild,
-   run the test and `git stash pop`.
+   run the test and `git stash pop`. Test a function that depends on ANSI mode
+   in both modes, like `ArithmeticTest.abs`.
 
    ```bash
    cmake --build _build/release -j 16 --target velox_functions_spark_test

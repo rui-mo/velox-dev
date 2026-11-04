@@ -72,9 +72,14 @@ DEFAULT_FLAGS = {
         "--max_expression_trees_per_step=2",
         "--lazy_vector_generation_ratio=0.2",
         "--special_forms=and,or,cast,coalesce,if,switch",
+        # When both engines throw for some rows, verify the other rows with
+        # try() and 3 of the rows that throw one at a time.
+        "--retry_with_try",
+        "--try_null_rows_to_verify=3",
     ],
     "aggregation": [
         "--enable_sorted_aggregations=false",
+        "--compare_errors_with_reference",
     ],
 }
 
@@ -151,7 +156,17 @@ def restart_server(url):
     sys.exit(f"Spark Connect server at {url} didn't start.")
 
 
-def fuzzer_command(args, seed, extra_flags, binary=None):
+def ansi_flags(ansi):
+    """Returns the fuzzer flags of ANSI mode 'on' or 'off'. None keeps the mode
+    of the fuzzer or the run."""
+    if ansi is None:
+        return []
+    return [f"--ansi_enabled={'true' if ansi == 'on' else 'false'}"]
+
+
+def fuzzer_command(args, seed, flags, binary=None):
+    """Returns the fuzzer command with 'flags', which include the default
+    flags."""
     binary = Path(binary) if binary else BUILD_DIR / FUZZERS[args.fuzzer]
     if not binary.exists():
         sys.exit(f"{binary} doesn't exist. Build it first.")
@@ -170,7 +185,7 @@ def fuzzer_command(args, seed, extra_flags, binary=None):
             command.append(f"--skip_functions={args.skip}")
     if args.only:
         command.append(f"--only={args.only}")
-    command += DEFAULT_FLAGS[args.fuzzer] + extra_flags
+    command += flags
     return command
 
 
@@ -277,6 +292,9 @@ def parse_log(text):
         ("velox_runtime_error", "VeloxRuntimeErrors other than"),
         ("velox_error", "Exceptions other than"),
         ("velox_error", "wasn't supposed to throw"),
+        # Aggregation fuzzer with --compare_errors_with_reference.
+        ("velox_only_error", "Only Velox throws"),
+        ("spark_only_error", "Only the reference DB throws"),
     ]
     result["category"] = "other"
     for category, marker in categories:
@@ -346,13 +364,15 @@ def cmd_run(args, extra_flags):
         sys.exit(f"{build_binary} doesn't exist. Build it first.")
     binary = out / build_binary.name
     shutil.copy2(build_binary, binary)
+    flags = DEFAULT_FLAGS[args.fuzzer] + ansi_flags(args.ansi) + extra_flags
     with open(out / "config.json", "w") as f:
         json.dump(
             {
                 "fuzzer": args.fuzzer,
                 "only": args.only,
                 "skip": args.skip,
-                "flags": DEFAULT_FLAGS[args.fuzzer] + extra_flags,
+                "ansi": args.ansi,
+                "flags": flags,
                 "spark_url": args.spark_url,
                 "query_timeout_sec": args.query_timeout_sec,
                 "binary": str(binary),
@@ -362,6 +382,7 @@ def cmd_run(args, extra_flags):
             indent=2,
         )
     log(f"Results are written to {out}")
+    log(f"ANSI mode: {args.ansi}")
     if args.skip:
         log(f"Skipped functions: {args.skip}")
     rng = random.Random()
@@ -373,7 +394,7 @@ def cmd_run(args, extra_flags):
         if not server_is_up(args.spark_url):
             restart_server(args.spark_url)
         repro_dir = out / "repro" / str(seed)
-        command = fuzzer_command(args, seed, extra_flags, binary) + [
+        command = fuzzer_command(args, seed, flags, binary) + [
             f"--duration_sec={args.duration_sec}",
         ]
         if args.fuzzer == "expression":
@@ -587,6 +608,14 @@ def count_unsupported(results):
 
 def cmd_summary(args, _):
     run_dirs = [Path(d) for d in args.run_dirs] or latest_run_dirs()
+    for run_dir in run_dirs:
+        config_path = run_dir / "config.json"
+        if config_path.is_file():
+            config = json.loads(config_path.read_text())
+            log(
+                f"{run_dir}: {config['fuzzer']} fuzzer, "
+                f"ANSI {config.get('ansi') or 'off'}"
+            )
     name = "recheck.jsonl" if args.rechecked else "results.jsonl"
     paths = [d / name for d in run_dirs]
     summarize(paths, args.examples)
@@ -608,7 +637,6 @@ def cmd_summary(args, _):
 def iteration_command(args, seed, extra_flags):
     """Returns the command that reruns one iteration. Reuses the flags and the
     binary of args.run_dir if set."""
-    flags = extra_flags
     binary = None
     if args.run_dir:
         config = json.loads((Path(args.run_dir) / "config.json").read_text())
@@ -617,9 +645,13 @@ def iteration_command(args, seed, extra_flags):
         # Iteration seeds only reproduce with the same candidate functions.
         if args.skip is None:
             args.skip = config.get("skip", "")
-        flags = config["flags"][len(DEFAULT_FLAGS[args.fuzzer]) :] + extra_flags
+        # The flags of the run include the default flags of its time.
+        flags = config["flags"]
         if not args.current_build:
             binary = config.get("binary")
+    else:
+        flags = DEFAULT_FLAGS[args.fuzzer]
+    flags = flags + ansi_flags(args.ansi) + extra_flags
     binary = getattr(args, "binary", None) or binary
     return fuzzer_command(args, seed, flags, binary) + ["--steps=1", "--v=1"]
 
@@ -739,6 +771,7 @@ def recheck_run(args, run_dir, binary, extra_flags):
             skip=None,
             current_build=binary is not None,
             binary=binary,
+            ansi=None,
             spark_url=args.spark_url,
             query_timeout_sec=args.query_timeout_sec,
             iteration_timeout_sec=args.iteration_timeout_sec,
@@ -783,28 +816,40 @@ def cmd_sql(args, _):
         confs[key] = value
     for key, value in confs.items():
         spark.conf.set(key, value)
-    started = time.time()
-    try:
-        if args.values:
-            # Spark evaluates queries on literal rows when it optimizes them,
-            # even with ConstantFolding excluded, and infers the nullability of
-            # their columns. Read the rows from Parquet like the fuzzer does.
-            path = f"file://{HOME / 'tmp' / 'sql-values'}"
+    if args.values:
+        # Spark evaluates queries on literal rows when it optimizes them, even
+        # with ConstantFolding excluded, and infers the nullability of their
+        # columns. Read the rows from Parquet like the fuzzer does.
+        path = f"file://{HOME / 'tmp' / 'sql-values'}"
+        try:
             spark.sql(f"SELECT * FROM VALUES {args.values}").write.mode(
                 "overwrite"
             ).parquet(path)
             spark.sql(
                 f"CREATE OR REPLACE TEMPORARY VIEW T AS SELECT * FROM parquet.`{path}`"
             )
-        df = spark.sql(args.query)
-        if args.explain:
-            df.explain(mode="extended")
-        rows = df.collect()
-        for row in rows[: args.limit]:
-            log(repr(row))
-        log(f"OK: {len(rows)} rows in {time.time() - started:.1f}s")
-    except Exception as e:  # noqa: BLE001
-        log(f"ERROR: {str(e)[:2000]}")
+        except Exception as e:  # noqa: BLE001
+            log(f"ERROR: {str(e)[:2000]}")
+            sys.exit(1)
+    modes = {"off": ["off"], "on": ["on"], "both": ["off", "on"]}.get(args.ansi, [None])
+    failed = False
+    for mode in modes:
+        if mode:
+            spark.conf.set("spark.sql.ansi.enabled", str(mode == "on").lower())
+            log(f"ANSI {mode}:")
+        started = time.time()
+        try:
+            df = spark.sql(args.query)
+            if args.explain:
+                df.explain(mode="extended")
+            rows = df.collect()
+            for row in rows[: args.limit]:
+                log(repr(row))
+            log(f"OK: {len(rows)} rows in {time.time() - started:.1f}s")
+        except Exception as e:  # noqa: BLE001
+            log(f"ERROR: {str(e)[:2000]}")
+            failed = True
+    if failed:
         sys.exit(1)
 
 
@@ -831,6 +876,12 @@ def main():
     run.add_argument("--seed", type=int, help="First seed. Random by default.")
     run.add_argument("--only", help="Comma separated functions to test.")
     run.add_argument("--skip", help="Comma separated functions to skip.")
+    run.add_argument(
+        "--ansi",
+        choices=["off", "on"],
+        default="off",
+        help="ANSI mode of Velox and Spark. Default: off.",
+    )
     run.add_argument(
         "--known-issues",
         default=str(SCRIPT_DIR / "known-issues.txt"),
@@ -875,6 +926,11 @@ def main():
     repro.add_argument("--only")
     repro.add_argument(
         "--skip", help="Comma separated functions to skip. Default: as in the run."
+    )
+    repro.add_argument(
+        "--ansi",
+        choices=["off", "on"],
+        help="ANSI mode of Velox and Spark. Default: as in the run, or off.",
     )
     repro.add_argument(
         "--current-build",
@@ -923,6 +979,12 @@ def main():
     )
     sql.add_argument(
         "--explain", action="store_true", help="Print the plans of the query."
+    )
+    sql.add_argument(
+        "--ansi",
+        choices=["off", "on", "both"],
+        help="Run the query with ANSI mode off, on, or both one after the other. "
+        "Overrides spark.sql.ansi.enabled. Default: off.",
     )
     sql.add_argument("--limit", type=int, default=20)
     sql.set_defaults(handler=cmd_sql)
