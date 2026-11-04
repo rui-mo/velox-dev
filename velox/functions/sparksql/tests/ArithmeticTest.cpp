@@ -433,7 +433,7 @@ TEST_F(ArithmeticTest, divide) {
   EXPECT_EQ(divide(std::nullopt, std::nullopt), std::nullopt);
   EXPECT_EQ(divide(std::nullopt, 1), std::nullopt);
   EXPECT_EQ(divide(1, std::nullopt), std::nullopt);
-  // Division by zero is always null.
+  // Division by zero is null with ANSI mode off.
   EXPECT_EQ(divide(1, 0), std::nullopt);
   EXPECT_EQ(divide(0, 0), std::nullopt);
   EXPECT_EQ(divide(kNan, 0), std::nullopt);
@@ -453,6 +453,17 @@ TEST_F(ArithmeticTest, divide) {
   EXPECT_TRUE(std::isnan(divide(kInf, kInf).value_or(0)));
   EXPECT_TRUE(std::isnan(divide(-kInf, kInf).value_or(0)));
   EXPECT_TRUE(std::isnan(divide(kInf, -kInf).value_or(0)));
+}
+
+TEST_F(ArithmeticTest, divideAnsi) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  VELOX_ASSERT_THROW(divide(1, 0), "Division by zero");
+  VELOX_ASSERT_THROW(divide(1, -0.0), "Division by zero");
+  VELOX_ASSERT_THROW(divide(kNan, 0), "Division by zero");
+  EXPECT_EQ(divide(std::nullopt, 0), std::nullopt);
+  EXPECT_EQ(divide(1, 2), 0.5);
+  EXPECT_TRUE(std::isnan(divide(1, kNan).value_or(0)));
 }
 
 TEST_F(ArithmeticTest, div) {
