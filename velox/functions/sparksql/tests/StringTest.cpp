@@ -1408,6 +1408,14 @@ TEST_F(StringTest, translate) {
   data[2] = (char)128;
   testTranslate({"1ae4b", "e", invalidUtf8Char}, data);
   testTranslate({data, "3", "a"}, data);
+
+  // A NUL character in 'replace' replaces its match. A NUL character in
+  // 'match' without a replacement is deleted.
+  const std::string nul(1, '\0');
+  const std::string nulResult = "a" + nul + "c";
+  testTranslate({"abc", "b", nul}, nulResult);
+  testTranslate({"abc", "b" + nul, nul + "q"}, nulResult);
+  testTranslate({nulResult, nul, ""}, "ac");
 }
 
 TEST_F(StringTest, translateConstantMatch) {

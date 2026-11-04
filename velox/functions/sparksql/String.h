@@ -1072,8 +1072,8 @@ struct TranslateFunction {
         std::memcpy(result.data() + i, &inputChar, 1);
         ++i;
       } else {
-        if (it->second != '\0') {
-          std::memcpy(result.data() + i, &(it->second), 1);
+        if (it->second.has_value()) {
+          std::memcpy(result.data() + i, &*it->second, 1);
           ++i;
         }
       }
@@ -1115,10 +1115,12 @@ struct TranslateFunction {
     return dictionary;
   }
 
-  folly::F14FastMap<char, char> buildAsciiDictionary(
+  // Maps the extra characters of 'match' to std::nullopt, which deletes them.
+  // A NUL character in 'replace' is a replacement like any other.
+  folly::F14FastMap<char, std::optional<char>> buildAsciiDictionary(
       const arg_type<Varchar>& match,
       const arg_type<Varchar>& replace) {
-    folly::F14FastMap<char, char> dictionary;
+    folly::F14FastMap<char, std::optional<char>> dictionary;
     int i = 0;
     for (; i < std::min(match.size(), replace.size()); i++) {
       char matchChar = *(match.data() + i);
@@ -1128,13 +1130,13 @@ struct TranslateFunction {
     }
     for (; i < match.size(); i++) {
       char matchChar = *(match.data() + i);
-      dictionary.emplace(matchChar, '\0');
+      dictionary.emplace(matchChar, std::nullopt);
     }
     return dictionary;
   }
 
   std::optional<folly::F14FastMap<std::string, std::string>> unicodeDictionary_;
-  std::optional<folly::F14FastMap<char, char>> asciiDictionary_;
+  std::optional<folly::F14FastMap<char, std::optional<char>>> asciiDictionary_;
 
   bool isConstantDictionary_ = false;
 };
