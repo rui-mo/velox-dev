@@ -805,6 +805,39 @@ struct RoundFunction {
   std::optional<double> scaleFactor_;
 };
 
+/// Spark's + operator. Integral overflow wraps around when Spark ANSI mode is
+/// disabled and throws when it is enabled.
+template <typename TExec>
+struct AddFunction {
+  template <typename T>
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const T* /*a*/,
+      const T* /*b*/) {
+    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
+  }
+
+  template <typename T>
+  FOLLY_ALWAYS_INLINE Status call(T& result, const T& a, const T& b) {
+    if constexpr (std::is_integral_v<T>) {
+      if (FOLLY_UNLIKELY(__builtin_add_overflow(a, b, &result)) &&
+          ansiEnabled_) {
+        if (threadSkipErrorDetails()) {
+          return Status::UserError();
+        }
+        return Status::UserError("Arithmetic overflow: {} + {}", a, b);
+      }
+    } else {
+      result = a + b;
+    }
+    return Status::OK();
+  }
+
+ private:
+  bool ansiEnabled_{false};
+};
+
 template <typename TExec>
 struct CheckedAddFunction {
   template <typename T>

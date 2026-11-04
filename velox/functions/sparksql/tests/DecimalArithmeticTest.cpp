@@ -467,6 +467,36 @@ TEST_F(DecimalArithmeticTest, add) {
            DECIMAL(38, 5))});
 }
 
+TEST_F(DecimalArithmeticTest, addAnsi) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  for (const auto& func : {"add", "add_deny_precision_loss"}) {
+    SCOPED_TRACE(func);
+    assertErrorForCheckedDecimalArithmetic<int128_t, int128_t>(
+        func,
+        DECIMAL(38, 0),
+        DECIMAL(38, 0),
+        HugeInt::parse("99999999999999999999999999999999999999"),
+        1,
+        "Decimal overflow in add");
+    assertErrorForCheckedDecimalArithmetic<int128_t, int128_t>(
+        func,
+        DECIMAL(38, 0),
+        DECIMAL(38, 0),
+        HugeInt::parse("-99999999999999999999999999999999999999"),
+        -1,
+        "Decimal overflow in add");
+    EXPECT_EQ(
+        (checkedDecimalArithmetic<int128_t, int128_t>(
+            func,
+            DECIMAL(38, 0),
+            DECIMAL(38, 0),
+            std::nullopt,
+            HugeInt::parse("99999999999999999999999999999999999999"))),
+        std::nullopt);
+  }
+}
+
 TEST_F(DecimalArithmeticTest, subtract) {
   testArithmeticFunction(
       "subtract",
