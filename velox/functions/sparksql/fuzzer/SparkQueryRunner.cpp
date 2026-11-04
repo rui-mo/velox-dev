@@ -509,8 +509,12 @@ const std::vector<TypePtr>& SparkQueryRunner::supportedScalarTypes() const {
 
 const std::unordered_map<std::string, DataSpec>&
 SparkQueryRunner::aggregationFunctionDataSpecs() const {
+  // The results of these functions for infinite inputs depend on how the rows
+  // are split into partial aggregations, in both Velox and Spark.
   static const std::unordered_map<std::string, DataSpec>
-      kAggregationFunctionDataSpecs{};
+      kAggregationFunctionDataSpecs{
+          {"covar_samp", DataSpec{true, false}},
+      };
 
   return kAggregationFunctionDataSpecs;
 }
