@@ -355,7 +355,9 @@ struct Log2Function {
     if (a <= 0.0) {
       return false;
     }
-    result = std::log2(a);
+    // Like Spark, divides the natural logarithm by ln(2). std::log2 differs
+    // from it in the last bit for about 30% of random inputs.
+    result = std::log(a) / std::log(2.0);
     return true;
   }
 };

@@ -1124,6 +1124,13 @@ TEST_F(LogNTest, log2) {
     return evaluateOnce<double>("log2(c0)", a);
   };
   EXPECT_EQ(log2(8), 3.0);
+  // Spark divides the natural logarithm by ln(2), which rounds the last bit
+  // differently from std::log2 for these inputs.
+  EXPECT_EQ(log2(9), 3.1699250014423126);
+  EXPECT_EQ(log2(10), 3.3219280948873626);
+  EXPECT_EQ(log2(17), 4.08746284125034);
+  EXPECT_EQ(log2(100), 6.643856189774725);
+  EXPECT_EQ(log2(12345.678), 13.591718448138552);
   EXPECT_EQ(log2(-1.0), std::nullopt);
   EXPECT_EQ(log2(0.0), std::nullopt);
   EXPECT_EQ(log2(kInf), kInf);
