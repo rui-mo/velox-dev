@@ -266,6 +266,7 @@ TEST_F(CollectSetAggregateTest, rowWithNestedNull) {
       makeFlatVector<int32_t>({1, 2, 2, 1}),
       makeNullableFlatVector<int32_t>({1, std::nullopt, 2, 1}),
   })});
+  // Spark's array_sort orders nested nulls first.
   auto expected = makeRowVector({
       makeArrayOfRowVector(
           ROW({INTEGER(), INTEGER()}),
