@@ -79,6 +79,10 @@ class ExpressionFuzzerVerifier {
     // Retry failed expressions by wrapping it using a try() statement.
     bool retryWithTry = false;
 
+    // With 'retryWithTry', the maximum number of rows per test case that
+    // return null with try() to verify one at a time. Zero disables it.
+    int32_t tryNullRowsToVerify = 0;
+
     // Automatically seeks minimum failed subexpression on result mismatch
     bool findMinimalSubexpression = false;
 
@@ -188,6 +192,8 @@ class ExpressionFuzzerVerifier {
   ///     clause and expecting it not to throw an exception.
   /// #2. Re-execute the expression only on rows that produced non-NULL values
   ///     in the previous step.
+  /// If 'tryNullRowsToVerify' is set, it then verifies up to that many rows
+  /// per test case that produced NULL values in step #1, one at a time.
   ///
   /// Throws in case any of these steps fail.
   void retryWithTry(
