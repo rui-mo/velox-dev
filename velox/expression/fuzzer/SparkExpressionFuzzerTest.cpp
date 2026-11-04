@@ -122,6 +122,11 @@ std::unordered_set<std::string> sparkSkippedFunctions() {
       "element_at(array(T),bigint) -> T",
       "array_intersect(array(array(T))) -> array(T)",
       "array_position(array(T),T,bigint) -> bigint",
+      // The signature of map for more than 10 key-value pairs takes arguments
+      // of any type, so the fuzzer generates an odd number of arguments or
+      // keys of different types. Both engines reject these calls for the
+      // whole batch, which try() doesn't suppress.
+      "map(K,V,any...) -> map(K,V)",
   };
   for (const auto& [name, _] : facebook::velox::getFunctionSignatures()) {
     if (!isSupportedFunction(name)) {
