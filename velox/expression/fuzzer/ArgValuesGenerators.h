@@ -438,4 +438,22 @@ class LikeArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates arguments for Spark abs, unaryminus, divide, div, pmod and
+/// remainder. Half of the arguments read an input column in which some rows
+/// have edge values: 0, 1, -1 and the extremes of the type, and for
+/// floating-point types also -0.0, NaN and infinities. Random arguments almost
+/// never divide by zero or overflow, e.g. as the minimum of BIGINT divided by
+/// -1, for which Spark returns NULL or wraps with ANSI mode off and throws with
+/// ANSI mode on.
+class ArithmeticArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~ArithmeticArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer

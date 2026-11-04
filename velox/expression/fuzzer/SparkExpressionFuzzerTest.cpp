@@ -88,6 +88,7 @@ DEFINE_bool(
 DECLARE_bool(velox_fuzzer_orderable_map_keys);
 
 using facebook::velox::fuzzer::ArgValuesGenerator;
+using facebook::velox::fuzzer::ArithmeticArgValuesGenerator;
 using facebook::velox::fuzzer::ArrayInsertArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
@@ -226,7 +227,10 @@ int main(int argc, char** argv) {
 
   std::unordered_map<std::string, std::shared_ptr<ArgValuesGenerator>>
       argValuesGenerators = {
+          {"abs", std::make_shared<ArithmeticArgValuesGenerator>()},
           {"array_insert", std::make_shared<ArrayInsertArgValuesGenerator>()},
+          {"div", std::make_shared<ArithmeticArgValuesGenerator>()},
+          {"divide", std::make_shared<ArithmeticArgValuesGenerator>()},
           {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()},
           {"like", std::make_shared<LikeArgValuesGenerator>()},
           {"lpad", std::make_shared<PadArgValuesGenerator>()},
@@ -235,10 +239,12 @@ int main(int argc, char** argv) {
           {"make_timestamp_ntz",
            std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"mask", std::make_shared<MaskArgValuesGenerator>()},
+          {"pmod", std::make_shared<ArithmeticArgValuesGenerator>()},
           {"regexp_extract", std::make_shared<RegexpArgValuesGenerator>()},
           {"regexp_extract_all", std::make_shared<RegexpArgValuesGenerator>()},
           {"regexp_instr", std::make_shared<RegexpArgValuesGenerator>()},
           {"regexp_replace", std::make_shared<RegexpArgValuesGenerator>()},
+          {"remainder", std::make_shared<ArithmeticArgValuesGenerator>()},
           {"repeat", std::make_shared<RepeatArgValuesGenerator>()},
           {"rlike", std::make_shared<RegexpArgValuesGenerator>()},
           {"round", std::make_shared<RoundArgValuesGenerator>()},
@@ -252,7 +258,8 @@ int main(int argc, char** argv) {
           {"try_make_timestamp",
            std::make_shared<MakeTimestampArgValuesGenerator>()},
           {"try_make_timestamp_ntz",
-           std::make_shared<MakeTimestampArgValuesGenerator>()}};
+           std::make_shared<MakeTimestampArgValuesGenerator>()},
+          {"unaryminus", std::make_shared<ArithmeticArgValuesGenerator>()}};
 
   std::shared_ptr<facebook::velox::memory::MemoryPool> rootPool{
       facebook::velox::memory::memoryManager()->addRootPool()};

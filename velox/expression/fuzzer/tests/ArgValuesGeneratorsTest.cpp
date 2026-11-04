@@ -18,13 +18,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "velox/core/Expressions.h"
 #include "velox/core/QueryConfig.h"
 #include "velox/expression/fuzzer/ArgValuesGenerators.h"
+#include "velox/type/DecimalUtil.h"
 #include "velox/type/tz/TimeZoneMap.h"
 
 namespace facebook::velox::fuzzer::test {
@@ -662,6 +665,95 @@ TEST(ArgValuesGeneratorsTest, like) {
     if (numArgs == 3) {
       EXPECT_GT(escapes.size(), 4);
     }
+  }
+}
+
+TEST(ArgValuesGeneratorsTest, arithmetic) {
+  VectorFuzzer::Options options;
+  options.nullRatio = 0.1;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  ArithmeticArgValuesGenerator generator;
+
+  // The values that divide by zero or overflow.
+  const std::vector<std::pair<TypePtr, std::vector<variant>>> kTypes{
+      {TINYINT(),
+       {variant(int8_t{0}), variant(int8_t{-1}), variant(int8_t{-128})}},
+      {BIGINT(),
+       {variant(int64_t{0}),
+        variant(int64_t{-1}),
+        variant(std::numeric_limits<int64_t>::min())}},
+      {DOUBLE(), {variant(0.0)}},
+      {DECIMAL(10, 2),
+       {variant(int64_t{0}),
+        variant(int64_t{-100}),
+        variant(int64_t{-9'999'999'999})}},
+      {DECIMAL(38, 0),
+       {variant(int128_t{0}),
+        variant(int128_t{-1}),
+        variant(-DecimalUtil::kPowersOfTen[38] + 1)}},
+  };
+  for (const auto& [type, edgeValues] : kTypes) {
+    SCOPED_TRACE(type->toString());
+    const CallableSignature signature{
+        .name = "div",
+        .args = {type, type},
+        .returnType = BIGINT(),
+        .constantArgs = {false, false},
+    };
+    int32_t numColumns = 0;
+    std::vector<variant> values;
+    bool hasNaN = false;
+    for (auto i = 0; i < 100; ++i) {
+      state.reset();
+      const auto inputs = generator.generate(signature, options, rng, state);
+
+      // The fuzzer generates the arguments that don't read an input column.
+      ASSERT_EQ(inputs.size(), 2);
+      ASSERT_EQ(
+          state.customInputGenerators_.size(), state.inputRowNames_.size());
+      for (auto j = 0; j < inputs.size(); ++j) {
+        if (inputs[j] == nullptr) {
+          continue;
+        }
+        const auto field =
+            std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+                inputs[j]);
+        ASSERT_NE(field, nullptr);
+        ++numColumns;
+        const auto it = std::find(
+            state.inputRowNames_.begin(),
+            state.inputRowNames_.end(),
+            field->name());
+        ASSERT_NE(it, state.inputRowNames_.end());
+        const auto index = it - state.inputRowNames_.begin();
+        ASSERT_EQ(*state.inputRowTypes_[index], *type);
+        ASSERT_NE(state.customInputGenerators_[index], nullptr);
+        for (auto k = 0; k < 100; ++k) {
+          const auto value = state.customInputGenerators_[index]->generate();
+          if (value.isNull()) {
+            continue;
+          }
+          if (type->isShortDecimal()) {
+            EXPECT_LT(std::abs(value.value<int64_t>()), 10'000'000'000);
+          } else if (type->isLongDecimal()) {
+            EXPECT_LT(value.value<int128_t>(), DecimalUtil::kPowersOfTen[38]);
+            EXPECT_GT(value.value<int128_t>(), -DecimalUtil::kPowersOfTen[38]);
+          } else if (type->kind() == TypeKind::DOUBLE) {
+            hasNaN |= std::isnan(value.value<double>());
+          }
+          values.push_back(value);
+        }
+      }
+    }
+    EXPECT_GT(numColumns, 70);
+    EXPECT_LT(numColumns, 130);
+    for (const auto& edgeValue : edgeValues) {
+      EXPECT_NE(
+          std::find(values.begin(), values.end(), edgeValue), values.end())
+          << edgeValue.toJson(type);
+    }
+    EXPECT_EQ(hasNaN, type->kind() == TypeKind::DOUBLE);
   }
 }
 
