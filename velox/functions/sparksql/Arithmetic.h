@@ -921,12 +921,25 @@ struct CheckedDivideFunction {
 
 /// Implements integral division with truncation towards zero. Divides the
 /// arguments as BIGINT, like Spark, which casts them to BIGINT.
-/// Returns Null if divisor is 0.
+/// A zero divisor returns null with ANSI mode off and throws with ANSI mode
+/// on.
 template <typename TExec>
 struct IntegralDivideFunction {
   template <typename T>
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const T* /*a*/,
+      const T* /*b*/) {
+    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
+  }
+
+  template <typename T>
   FOLLY_ALWAYS_INLINE bool call(int64_t& result, const T& a, const T& b) {
     if (b == 0) {
+      if (ansiEnabled_) {
+        VELOX_USER_FAIL("Division by zero");
+      }
       return false;
     }
     // In Java, Long.MIN_VALUE is -2^63 and Long.MAX_VALUE is 2^63 - 1.
@@ -934,8 +947,11 @@ struct IntegralDivideFunction {
     // result (+2^63) cannot be represented in a signed 64-bit integer.
     // Java integer arithmetic wraps around on overflow (two's complement),
     // so Long.MIN_VALUE / -1 evaluates to Long.MIN_VALUE itself instead
-    // of throwing an exception.
+    // of throwing an exception. Spark throws in ANSI mode.
     if (a == std::numeric_limits<int64_t>::min() && b == -1) {
+      if (ansiEnabled_) {
+        VELOX_USER_FAIL("Overflow in integral divide");
+      }
       result = a;
       return true;
     }
@@ -943,6 +959,9 @@ struct IntegralDivideFunction {
     result = static_cast<int64_t>(a) / static_cast<int64_t>(b);
     return true;
   }
+
+ private:
+  bool ansiEnabled_ = false;
 };
 
 /// Implements integral division with truncation towards zero. Divides the

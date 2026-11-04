@@ -1086,6 +1086,36 @@ TEST_F(DecimalArithmeticTest, div) {
       std::nullopt);
 }
 
+TEST_F(DecimalArithmeticTest, divAnsi) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  VELOX_ASSERT_USER_THROW(
+      (div<int64_t, int64_t>(DECIMAL(7, 1), DECIMAL(8, 2), 91, 0)),
+      "Division by zero");
+  VELOX_ASSERT_USER_THROW(
+      (div<int128_t, int128_t>(DECIMAL(37, 1), DECIMAL(38, 2), 91, 0)),
+      "Division by zero");
+  VELOX_ASSERT_USER_THROW(
+      (div<int128_t, int128_t>(
+          DECIMAL(38, 0),
+          DECIMAL(38, 6),
+          HugeInt::parse("99999999999999999999999999999999999999"),
+          1)),
+      "Overflow in integral divide");
+  EXPECT_EQ(
+      (div<int64_t, int64_t>(DECIMAL(7, 1), DECIMAL(8, 2), std::nullopt, 0)),
+      std::nullopt);
+  EXPECT_EQ((div<int64_t, int64_t>(DECIMAL(7, 1), DECIMAL(8, 2), 24, 110)), 2L);
+  // A quotient beyond the BIGINT range wraps, as with ANSI mode off.
+  EXPECT_EQ(
+      (div<int128_t, int128_t>(
+          DECIMAL(38, 0),
+          DECIMAL(38, 0),
+          HugeInt::parse("1000000000000000000000"),
+          1)),
+      3875820019684212736L);
+}
+
 TEST_F(DecimalArithmeticTest, checkedDiv) {
   EXPECT_EQ(
       (checked_div<int64_t, int64_t>(DECIMAL(7, 1), DECIMAL(8, 2), 10, 200)),

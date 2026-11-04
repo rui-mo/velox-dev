@@ -235,15 +235,20 @@ Mathematical Functions
 
     Converts angle x in radians to degrees.
 
-.. spark:function:: div(x, y) -> bigint
+.. spark:function:: div(x, y) -> bigint (ANSI compliant)
 
     Returns the results of dividing x by y. Performs the integer division truncates toward zero.
     Supported types are integral types, x and y must have the same type.
-    Division by zero or overflow results in null. ::
+    When ``y`` is zero, returns NULL following the behavior when Spark ANSI mode
+    is disabled, and throws an exception when Spark ANSI mode is enabled.
+    Dividing the minimum BIGINT value by -1 overflows. It returns the minimum
+    BIGINT value when Spark ANSI mode is disabled, and throws an exception when
+    Spark ANSI mode is enabled. ::
 
         SELECT 3 div 2; -- 1
         SELECT 1L div 2L; -- 0
-        SELECT 3 div 0; -- NULL
+        SELECT 3 div 0; -- NULL (with ANSI mode disabled)
+        SELECT 3 div 0; -- Division by zero exception (with ANSI mode enabled)
 
 .. spark:function:: divide(x, y) -> double (ANSI compliant)
 
