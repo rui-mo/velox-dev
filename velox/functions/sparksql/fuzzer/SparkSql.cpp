@@ -441,8 +441,9 @@ std::string toInSql(const core::CallTypedExpr& call) {
       "({} IN ({}))", toSparkSql(inputs[0]), folly::join(", ", elements));
 }
 
-// Velox has a flag for legacySizeOfNull, which returns -1 for null input like
-// Spark with ANSI mode off.
+// Velox has a flag for legacySizeOfNull, which returns -1 for null input.
+// Spark returns -1 only with ANSI mode off, so null input is handled
+// explicitly for both values of the flag.
 std::string toSizeSql(const core::CallTypedExpr& call) {
   const auto& inputs = call.inputs();
   if (inputs.size() != 2) {
@@ -454,7 +455,7 @@ std::string toSizeSql(const core::CallTypedExpr& call) {
   }
   const auto input = toSparkSql(inputs[0]);
   if (legacySizeOfNull->value<TypeKind::BOOLEAN>()) {
-    return fmt::format("size({})", input);
+    return fmt::format("IF({0} IS NULL, -1, size({0}))", input);
   }
   return fmt::format("IF({0} IS NULL, CAST(NULL AS INT), size({0}))", input);
 }

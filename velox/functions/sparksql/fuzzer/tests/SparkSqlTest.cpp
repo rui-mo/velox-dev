@@ -365,7 +365,7 @@ TEST_F(SparkSqlTest, functions) {
           {field("s"), constant(VARCHAR(), "a"), field("s")})),
       "Spark requires a constant escape character");
 
-  EXPECT_EQ(toSql("size(arr, true)"), "size(arr)");
+  EXPECT_EQ(toSql("size(arr, true)"), "IF(arr IS NULL, -1, size(arr))");
   EXPECT_EQ(
       toSql("size(arr, false)"),
       "IF(arr IS NULL, CAST(NULL AS INT), size(arr))");
