@@ -585,9 +585,8 @@ struct DecimalIntegralDivideBase {
   }
 
   // Computes the quotient of 'a' and 'b' and stores it in 'out'. Returns false
-  // if the result exceeds rPrecision_ or if overflow occurs during scaling.
-  // Following Spark's behavior, the result is truncated to int64_t if it
-  // exceeds int64_t range.
+  // if the result exceeds rPrecision_. Following Spark's behavior, the result
+  // is truncated to int64_t if it exceeds int64_t range.
   template <typename A, typename B>
   bool computeQuotient(int64_t& out, const A& a, const B& b) {
     // Determine sign and convert to absolute values.
@@ -595,22 +594,27 @@ struct DecimalIntegralDivideBase {
     int128_t absA = static_cast<int128_t>(a < 0 ? -a : a);
     int128_t absB = static_cast<int128_t>(b < 0 ? -b : b);
 
-    // Scale values, checking for overflow.
+    // Scale values to the same scale. The scaled values are less than 10^76,
+    // so they fit in 256 bits if they exceed 128 bits.
     int128_t scaledA;
     int128_t scaledB;
-    if (__builtin_mul_overflow(
-            absA, velox::DecimalUtil::kPowersOfTen[aRescale_], &scaledA) ||
-        __builtin_mul_overflow(
-            absB, velox::DecimalUtil::kPowersOfTen[bRescale_], &scaledB)) {
-      return false;
+    int128_t quotient;
+    if (FOLLY_UNLIKELY(
+            __builtin_mul_overflow(
+                absA, velox::DecimalUtil::kPowersOfTen[aRescale_], &scaledA) ||
+            __builtin_mul_overflow(
+                absB, velox::DecimalUtil::kPowersOfTen[bRescale_], &scaledB))) {
+      bool overflow = false;
+      quotient = DecimalUtil::convert<int128_t>(
+          int256_t(absA) * DecimalUtil::getPowersOfTen(aRescale_) /
+              (int256_t(absB) * DecimalUtil::getPowersOfTen(bRescale_)),
+          overflow);
+      if (overflow) {
+        return false;
+      }
+    } else {
+      quotient = scaledA / scaledB;
     }
-
-    if (scaledA < scaledB) {
-      out = 0;
-      return true;
-    }
-
-    int128_t quotient = scaledA / scaledB;
     quotient = isNegative ? -quotient : quotient;
 
     if (!velox::DecimalUtil::valueInPrecisionRange(quotient, rPrecision_)) {
