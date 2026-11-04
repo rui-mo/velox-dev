@@ -196,6 +196,12 @@ bool SparkCastCallToSpecialForm::isAnsiSupported(
     return true;
   }
 
+  // Decimal to integral types truncate the fractional part and throw if the
+  // result is out of the range of the target type.
+  if (fromType->isDecimal() && isIntegralType(toType)) {
+    return true;
+  }
+
   if (toType->isTimestamp() && (fromType->isReal() || fromType->isDouble())) {
     return true;
   }
