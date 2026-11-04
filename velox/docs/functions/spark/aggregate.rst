@@ -152,6 +152,10 @@ General Aggregate Functions
 
     Returns the sample covariance of a set of number pairs. When the count of pairs is
     greater than or equal to 2, a non-null output will be generated.
+    If ``spark.legacy_covariance_merge_empty_buffer`` is true, this function and
+    :spark:func:`corr` merge an intermediate result into an empty accumulator with
+    the full merge formula, which returns NaN if the intermediate result has an
+    infinite or very large average, as in Spark before 4.3.
 
 .. spark:function:: first(x) -> x
 

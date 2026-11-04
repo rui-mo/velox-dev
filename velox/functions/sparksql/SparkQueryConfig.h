@@ -125,6 +125,16 @@ class SparkQueryConfig {
       0,
       "Current Spark partition id for the running task. Defaults to 0.")
 
+  /// If true, covar_samp and corr merge an intermediate result into an empty
+  /// accumulator with the full merge formula, as in Spark 4.2 and earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyCovarianceMergeEmptyBuffer,
+      legacyCovarianceMergeEmptyBuffer,
+      "legacy_covariance_merge_empty_buffer",
+      bool,
+      false,
+      "Merge into empty accumulators with the full formula in Spark covar_samp and corr.")
+
   /// If true, simple date formatter is used for time formatting and parsing.
   VELOX_SPARK_CONFIG(
       kLegacyDateFormatter,

@@ -1524,6 +1524,13 @@ Spark-specific Configuration
      - integer
      -
      - The current task's Spark partition ID. It's set by the query engine (Spark) prior to task execution.
+   * - spark.legacy_covariance_merge_empty_buffer
+     - bool
+     - false
+     - If true, :spark:func:`covar_samp` and :spark:func:`corr` merge an intermediate result into an empty
+       accumulator with the full merge formula, which multiplies some terms by the zero count of the accumulator.
+       The result is NaN then if an intermediate result has an infinite or large average. This matches the
+       behavior of Spark before 4.3.
    * - spark.legacy_date_formatter
      - bool
      - false
