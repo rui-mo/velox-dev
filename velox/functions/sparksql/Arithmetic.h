@@ -268,14 +268,28 @@ struct UnaryMinusFunction {
 
 template <typename T>
 struct DivideFunction {
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& config,
+      const double* /*num*/,
+      const double* /*denom*/) {
+    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
+  }
+
   FOLLY_ALWAYS_INLINE bool
   call(double& result, const double num, const double denom) {
     if (UNLIKELY(denom == 0)) {
+      if (ansiEnabled_) {
+        VELOX_USER_FAIL("Division by zero");
+      }
       return false;
     }
     result = num / denom;
     return true;
   }
+
+ private:
+  bool ansiEnabled_ = false;
 };
 
 /*

@@ -245,15 +245,18 @@ Mathematical Functions
         SELECT 1L div 2L; -- 0
         SELECT 3 div 0; -- NULL
 
-.. spark:function:: divide(x, y) -> double
+.. spark:function:: divide(x, y) -> double (ANSI compliant)
 
     Returns the results of dividing x by y. Performs floating point division.
     Supported type is DOUBLE.
-    Corresponds to Spark's operator ``/``. ::
+    Corresponds to Spark's operator ``/``. When ``y`` is zero, returns NULL
+    following the behavior when Spark ANSI mode is disabled, and throws an
+    exception when Spark ANSI mode is enabled. ::
 
         SELECT 3 / 2; -- 1.5
         SELECT 2L / 2L; -- 1.0
-        SELECT 3 / 0; -- NULL
+        SELECT 3 / 0; -- NULL (with ANSI mode disabled)
+        SELECT 3 / 0; -- Division by zero exception (with ANSI mode enabled)
 
 .. spark:function:: divide(x, y) -> decimal
 
