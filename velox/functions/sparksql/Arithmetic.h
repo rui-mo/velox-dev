@@ -901,7 +901,8 @@ struct CheckedDivideFunction {
   }
 };
 
-/// Implements integral division with truncation towards zero.
+/// Implements integral division with truncation towards zero. Divides the
+/// arguments as BIGINT, like Spark, which casts them to BIGINT.
 /// Returns Null if divisor is 0.
 template <typename TExec>
 struct IntegralDivideFunction {
@@ -921,12 +922,13 @@ struct IntegralDivideFunction {
       return true;
     }
 
-    result = a / b;
+    result = static_cast<int64_t>(a) / static_cast<int64_t>(b);
     return true;
   }
 };
 
-/// Implements integral division with truncation towards zero.
+/// Implements integral division with truncation towards zero. Divides the
+/// arguments as BIGINT, like Spark, which casts them to BIGINT.
 /// Returns Error if divisor is 0 or overflow.
 template <typename TExec>
 struct CheckedIntegralDivideFunction {
@@ -936,7 +938,7 @@ struct CheckedIntegralDivideFunction {
     VELOX_USER_RETURN(
         a == std::numeric_limits<int64_t>::min() && b == -1,
         "Overflow in integral divide");
-    result = a / b;
+    result = static_cast<int64_t>(a) / static_cast<int64_t>(b);
     return Status::OK();
   }
 };

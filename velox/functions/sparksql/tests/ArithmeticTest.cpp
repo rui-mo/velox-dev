@@ -462,6 +462,10 @@ TEST_F(ArithmeticTest, div) {
   EXPECT_EQ(div<int64_t>(INT64_MIN, 0), std::nullopt);
 
   EXPECT_EQ(div<int64_t>(INT64_MIN, -1), INT64_MIN);
+  // Spark divides smaller types as BIGINT, which doesn't overflow.
+  EXPECT_EQ(div<int8_t>(INT8_MIN, -1), 128);
+  EXPECT_EQ(div<int16_t>(INT16_MIN, -1), 32768);
+  EXPECT_EQ(div<int32_t>(INT32_MIN, -1), 2147483648);
 
   EXPECT_EQ(div<int8_t>(INT8_MAX, INT8_MIN), 0);
   EXPECT_EQ(div<int16_t>(INT16_MIN, INT16_MAX), -1);
@@ -1163,6 +1167,7 @@ TEST_F(ArithmeticTest, checkedDiv) {
   // Division overflow.
   assertErrorForCheckedDiv<int64_t>(
       INT64_MIN, -1, "Overflow in integral divide");
+  EXPECT_EQ(checkedDiv<int32_t>(INT32_MIN, -1), 2147483648);
 }
 
 TEST_F(ArithmeticTest, abs) {
