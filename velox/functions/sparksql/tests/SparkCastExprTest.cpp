@@ -2218,6 +2218,26 @@ TEST_F(SparkCastExprTestAnsiOn, decimalToIntegral) {
   testDecimalToIntegral();
 }
 
+TEST_F(SparkCastExprTestAnsiOn, decimalToIntegralOverflow) {
+  // The fractional part is truncated before the range check.
+  testCast(
+      makeFlatVector<int64_t>({21474836479, -21474836489}, DECIMAL(11, 1)),
+      makeFlatVector<int32_t>({2147483647, -2147483648}));
+
+  // Values out of the range of the target type throw.
+  testThrow<int64_t>(DECIMAL(4, 1), TINYINT(), {3007}, "Out of bounds");
+  testThrow<int64_t>(DECIMAL(4, 1), TINYINT(), {-1292}, "Out of bounds");
+  testThrow<int64_t>(DECIMAL(6, 1), SMALLINT(), {327680}, "Out of bounds");
+  testThrow<int64_t>(
+      DECIMAL(12, 1), INTEGER(), {123456789015}, "Out of bounds");
+  testThrow<int64_t>(DECIMAL(10, 0), INTEGER(), {-2147483649}, "Out of bounds");
+  testThrow<int128_t>(
+      DECIMAL(21, 1),
+      BIGINT(),
+      {HugeInt::parse("999999999999999999999")},
+      "Out of bounds");
+}
+
 TEST_F(SparkCastExprTestAnsiOn, decimalToFloat) {
   SCOPE_EXIT {
     queryCtx_->testingOverrideConfigUnsafe({});
