@@ -799,6 +799,14 @@ def recheck_run(args, run_dir, binary, extra_flags):
     return len(failures), still_failing, not_reproduced
 
 
+def spark_error(e):
+    """Returns the message of a Spark error and the top of its JVM stack trace,
+    which names the expression that threw."""
+    message, _, trace = str(e).partition("JVM stacktrace:")
+    lines = message.strip().splitlines() + trace.strip().splitlines()[:3]
+    return "\n".join(lines)[:2000]
+
+
 def cmd_sql(args, _):
     python = HOME / "venv" / "bin" / "python"
     if Path(sys.prefix).resolve() != (HOME / "venv").resolve() and python.exists():
@@ -806,7 +814,12 @@ def cmd_sql(args, _):
     # The Spark Connect client retries a server that is down for minutes.
     if not server_is_up(args.spark_url):
         restart_server(args.spark_url)
+    from pyspark.logger import PySparkLogger
     from pyspark.sql import SparkSession
+
+    # PySpark logs each query error as JSON with its stack trace. The command
+    # prints the errors itself.
+    PySparkLogger.getLogger("SQLQueryContextLogger").disabled = True
 
     host, port = server_address(args.spark_url)
     spark = SparkSession.builder.remote(f"sc://{host}:{port}").getOrCreate()
@@ -829,7 +842,7 @@ def cmd_sql(args, _):
                 f"CREATE OR REPLACE TEMPORARY VIEW T AS SELECT * FROM parquet.`{path}`"
             )
         except Exception as e:  # noqa: BLE001
-            log(f"ERROR: {str(e)[:2000]}")
+            log(f"ERROR: {spark_error(e)}")
             sys.exit(1)
     modes = {"off": ["off"], "on": ["on"], "both": ["off", "on"]}.get(args.ansi, [None])
     failed = False
@@ -847,7 +860,7 @@ def cmd_sql(args, _):
                 log(repr(row))
             log(f"OK: {len(rows)} rows in {time.time() - started:.1f}s")
         except Exception as e:  # noqa: BLE001
-            log(f"ERROR: {str(e)[:2000]}")
+            log(f"ERROR: {spark_error(e)}")
             failed = True
     if failed:
         sys.exit(1)
