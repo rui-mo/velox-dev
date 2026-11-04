@@ -1535,4 +1535,148 @@ std::vector<core::TypedExprPtr> LikeArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+namespace {
+
+template <typename T>
+std::vector<variant> integralEdgeValues() {
+  return {
+      variant(T{0}),
+      variant(T{1}),
+      variant(T{-1}),
+      variant(std::numeric_limits<T>::max()),
+      variant(std::numeric_limits<T>::min())};
+}
+
+template <typename T>
+std::vector<variant> floatingPointEdgeValues() {
+  return {
+      variant(T{0}),
+      variant(-T{0}),
+      variant(T{1}),
+      variant(T{-1}),
+      variant(std::numeric_limits<T>::quiet_NaN()),
+      variant(std::numeric_limits<T>::infinity()),
+      variant(-std::numeric_limits<T>::infinity()),
+      variant(std::numeric_limits<T>::max()),
+      variant(std::numeric_limits<T>::lowest())};
+}
+
+// Returns the unscaled values 0, the smallest and largest magnitudes, and 1 if
+// the scale allows it, of either sign.
+template <typename T>
+std::vector<variant> decimalEdgeValues(const Type& type) {
+  const auto [precision, scale] = getDecimalPrecisionScale(type);
+  const auto max = static_cast<T>(DecimalUtil::kPowersOfTen[precision] - 1);
+  std::vector<variant> values{
+      variant(T{0}),
+      variant(T{1}),
+      variant(T{-1}),
+      variant(max),
+      variant(-max)};
+  if (scale < precision) {
+    const auto one = static_cast<T>(DecimalUtil::kPowersOfTen[scale]);
+    values.emplace_back(one);
+    values.emplace_back(static_cast<T>(-one));
+  }
+  return values;
+}
+
+std::vector<variant> numericEdgeValues(const Type& type) {
+  if (type.isShortDecimal()) {
+    return decimalEdgeValues<int64_t>(type);
+  }
+  if (type.isLongDecimal()) {
+    return decimalEdgeValues<int128_t>(type);
+  }
+  switch (type.kind()) {
+    case TypeKind::TINYINT:
+      return integralEdgeValues<int8_t>();
+    case TypeKind::SMALLINT:
+      return integralEdgeValues<int16_t>();
+    case TypeKind::INTEGER:
+      return integralEdgeValues<int32_t>();
+    case TypeKind::BIGINT:
+      return integralEdgeValues<int64_t>();
+    case TypeKind::REAL:
+      return floatingPointEdgeValues<float>();
+    case TypeKind::DOUBLE:
+      return floatingPointEdgeValues<double>();
+    default:
+      VELOX_UNSUPPORTED("Unsupported type: {}", type.toString());
+  }
+}
+
+// Generates edge values of a numeric type in a share of 'edgeRatio' of the
+// non-null rows, and random values in the others. Random decimals stay within
+// their precision.
+class NumericEdgeValueGenerator : public AbstractInputGenerator {
+ public:
+  NumericEdgeValueGenerator(
+      size_t seed,
+      const TypePtr& type,
+      double nullRatio,
+      double edgeRatio)
+      : AbstractInputGenerator(
+            seed,
+            type,
+            type->isDecimal() ? nullptr
+                              : getRandomInputGenerator(seed, type, 0.0),
+            nullRatio),
+        edgeRatio_{edgeRatio},
+        edgeValues_{numericEdgeValues(*type)} {}
+
+  variant generate() override {
+    if (coinToss(rng_, nullRatio_)) {
+      return variant::null(type_->kind());
+    }
+    if (coinToss(rng_, edgeRatio_)) {
+      return randElement(edgeValues_, rng_);
+    }
+    if (type_->isShortDecimal()) {
+      const auto max = static_cast<int64_t>(
+          DecimalUtil::kPowersOfTen[type_->asShortDecimal().precision()] - 1);
+      return variant(rand<int64_t>(rng_, -max, max));
+    }
+    if (type_->isLongDecimal()) {
+      return variant(
+          rand<int128_t>(rng_) %
+          DecimalUtil::kPowersOfTen[type_->asLongDecimal().precision()]);
+    }
+    return next_->generate();
+  }
+
+ private:
+  const double edgeRatio_;
+  const std::vector<variant> edgeValues_;
+};
+
+} // namespace
+
+std::vector<core::TypedExprPtr> ArithmeticArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_GE(signature.args.size(), 1);
+  VELOX_CHECK_LE(signature.args.size(), 2);
+
+  // Mostly a few edge values per batch, so that some batches have none.
+  const double edgeRatio = coinToss(rng, 0.8) ? 0.05 : 0.5;
+
+  // The fuzzer generates the other half of the arguments, e.g. nested
+  // expressions.
+  std::vector<core::TypedExprPtr> inputExpressions;
+  for (const auto& type : signature.args) {
+    inputExpressions.push_back(
+        coinToss(rng, 0.5)
+            ? addColumn(
+                  type,
+                  std::make_shared<NumericEdgeValueGenerator>(
+                      rand<uint32_t>(rng), type, options.nullRatio, edgeRatio),
+                  state)
+            : nullptr);
+  }
+  return inputExpressions;
+}
+
 } // namespace facebook::velox::fuzzer
