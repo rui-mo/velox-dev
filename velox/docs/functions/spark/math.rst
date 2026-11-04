@@ -555,24 +555,30 @@ Mathematical Functions
 
     Returns hyperbolic sine of ``x``.
 
-.. spark:function:: subtract(x, y) -> [same as x]
+.. spark:function:: subtract(x, y) -> [same as x] (ANSI compliant)
 
     Returns the result of subtracting y from x. The types of x and y must be the same.
+    For integral types, overflow wraps around following the behavior when Spark ANSI mode
+    is disabled, and throws an exception when Spark ANSI mode is enabled.
     For interval inputs (``interval day to second`` and
     ``interval year to month``), overflow always throws an exception.
-    Corresponds to Spark's operator ``-``.
+    Corresponds to Spark's operator ``-``. ::
 
-.. spark:function:: subtract(x, y) -> decimal
+        SELECT -128Y - 1Y; -- 127 (with ANSI mode disabled)
+        SELECT -128Y - 1Y; -- Overflow exception (with ANSI mode enabled)
+
+.. spark:function:: subtract(x, y) -> decimal (ANSI compliant)
 
     Returns the result of subtracting ``y`` from ``x``. Reuses the logic of add function for decimal type.
-    Corresponds to Spark's operator ``-``.
+    Overflow returns NULL following the behavior when Spark ANSI mode is disabled, and throws an exception
+    when Spark ANSI mode is enabled. Corresponds to Spark's operator ``-``.
 
     ::
 
         SELECT CAST(1.1232100 as DECIMAL(38, 7)) - CAST(1 as DECIMAL(10, 0)); -- DECIMAL(38, 6) 0.123210
         SELECT CAST(-999999999999999999999999999.999 as DECIMAL(30, 3)) - CAST(-999999999999999999999999999.999 as DECIMAL(30, 3)); -- DECIMAL(31, 3) 0.000
         SELECT CAST(99999999999999999999999999999999.99998 as DECIMAL(38, 6)) - CAST(-0.00001 as DECIMAL(38, 5)); -- DECIMAL(38, 6) 99999999999999999999999999999999.999990
-        SELECT CAST(-99999999999999999999999999999999990.0 as DECIMAL(38, 3)) - CAST(0.00001 as DECIMAL(38, 7)); -- DECIMAL(38, 6) NULL
+        SELECT CAST(-99999999999999999999999999999999990.0 as DECIMAL(38, 3)) - CAST(0.00001 as DECIMAL(38, 7)); -- DECIMAL(38, 6) NULL (with ANSI mode disabled)
 
 .. spark:function:: tan(x) -> double
 
