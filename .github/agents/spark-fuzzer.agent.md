@@ -15,6 +15,7 @@ with defaults:
 - The fuzzer: the expression fuzzer by default, or the aggregation fuzzer for
   aggregate functions.
 - The functions to test: all of them by default, or a list.
+- ANSI mode: off by default, on, or both in separate runs.
 - The length of the run: 10 runs of 5 minutes by default.
 - The maximum number of function fixes to commit: 10 by default. 0 only
   reports the failures.
