@@ -604,6 +604,36 @@ TEST_F(DecimalArithmeticTest, subtract) {
            std::vector<int128_t>{-1000000, 1000000, -1, 1}, DECIMAL(38, 5))});
 }
 
+TEST_F(DecimalArithmeticTest, subtractAnsi) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  for (const auto& func : {"subtract", "subtract_deny_precision_loss"}) {
+    SCOPED_TRACE(func);
+    assertErrorForCheckedDecimalArithmetic<int128_t, int128_t>(
+        func,
+        DECIMAL(38, 0),
+        DECIMAL(38, 0),
+        HugeInt::parse("-99999999999999999999999999999999999999"),
+        1,
+        "Decimal overflow in subtract");
+    assertErrorForCheckedDecimalArithmetic<int128_t, int128_t>(
+        func,
+        DECIMAL(38, 0),
+        DECIMAL(38, 0),
+        HugeInt::parse("99999999999999999999999999999999999999"),
+        -1,
+        "Decimal overflow in subtract");
+    EXPECT_EQ(
+        (checkedDecimalArithmetic<int128_t, int128_t>(
+            func,
+            DECIMAL(38, 0),
+            DECIMAL(38, 0),
+            std::nullopt,
+            HugeInt::parse("99999999999999999999999999999999999999"))),
+        std::nullopt);
+  }
+}
+
 TEST_F(DecimalArithmeticTest, multiply) {
   // The result can be obtained by Spark unit test
   //       test("multiply") {

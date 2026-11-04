@@ -15,7 +15,7 @@ variants are registered as separate functions (e.g., ``checked_add``, ``checked_
 to support the TRY evaluation mode (e.g., ``try(checked_add(...))`` returns NULL on overflow).
 
 Regular functions return NULL on overflow, while checked functions throw an error.
-``add``, ``divide`` and ``div`` are exceptions. They return NULL on overflow when Spark ANSI mode is disabled,
+``add``, ``subtract``, ``divide`` and ``div`` are exceptions. They return NULL on overflow when Spark ANSI mode is disabled,
 and throw an error when Spark ANSI mode is enabled.
 
 For example, addition of decimal(38, 7) and decimal(10, 0) requires precision of 39 and scale of 7.
@@ -210,15 +210,16 @@ Arithmetic Functions
         SELECT CAST(1.1 as DECIMAL(3, 1)) * CAST(2.0 as DECIMAL(3, 1)); -- 2.20
         SELECT CAST('99999999999999999999999999999999999999' as DECIMAL(38, 0)) * CAST(10 as DECIMAL(38, 0)); -- NULL
 
-.. spark:function:: subtract(x: decimal(p1, s1), y: decimal(p2, s2)) -> r: decimal(p3, s3)
+.. spark:function:: subtract(x: decimal(p1, s1), y: decimal(p2, s2)) -> r: decimal(p3, s3) (ANSI compliant)
 
     Returns the result of subtracting ``y`` from ``x``. The result type is determined
     by the precision and scale computation rules described above.
-    Returns NULL when the result overflows.
-    Corresponds to Spark's operator ``-`` with ``spark.sql.ansi.enabled`` set to false.  ::
+    Returns NULL when the result overflows following the behavior when Spark ANSI mode is disabled,
+    and throws an exception when Spark ANSI mode is enabled.
+    Corresponds to Spark's operator ``-``.  ::
 
         SELECT CAST(1.1 as DECIMAL(3, 1)) - CAST(2.2 as DECIMAL(3, 1)); -- -1.1
-        SELECT CAST('-99999999999999999999999999999999999999' as DECIMAL(38, 0)) - CAST(1 as DECIMAL(38, 0)); -- NULL
+        SELECT CAST('-99999999999999999999999999999999999999' as DECIMAL(38, 0)) - CAST(1 as DECIMAL(38, 0)); -- NULL (with ANSI mode disabled)
 
 Decimal Functions
 -----------------
