@@ -175,6 +175,16 @@ class SparkQueryConfig {
       false,
       "Return NaN instead of NULL for Spark statistical aggregation on divide-by-zero.")
 
+  /// If true, translate deletes the characters whose replacement is the NUL
+  /// character U+0000, as in Spark 4.2 and earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyTranslateNulAsDeletion,
+      legacyTranslateNulAsDeletion,
+      "legacy_translate_nul_as_deletion",
+      bool,
+      false,
+      "Delete the characters replaced with NUL in Spark translate.")
+
   /// If true, split with an empty delimiter drops the rest of the input when
   /// limit is smaller than the number of characters, as in Spark before 4.1.
   VELOX_SPARK_CONFIG(

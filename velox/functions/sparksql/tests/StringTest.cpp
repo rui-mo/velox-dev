@@ -1461,6 +1461,43 @@ TEST_F(StringTest, translate) {
   data[2] = (char)128;
   testTranslate({"1ae4b", "e", invalidUtf8Char}, data);
   testTranslate({data, "3", "a"}, data);
+
+  // A NUL character in 'replace' replaces its match. A NUL character in
+  // 'match' without a replacement is deleted.
+  const std::string nul(1, '\0');
+  const std::string nulResult = "a" + nul + "c";
+  testTranslate({"abc", "b", nul}, nulResult);
+  testTranslate({"abc", "b" + nul, nul + "q"}, nulResult);
+  testTranslate({nulResult, nul, ""}, "ac");
+}
+
+TEST_F(StringTest, translateLegacyNulAsDeletion) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(
+            SparkQueryConfig::kLegacyTranslateNulAsDeletion),
+        "true"}});
+  const auto translate = [&](const std::string& input,
+                             const std::string& match,
+                             const std::string& replace) {
+    return evaluateOnce<std::string>(
+        "translate(c0, c1, c2)",
+        std::optional(input),
+        std::optional(match),
+        std::optional(replace));
+  };
+
+  // A character whose replacement is a NUL character is deleted.
+  const std::string nul(1, '\0');
+  EXPECT_EQ(translate("abc", "b", nul), "ac");
+  EXPECT_EQ(translate("abc\u00E9", "b", nul), "ac\u00E9");
+  EXPECT_EQ(translate("abc", "b" + nul, nul + "q"), "ac");
+  EXPECT_EQ(translate("a" + nul + "c", nul, "x"), "axc");
+  EXPECT_EQ(translate("a" + nul + "c", nul, ""), "ac");
+
+  auto data = makeRowVector({makeFlatVector<std::string>({"abc", "ab\u00E9"})});
+  velox::test::assertEqualVectors(
+      makeFlatVector<std::string>({"ac", "a\u00E9"}),
+      evaluate("translate(c0, 'b', chr(0))", data));
 }
 
 TEST_F(StringTest, translateConstantMatch) {

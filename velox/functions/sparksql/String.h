@@ -1045,10 +1045,12 @@ struct TranslateFunction {
 
   FOLLY_ALWAYS_INLINE void initialize(
       const std::vector<TypePtr>& /*inputTypes*/,
-      const core::QueryConfig& /*config*/,
+      const core::QueryConfig& config,
       const arg_type<Varchar>* /*string*/,
       const arg_type<Varchar>* match,
       const arg_type<Varchar>* replace) {
+    legacyNulAsDeletion_ =
+        SparkQueryConfig{config}.legacyTranslateNulAsDeletion();
     if (match != nullptr && replace != nullptr) {
       isConstantDictionary_ = true;
     }
@@ -1114,8 +1116,8 @@ struct TranslateFunction {
         std::memcpy(result.data() + i, &inputChar, 1);
         ++i;
       } else {
-        if (it->second != '\0') {
-          std::memcpy(result.data() + i, &(it->second), 1);
+        if (it->second.has_value()) {
+          std::memcpy(result.data() + i, &*it->second, 1);
           ++i;
         }
       }
@@ -1147,6 +1149,9 @@ struct TranslateFunction {
         int replaceCharLength = getUtf8CharLength(replace, j);
         replaceChar = std::string(replace.data() + j, replaceCharLength);
         j += replaceCharLength;
+        if (legacyNulAsDeletion_ && replaceChar == std::string_view("\0", 1)) {
+          replaceChar.clear();
+        }
       }
       int matchCharLength = getUtf8CharLength(match, i);
       std::string matchChar = std::string(match.data() + i, matchCharLength);
@@ -1157,28 +1162,36 @@ struct TranslateFunction {
     return dictionary;
   }
 
-  folly::F14FastMap<char, char> buildAsciiDictionary(
+  // Maps the extra characters of 'match' to std::nullopt, which deletes them.
+  // A NUL character in 'replace' is a replacement like any other, or a
+  // deletion with the legacy config.
+  folly::F14FastMap<char, std::optional<char>> buildAsciiDictionary(
       const arg_type<Varchar>& match,
       const arg_type<Varchar>& replace) {
-    folly::F14FastMap<char, char> dictionary;
+    folly::F14FastMap<char, std::optional<char>> dictionary;
     int i = 0;
     for (; i < std::min(match.size(), replace.size()); i++) {
       char matchChar = *(match.data() + i);
       char replaceChar = *(replace.data() + i);
       // Only consider the first occurrence of a character in match.
-      dictionary.emplace(matchChar, replaceChar);
+      if (legacyNulAsDeletion_ && replaceChar == '\0') {
+        dictionary.emplace(matchChar, std::nullopt);
+      } else {
+        dictionary.emplace(matchChar, replaceChar);
+      }
     }
     for (; i < match.size(); i++) {
       char matchChar = *(match.data() + i);
-      dictionary.emplace(matchChar, '\0');
+      dictionary.emplace(matchChar, std::nullopt);
     }
     return dictionary;
   }
 
   std::optional<folly::F14FastMap<std::string, std::string>> unicodeDictionary_;
-  std::optional<folly::F14FastMap<char, char>> asciiDictionary_;
+  std::optional<folly::F14FastMap<char, std::optional<char>>> asciiDictionary_;
 
   bool isConstantDictionary_ = false;
+  bool legacyNulAsDeletion_ = false;
 };
 
 template <typename T>

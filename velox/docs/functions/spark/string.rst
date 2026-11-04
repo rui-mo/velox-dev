@@ -622,7 +622,9 @@ String Functions
     size is larger than ``replace's``, the extra characters in ``match`` will be
     removed from ``string``. In addition, this function only considers the first
     occurrence of a character in ``match`` and uses its corresponding character in
-    ``replace`` for translation.
+    ``replace`` for translation. A NUL character U+0000 in ``replace`` is a
+    replacement like any other character. If ``spark.legacy_translate_nul_as_deletion``
+    is true, the characters that it replaces are deleted instead, as in Spark before 4.3.
     Any invalid UTF-8 characters present in the input string will be treated as a
     single character.::
 

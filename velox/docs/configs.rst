@@ -1555,6 +1555,12 @@ Spark-specific Configuration
      - false
      - If true, Spark statistical aggregation functions including skewness, kurtosis, stddev, stddev_samp, variance,
        var_samp, covar_samp and corr will return NaN instead of NULL when dividing by zero during expression evaluation.
+   * - spark.legacy_translate_nul_as_deletion
+     - bool
+     - false
+     - If true, :spark:func:`translate` deletes the characters whose replacement is the NUL character U+0000
+       instead of replacing them with it, e.g. ``translate('abc', 'b', chr(0))`` returns ``'ac'`` instead of
+       ``'a\0c'``. This matches the behavior of Spark before 4.3.
    * - spark.legacy_truncate_for_empty_regex_split
      - bool
      - false
