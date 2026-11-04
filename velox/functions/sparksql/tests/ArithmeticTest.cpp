@@ -467,7 +467,7 @@ TEST_F(ArithmeticTest, divideAnsi) {
 }
 
 TEST_F(ArithmeticTest, div) {
-  // Division by zero is always null.
+  // Division by zero is null with ANSI mode off.
   EXPECT_EQ(div<int64_t>(1, 0), std::nullopt);
   EXPECT_EQ(div<int64_t>(0, 0), std::nullopt);
   EXPECT_EQ(div<int64_t>(INT64_MIN, 0), std::nullopt);
@@ -484,6 +484,20 @@ TEST_F(ArithmeticTest, div) {
   EXPECT_EQ(div<int64_t>(INT64_MIN, INT64_MAX), -1);
 
   EXPECT_EQ(div<int64_t>(2, 3), 0);
+  EXPECT_EQ(div<int64_t>(3, 2), 1);
+}
+
+TEST_F(ArithmeticTest, divAnsi) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  VELOX_ASSERT_THROW(div<int64_t>(1, 0), "Division by zero");
+  VELOX_ASSERT_THROW(div<int16_t>(5, 0), "Division by zero");
+  VELOX_ASSERT_THROW(
+      div<int64_t>(INT64_MIN, -1), "Overflow in integral divide");
+  EXPECT_EQ(div<int64_t>(std::nullopt, 0), std::nullopt);
+  // Spark divides smaller types as BIGINT, which doesn't overflow.
+  EXPECT_EQ(div<int8_t>(INT8_MIN, -1), 128);
+  EXPECT_EQ(div<int32_t>(INT32_MIN, -1), 2147483648);
   EXPECT_EQ(div<int64_t>(3, 2), 1);
 }
 

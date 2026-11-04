@@ -15,6 +15,8 @@ variants are registered as separate functions (e.g., ``checked_add``, ``checked_
 to support the TRY evaluation mode (e.g., ``try(checked_add(...))`` returns NULL on overflow).
 
 Regular functions return NULL on overflow, while checked functions throw an error.
+``divide`` and ``div`` are exceptions. They return NULL on overflow when Spark ANSI mode is disabled,
+and throw an error when Spark ANSI mode is enabled.
 
 For example, addition of decimal(38, 7) and decimal(10, 0) requires precision of 39 and scale of 7.
 Since precision exceeds 38 it needs to be capped. When allow-precision-loss, precision is capped at 38 and scale is reduced by 1 to 6.
@@ -172,19 +174,21 @@ Arithmetic Functions
     Throws an error when the result overflows.
     Corresponds to Spark's operator ``-`` with ``spark.sql.ansi.enabled`` set to true.
 
-.. spark:function:: div(x: decimal(p1, s1), y: decimal(p2, s2)) -> bigint
+.. spark:function:: div(x: decimal(p1, s1), y: decimal(p2, s2)) -> bigint (ANSI compliant)
 
     Performs integer division and returns the bigint result of dividing ``x`` by ``y``, truncating toward zero.
     Truncation occurs if the result is within the result precision but exceeds the BIGINT range.
-    Division by zero or overflow results in NULL. Does not respect the ``allow-precision-loss`` configuration.
-    Corresponds to Spark's operator ``div`` with ``spark.sql.ansi.enabled`` set to false.  ::
+    Division by zero or overflow returns NULL following the behavior when Spark ANSI mode is disabled,
+    and throws an exception when Spark ANSI mode is enabled.
+    Does not respect the ``allow-precision-loss`` configuration.
+    Corresponds to Spark's operator ``div``.  ::
 
         SELECT CAST(1 as DECIMAL(17, 3)) div CAST(2 as DECIMAL(17, 3)); -- 0
         SELECT CAST(21 as DECIMAL(20, 3)) div CAST(20 as DECIMAL(20, 2)); -- 1
-        SELECT CAST(1 as DECIMAL(20, 3)) div CAST(0 as DECIMAL(20, 3)); -- NULL
+        SELECT CAST(1 as DECIMAL(20, 3)) div CAST(0 as DECIMAL(20, 3)); -- NULL (with ANSI mode disabled)
         SELECT CAST(99999999999999999999999999999999999 as DECIMAL(38, 1)) div CAST(0.001 as DECIMAL(7, 4)); -- 687399551400672280 // Result is truncated to int64_t.
 
-.. spark:function:: divide(x: decimal(p1, s1), y: decimal(p2, s2)) -> r: decimal(p3, s3)
+.. spark:function:: divide(x: decimal(p1, s1), y: decimal(p2, s2)) -> r: decimal(p3, s3) (ANSI compliant)
 
     Returns the result of dividing ``x`` by ``y``. The result type is determined
     by the precision and scale computation rules described above.

@@ -636,29 +636,40 @@ struct DecimalIntegralDivideBase {
   uint8_t rPrecision_;
 };
 
-// Decimal integral divide function that returns null on division by zero or
-// overflow.
 /// Spark decimal integral divide, registered as div: the quotient truncated
-/// to an integer. Returns false on a zero divisor or overflow, reported as a
-/// null.
+/// to an integer. A zero divisor or overflow returns null with ANSI mode off
+/// and throws with ANSI mode on.
 template <typename TExec>
 struct DecimalIntegralDivideFunction : DecimalIntegralDivideBase {
   template <typename A, typename B>
   void initialize(
       const std::vector<TypePtr>& inputTypes,
-      const core::QueryConfig& /*config*/,
+      const core::QueryConfig& config,
       A* /*a*/,
       B* /*b*/) {
     initializeBase(inputTypes);
+    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
   }
 
   template <typename A, typename B>
   bool call(int64_t& out, const A& a, const B& b) {
     if (b == 0) {
+      if (ansiEnabled_) {
+        VELOX_USER_FAIL("Division by zero");
+      }
       return false;
     }
-    return computeQuotient(out, a, b);
+    if (FOLLY_UNLIKELY(!computeQuotient(out, a, b))) {
+      if (ansiEnabled_) {
+        VELOX_USER_FAIL("Overflow in integral divide");
+      }
+      return false;
+    }
+    return true;
   }
+
+ private:
+  bool ansiEnabled_{false};
 };
 
 /// Spark decimal integral divide for ANSI mode, registered as checked_div.
