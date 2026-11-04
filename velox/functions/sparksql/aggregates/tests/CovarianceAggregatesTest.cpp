@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <fmt/ranges.h>
+
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/lib/aggregates/tests/utils/AggregationTestBase.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
@@ -170,14 +172,28 @@ TEST_F(CovarianceAggregatesTest, covarSamp) {
       std::vector<double>{std::numeric_limits<double>::quiet_NaN()})});
   testCovarianceAggResult(agg, input, expected, true);
 
-  // Output NaN when c2 is ±inf.
-  input = makeRowVector(
-      {makeFlatVector<double>({22, std::numeric_limits<double>::infinity()}),
-       makeFlatVector<double>({0.688, 0.225})});
-  expected = makeRowVector({makeFlatVector<double>(
-      std::vector<double>{std::numeric_limits<double>::quiet_NaN()})});
-  testCovarianceAggResult(agg, input, expected);
-  testCovarianceAggResult(agg, input, expected, true);
+  // Output ±inf when c2 overflows or x has inf. When the first x is inf, c2 is
+  // NaN because the first pair adds 'inf * 0' to it.
+  constexpr auto kInf = std::numeric_limits<double>::infinity();
+  constexpr auto kNaN = std::numeric_limits<double>::quiet_NaN();
+  const std::vector<
+      std::tuple<std::vector<double>, std::vector<double>, double>>
+      testCases = {
+          {{22, kInf}, {0.688, 0.225}, -kInf},
+          {{kInf, 22}, {0.225, 0.688}, kNaN},
+          {{1e200, -1e200}, {1e200, -1e200}, kInf},
+          {{1e200, -1e200}, {-1e200, 1e200}, -kInf},
+      };
+  for (const auto& [x, y, result] : testCases) {
+    SCOPED_TRACE(
+        fmt::format("x: {}, y: {}", fmt::join(x, ", "), fmt::join(y, ", ")));
+    input =
+        makeRowVector({makeFlatVector<double>(x), makeFlatVector<double>(y)});
+    expected =
+        makeRowVector({makeFlatVector<double>(std::vector<double>{result})});
+    testCovarianceAggResult(agg, input, expected);
+    testCovarianceAggResult(agg, input, expected, true);
+  }
 }
 
 } // namespace
