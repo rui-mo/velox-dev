@@ -246,7 +246,10 @@ General Aggregate Functions
     NULL values are ignored. If all the values are NULL, or
     there are 0 rows, returns NULL.
     If multiple values have the same greatest frequency, the
-    return value could be any one of them.
+    return value could be any one of them. NaN values are considered
+    equal, as are -0.0 and 0.0, also when nested in arrays or structs.
+    -0.0 is returned as 0.0, also when nested in arrays, structs or
+    map values.
 
     Example::
 

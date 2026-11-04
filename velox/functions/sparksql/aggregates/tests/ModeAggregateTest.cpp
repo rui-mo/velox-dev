@@ -498,5 +498,54 @@ TEST_F(ModeAggregateTest, rows) {
   testAggregations({input1}, {"c0"}, {"mode(c1)"}, {expected1});
 }
 
+TEST_F(ModeAggregateTest, negativeZero) {
+  // -0.0 is counted with 0.0, which makes them the most frequent value. Spark
+  // counts every map separately, so all the maps hold a zero.
+  auto data = makeRowVector({
+      makeFlatVector<double>({-0.0, 0.0, 9.0}),
+      makeFlatVector<float>({-0.0f, 0.0f, 9.0f}),
+      makeArrayVector<double>({{-0.0}, {0.0}, {9.0}}),
+      makeRowVector({makeFlatVector<double>({-0.0, 0.0, 9.0})}),
+      makeMapVector<int32_t, double>({{{1, -0.0}}, {{1, 0.0}}, {{1, -0.0}}}),
+  });
+  const std::vector<std::string> aggregates = {
+      "mode(c0)", "mode(c1)", "mode(c2)", "mode(c3)", "mode(c4)"};
+
+  // -0.0 is returned as 0.0, also when nested in arrays, structs and map
+  // values.
+  const auto assertZero = [&](const core::PlanNodePtr& plan) {
+    const auto result = AssertQueryBuilder(plan).copyResults(pool());
+    const auto expectZero = [](double value) {
+      EXPECT_EQ(value, 0.0);
+      EXPECT_FALSE(std::signbit(value));
+    };
+    expectZero(result->childAt(0)->as<SimpleVector<double>>()->valueAt(0));
+    expectZero(result->childAt(1)->as<SimpleVector<float>>()->valueAt(0));
+    const auto* array = result->childAt(2)->as<ArrayVector>();
+    expectZero(array->elements()->as<SimpleVector<double>>()->valueAt(
+        array->offsetAt(0)));
+    expectZero(result->childAt(3)
+                   ->as<RowVector>()
+                   ->childAt(0)
+                   ->as<SimpleVector<double>>()
+                   ->valueAt(0));
+    const auto* map = result->childAt(4)->as<MapVector>();
+    expectZero(map->mapValues()->as<SimpleVector<double>>()->valueAt(
+        map->offsetAt(0)));
+  };
+
+  assertZero(
+      PlanBuilder()
+          .values({data})
+          .singleAggregation({}, aggregates)
+          .planNode());
+  assertZero(
+      PlanBuilder()
+          .values({data})
+          .partialAggregation({}, aggregates)
+          .finalAggregation()
+          .planNode());
+}
+
 } // namespace
 } // namespace facebook::velox::functions::aggregate::sparksql::test

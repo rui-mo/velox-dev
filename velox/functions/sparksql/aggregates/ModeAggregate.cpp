@@ -19,6 +19,7 @@
 #include "velox/exec/AddressableNonNullValueList.h"
 #include "velox/exec/SimpleAggregateAdapter.h"
 #include "velox/exec/Strings.h"
+#include "velox/functions/sparksql/aggregates/NormalizeNegativeZeros.h"
 
 using namespace facebook::velox::aggregate::prestosql;
 using namespace facebook::velox::exec;
@@ -91,7 +92,14 @@ class ModeAggregate {
           [](const std::pair<T, int64_t>& p1, const std::pair<T, int64_t>& p2) {
             return p1.second < p2.second;
           });
-      out = iterator->first;
+      T result = iterator->first;
+      if constexpr (std::is_floating_point_v<T>) {
+        // -0.0 is counted with 0.0 and, like in Spark, returned as 0.0.
+        if (result == T{0}) {
+          result = T{0};
+        }
+      }
+      out = result;
       return true;
     }
 
@@ -315,6 +323,8 @@ class ComplexTypeModeAggregate : public Aggregate {
         accumulator->extractValues(*result, i);
       }
     }
+    // -0.0 is counted with 0.0 and, like in Spark, returned as 0.0.
+    normalizeNegativeZeros(**result);
   }
 
   void extractAccumulators(char** groups, int32_t numGroups, VectorPtr* result)
