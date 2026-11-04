@@ -125,6 +125,16 @@ class SparkQueryConfig {
       0,
       "Current Spark partition id for the running task. Defaults to 0.")
 
+  /// If true, corr divides by the product of the standard deviations even if a
+  /// variance is zero, as in Spark 4.2 and earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyCorrZeroVariance,
+      legacyCorrZeroVariance,
+      "legacy_corr_zero_variance",
+      bool,
+      false,
+      "Divide by a zero variance in Spark corr instead of returning NULL.")
+
   /// If true, covar_samp and corr merge an intermediate result into an empty
   /// accumulator with the full merge formula, as in Spark 4.2 and earlier.
   VELOX_SPARK_CONFIG(

@@ -31,6 +31,7 @@ SparkQueryConfig::registeredProperties() {
     VELOX_REGISTER_SPARK_CONFIG(kBloomFilterMaxNumBits);
     VELOX_REGISTER_SPARK_CONFIG(kBloomFilterMaxNumItems);
     VELOX_REGISTER_SPARK_CONFIG(kPartitionId);
+    VELOX_REGISTER_SPARK_CONFIG(kLegacyCorrZeroVariance);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyCovarianceMergeEmptyBuffer);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyDateFormatter);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyOverlayWrapPositions);

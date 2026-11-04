@@ -58,12 +58,9 @@ struct CorrResultAccessor {
       }
     }
 
-    // Returns true if any of the following conditions are met:
-    // 1. m2Y or m2X or c2 is NaN.
-    // 2. m2Y and m2X are not zero.
-    return std::isnan(accumulator.m2Y()) || std::isnan(accumulator.m2X()) ||
-        std::isnan(accumulator.c2()) ||
-        (accumulator.m2Y() != 0 && accumulator.m2X() != 0);
+    // Spark returns NULL when x or y has zero variance, even if the other is
+    // NaN.
+    return accumulator.m2X() != 0 && accumulator.m2Y() != 0;
   }
 
   static double result(const CorrAccumulator& accumulator) {
@@ -83,6 +80,40 @@ struct CorrResultAccessor {
     double stddevX = std::sqrt(accumulator.m2X());
     double stddevY = std::sqrt(accumulator.m2Y());
     return accumulator.c2() / stddevX / stddevY;
+  }
+};
+
+// Spark 4.2.1 and earlier divide the co-moment by the square root of
+// m2X * m2Y even if it is zero. The division returns NULL for a zero divisor,
+// or throws in ANSI mode.
+template <bool nullOnDivideByZero, bool ansiEnabled>
+struct LegacyCorrResultAccessor {
+  static bool hasResult(const CorrAccumulator& accumulator) {
+    if (accumulator.count() == 0) {
+      return false;
+    }
+    if (accumulator.count() == 1) {
+      return !nullOnDivideByZero;
+    }
+    if (divisor(accumulator) == 0) {
+      if constexpr (ansiEnabled) {
+        VELOX_USER_FAIL("Division by zero");
+      }
+      return false;
+    }
+    return true;
+  }
+
+  static double result(const CorrAccumulator& accumulator) {
+    if (accumulator.count() == 1) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    return accumulator.c2() / divisor(accumulator);
+  }
+
+ private:
+  static double divisor(const CorrAccumulator& accumulator) {
+    return std::sqrt(accumulator.m2X() * accumulator.m2Y());
   }
 };
 
@@ -187,22 +218,39 @@ std::unique_ptr<exec::Aggregate> createCovarSamp(
       CovarSampResultAccessor<true>>(resultType);
 }
 
-template <typename TIntermediateInput>
+template <typename TIntermediateInput, bool nullOnDivideByZero>
 std::unique_ptr<exec::Aggregate> createCorr(
     const TypePtr& resultType,
     const SparkQueryConfig& config) {
-  if (config.legacyStatisticalAggregate()) {
+  if (!config.legacyCorrZeroVariance()) {
     return makeCovariance<
         CorrAccumulator,
         TIntermediateInput,
         CorrIntermediateResult,
-        CorrResultAccessor<false>>(resultType);
+        CorrResultAccessor<nullOnDivideByZero>>(resultType);
+  }
+  if (config.ansiEnabled()) {
+    return makeCovariance<
+        CorrAccumulator,
+        TIntermediateInput,
+        CorrIntermediateResult,
+        LegacyCorrResultAccessor<nullOnDivideByZero, true>>(resultType);
   }
   return makeCovariance<
       CorrAccumulator,
       TIntermediateInput,
       CorrIntermediateResult,
-      CorrResultAccessor<true>>(resultType);
+      LegacyCorrResultAccessor<nullOnDivideByZero, false>>(resultType);
+}
+
+template <typename TIntermediateInput>
+std::unique_ptr<exec::Aggregate> createCorr(
+    const TypePtr& resultType,
+    const SparkQueryConfig& config) {
+  if (config.legacyStatisticalAggregate()) {
+    return createCorr<TIntermediateInput, false>(resultType, config);
+  }
+  return createCorr<TIntermediateInput, true>(resultType, config);
 }
 
 using CovarianceFactory = std::unique_ptr<exec::Aggregate> (*)(

@@ -16,6 +16,7 @@
 
 #include <fmt/ranges.h>
 
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/lib/aggregates/tests/utils/AggregationTestBase.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
@@ -105,16 +106,31 @@ TEST_F(CovarianceAggregatesTest, corr) {
       std::vector<double>{std::numeric_limits<double>::quiet_NaN()})});
   testCovarianceAggResult(agg, input, expected, true);
 
-  // Output NaN when m2x or m2y equals 0 but c2 is NaN.
-  input = makeRowVector(
-      {makeFlatVector<double>({0, 0, 0, 0, 0, 0}),
-       makeFlatVector<double>(
-           {std::numeric_limits<double>::quiet_NaN(), 0, 0, 0, 0, 0})});
-
-  expected = makeRowVector({makeFlatVector<double>(
-      std::vector<double>{std::numeric_limits<double>::quiet_NaN()})});
-  testCovarianceAggResult(agg, input, expected);
-  testCovarianceAggResult(agg, input, expected, true);
+  // Output NULL when m2x or m2y equals 0, even if the other is NaN, and NaN
+  // when m2x or m2y is NaN otherwise.
+  constexpr auto kInf = std::numeric_limits<double>::infinity();
+  constexpr auto kNaN = std::numeric_limits<double>::quiet_NaN();
+  const std::vector<std::tuple<
+      std::vector<double>,
+      std::vector<double>,
+      std::optional<double>>>
+      testCases = {
+          {{0, 0, 0, 0, 0, 0}, {kNaN, 0, 0, 0, 0, 0}, std::nullopt},
+          {{kNaN, 1}, {2, 2}, std::nullopt},
+          {{kInf, 1, 3}, {2, 2, 2}, std::nullopt},
+          {{kNaN, 1, 2}, {1, 2, 3}, kNaN},
+          {{1, 2, 3}, {kInf, 2, 3}, kNaN},
+      };
+  for (const auto& [x, y, result] : testCases) {
+    SCOPED_TRACE(
+        fmt::format("x: {}, y: {}", fmt::join(x, ", "), fmt::join(y, ", ")));
+    input =
+        makeRowVector({makeFlatVector<double>(x), makeFlatVector<double>(y)});
+    expected = makeRowVector({makeNullableFlatVector<double>(
+        std::vector<std::optional<double>>{result})});
+    testCovarianceAggResult(agg, input, expected);
+    testCovarianceAggResult(agg, input, expected, true);
+  }
 
   // Output NULL when count equals 0 for legacy aggregate.
   input = makeRowVector(
@@ -240,6 +256,72 @@ TEST_F(CovarianceAggregatesTest, legacyMergeEmptyBuffer) {
   test("corr", {1e300, 1e300}, {1, 2}, false, std::nullopt);
   test("corr", {1e300, 1e300}, {1, 2}, true, kNaN);
   test("corr", {1, 2, 3}, {1, 2, 3}, true, 1);
+}
+
+TEST_F(CovarianceAggregatesTest, corrLegacyZeroVariance) {
+  // With the legacy config, corr divides the co-moment by sqrt(m2x * m2y)
+  // even if a variance is zero. A zero divisor makes the result NULL, or
+  // throws in ANSI mode, and a NaN divisor makes it NaN.
+  constexpr auto kInf = std::numeric_limits<double>::infinity();
+  constexpr auto kNaN = std::numeric_limits<double>::quiet_NaN();
+  const auto makePlan = [&](const VectorPtr& x, const VectorPtr& y) {
+    return PlanBuilder()
+        .values({makeRowVector({x, y})})
+        .singleAggregation({}, {"spark_corr(c0, c1)"})
+        .planNode();
+  };
+  const auto makeConfigs = [](bool ansi, bool legacyStatisticalAggregate) {
+    return std::unordered_map<std::string, std::string>{
+        {SparkQueryConfig::qualify(SparkQueryConfig::kLegacyCorrZeroVariance),
+         "true"},
+        {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled),
+         ansi ? "true" : "false"},
+        {SparkQueryConfig::qualify(
+             SparkQueryConfig::kLegacyStatisticalAggregate),
+         legacyStatisticalAggregate ? "true" : "false"},
+    };
+  };
+  const auto test = [&](const std::vector<double>& x,
+                        const std::vector<double>& y,
+                        bool ansi,
+                        std::optional<double> expected,
+                        bool legacyStatisticalAggregate = false) {
+    SCOPED_TRACE(
+        fmt::format(
+            "x: {}, y: {}, ansi: {}, legacyStatisticalAggregate: {}",
+            fmt::join(x, ", "),
+            fmt::join(y, ", "),
+            ansi,
+            legacyStatisticalAggregate));
+    AssertQueryBuilder(
+        makePlan(makeFlatVector<double>(x), makeFlatVector<double>(y)))
+        .configs(makeConfigs(ansi, legacyStatisticalAggregate))
+        .assertResults(makeRowVector({makeNullableFlatVector<double>(
+            std::vector<std::optional<double>>{expected})}));
+  };
+
+  for (const bool ansi : {false, true}) {
+    test({kNaN, 1}, {2, 2}, ansi, kNaN);
+    test({kInf, 1}, {2, 2}, ansi, kNaN);
+    test({1, 2, 3}, {1, 2, 3}, ansi, 1);
+    test({1}, {2}, ansi, std::nullopt);
+    test({1}, {2}, ansi, kNaN, true);
+
+    const auto nulls = makeNullableFlatVector<double>(
+        std::vector<std::optional<double>>{std::nullopt});
+    AssertQueryBuilder(makePlan(nulls, nulls))
+        .configs(makeConfigs(ansi, false))
+        .assertResults(makeRowVector({nulls}));
+  }
+  test({1, 1}, {2, 3}, false, std::nullopt);
+  test({1, 1}, {2, 3}, false, std::nullopt, true);
+  VELOX_ASSERT_USER_THROW(
+      AssertQueryBuilder(
+          makePlan(
+              makeFlatVector<double>({1, 1}), makeFlatVector<double>({2, 3})))
+          .configs(makeConfigs(true, false))
+          .copyResults(pool()),
+      "Division by zero");
 }
 
 } // namespace

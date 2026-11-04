@@ -1524,6 +1524,12 @@ Spark-specific Configuration
      - integer
      -
      - The current task's Spark partition ID. It's set by the query engine (Spark) prior to task execution.
+   * - spark.legacy_corr_zero_variance
+     - bool
+     - false
+     - If true, :spark:func:`corr` divides the co-moment by the product of the standard deviations even if a
+       variance is zero, so it returns NULL only if that product is zero, e.g. NaN instead of NULL if all values of
+       ``x`` are equal and ``y`` has a NaN. This matches the behavior of Spark before 4.3.
    * - spark.legacy_covariance_merge_empty_buffer
      - bool
      - false
