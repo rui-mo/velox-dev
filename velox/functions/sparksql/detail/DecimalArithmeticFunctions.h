@@ -413,8 +413,8 @@ struct CheckedDecimalSubtractFunction : DecimalAddSubtractBase {
 
 /// Spark decimal multiplication. Where the result type cannot hold the exact
 /// product, the surplus low digits are rounded away rather than overflowing,
-/// so only what survives that is range checked. Returns false on overflow,
-/// reported as a null.
+/// so only what survives that is range checked. Overflow returns null with
+/// ANSI mode off and throws with ANSI mode on.
 template <typename TExec, bool allowPrecisionLoss>
 struct DecimalMultiplyFunction {
   VELOX_DEFINE_FUNCTION_TYPES(TExec);
@@ -422,7 +422,7 @@ struct DecimalMultiplyFunction {
   template <typename A, typename B>
   void initialize(
       const std::vector<TypePtr>& inputTypes,
-      const core::QueryConfig& /*config*/,
+      const core::QueryConfig& config,
       A* /*a*/,
       B* /*b*/) {
     auto [aPrecision, aScale] = getDecimalPrecisionScale(*inputTypes[0]);
@@ -437,10 +437,24 @@ struct DecimalMultiplyFunction {
     }
     rPrecision_ = rPrecisionScale.first;
     deltaScale_ = aScale + bScale - rPrecisionScale.second;
+    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
   }
 
   template <typename R, typename A, typename B>
   bool call(R& out, const A& a, const B& b) {
+    if (FOLLY_UNLIKELY(!applyMultiply<R, A, B>(out, a, b))) {
+      if (ansiEnabled_) {
+        VELOX_USER_FAIL("Decimal overflow in multiply");
+      }
+      return false;
+    }
+    return true;
+  }
+
+ protected:
+  // Returns false on overflow.
+  template <typename R, typename A, typename B>
+  bool applyMultiply(R& out, const A& a, const B& b) {
     bool overflow = false;
     if (rPrecision_ < 38) {
       out = DecimalUtil::multiply<R>(R(a), R(b), overflow);
@@ -527,6 +541,7 @@ struct DecimalMultiplyFunction {
   uint8_t rPrecision_;
   // The difference between result scale and the sum of aScale and bScale.
   int32_t deltaScale_;
+  bool ansiEnabled_{false};
 };
 
 // Decimal multiply function that returns error on overflow.
@@ -539,8 +554,7 @@ struct CheckedDecimalMultiplyFunction
 
   template <typename R, typename A, typename B>
   Status call(R& out, const A& a, const B& b) {
-    bool valid = DecimalMultiplyFunction<TExec, allowPrecisionLoss>::
-        template call<R, A, B>(out, a, b);
+    bool valid = this->template applyMultiply<R, A, B>(out, a, b);
     VELOX_USER_RETURN(!valid, "Decimal overflow in multiply");
     return Status::OK();
   }

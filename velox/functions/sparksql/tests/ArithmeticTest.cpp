@@ -285,6 +285,13 @@ class ArithmeticTest : public SparkFunctionBaseTest {
   }
 
   template <typename T>
+  std::optional<T> multiply(
+      const std::optional<T> a,
+      const std::optional<T> b) {
+    return evaluateOnce<T>("multiply(c0, c1)", a, b);
+  }
+
+  template <typename T>
   std::optional<T> checkedAdd(
       const std::optional<T> a,
       const std::optional<T> b) {
@@ -1144,6 +1151,30 @@ TEST_F(ArithmeticTest, subtractAnsi) {
   EXPECT_EQ(subtract<int64_t>(std::nullopt, INT64_MIN), std::nullopt);
   EXPECT_EQ(subtract<int32_t>(5, 2), 3);
   EXPECT_EQ(subtract<double>(kInfDouble, 1), kInfDouble);
+}
+
+TEST_F(ArithmeticTest, multiplyAnsi) {
+  // Integral overflow wraps around with ANSI mode off.
+  EXPECT_EQ(multiply<int8_t>(INT8_MAX, 2), -2);
+  EXPECT_EQ(multiply<int16_t>(INT16_MAX, 2), -2);
+  EXPECT_EQ(multiply<int32_t>(INT32_MAX, 2), -2);
+  EXPECT_EQ(multiply<int64_t>(INT64_MIN, -1), INT64_MIN);
+
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  VELOX_ASSERT_THROW(
+      multiply<int8_t>(INT8_MAX, 2), "Arithmetic overflow: 127 * 2");
+  VELOX_ASSERT_THROW(
+      multiply<int16_t>(INT16_MAX, 2), "Arithmetic overflow: 32767 * 2");
+  VELOX_ASSERT_THROW(
+      multiply<int32_t>(INT32_MAX, 2), "Arithmetic overflow: 2147483647 * 2");
+  VELOX_ASSERT_THROW(
+      multiply<int64_t>(INT64_MIN, -1),
+      "Arithmetic overflow: -9223372036854775808 * -1");
+  EXPECT_EQ(multiply<int64_t>(std::nullopt, INT64_MAX), std::nullopt);
+  EXPECT_EQ(multiply<int32_t>(-5, 2), -10);
+  EXPECT_EQ(
+      multiply<double>(std::numeric_limits<double>::max(), 2), kInfDouble);
 }
 
 TEST_F(ArithmeticTest, checkedAdd) {

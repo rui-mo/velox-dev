@@ -14,9 +14,8 @@ handles both ANSI and non-ANSI behavior, controlled by an ``EvalMode`` flag. In 
 variants are registered as separate functions (e.g., ``checked_add``, ``checked_subtract``)
 to support the TRY evaluation mode (e.g., ``try(checked_add(...))`` returns NULL on overflow).
 
-Regular functions return NULL on overflow, while checked functions throw an error.
-``add``, ``subtract``, ``divide`` and ``div`` are exceptions. They return NULL on overflow when Spark ANSI mode is disabled,
-and throw an error when Spark ANSI mode is enabled.
+Regular functions return NULL on overflow when Spark ANSI mode is disabled, and throw an error
+when Spark ANSI mode is enabled. Checked functions always throw an error.
 
 For example, addition of decimal(38, 7) and decimal(10, 0) requires precision of 39 and scale of 7.
 Since precision exceeds 38 it needs to be capped. When allow-precision-loss, precision is capped at 38 and scale is reduced by 1 to 6.
@@ -200,15 +199,16 @@ Arithmetic Functions
         SELECT CAST(1.0 as DECIMAL(3, 1)) / CAST(2.0 as DECIMAL(3, 1)); -- 0.500000
         SELECT CAST(1.0 as DECIMAL(3, 1)) / CAST(0.0 as DECIMAL(3, 1)); -- NULL, or error in ANSI mode
 
-.. spark:function:: multiply(x: decimal(p1, s1), y: decimal(p2, s2)) -> r: decimal(p3, s3)
+.. spark:function:: multiply(x: decimal(p1, s1), y: decimal(p2, s2)) -> r: decimal(p3, s3) (ANSI compliant)
 
     Returns the result of multiplying ``x`` and ``y``. The result type is determined
     by the precision and scale computation rules described above.
-    Returns NULL when the result overflows.
-    Corresponds to Spark's operator ``*`` with ``spark.sql.ansi.enabled`` set to false.  ::
+    Returns NULL when the result overflows following the behavior when Spark ANSI mode is disabled,
+    and throws an exception when Spark ANSI mode is enabled.
+    Corresponds to Spark's operator ``*``.  ::
 
         SELECT CAST(1.1 as DECIMAL(3, 1)) * CAST(2.0 as DECIMAL(3, 1)); -- 2.20
-        SELECT CAST('99999999999999999999999999999999999999' as DECIMAL(38, 0)) * CAST(10 as DECIMAL(38, 0)); -- NULL
+        SELECT CAST('99999999999999999999999999999999999999' as DECIMAL(38, 0)) * CAST(10 as DECIMAL(38, 0)); -- NULL (with ANSI mode disabled)
 
 .. spark:function:: subtract(x: decimal(p1, s1), y: decimal(p2, s2)) -> r: decimal(p3, s3) (ANSI compliant)
 
