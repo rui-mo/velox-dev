@@ -27,6 +27,7 @@ velox_add_library(
   MinMaxAggregate.cpp
   MinMaxByAggregate.cpp
   ModeAggregate.cpp
+  NormalizeNegativeZeros.cpp
   Register.cpp
   RegrReplacementAggregate.cpp
   SumAggregate.cpp
@@ -43,6 +44,7 @@ velox_add_library(
   CovarianceAggregate.h
   DecimalAverageAggregate.h
   DecimalSumAggregate.h
+  NormalizeNegativeZeros.h
   Register.h
   RegrReplacementAggregate.h
   SumAggregate.h

@@ -15,6 +15,7 @@
  */
 
 #include "velox/functions/lib/aggregates/tests/utils/AggregationTestBase.h"
+#include "velox/functions/sparksql/SparkQueryConfig.h"
 #include "velox/functions/sparksql/aggregates/Register.h"
 #include "velox/functions/sparksql/registration/Register.h"
 
@@ -82,7 +83,7 @@ TEST_F(CollectSetAggregateTest, global) {
       {"spark_array_sort(a0)"},
       {expected});
 
-  // NaN inputs are treated as distinct values.
+  // NaN inputs are treated as equal values.
   data = makeRowVector({
       makeFlatVector<double>(
           {1,
@@ -93,10 +94,7 @@ TEST_F(CollectSetAggregateTest, global) {
 
   expected = makeRowVector({
       makeArrayVector<double>({
-          {1,
-           std::numeric_limits<double>::quiet_NaN(),
-           std::nan("1"),
-           std::nan("2")},
+          {1, std::numeric_limits<double>::quiet_NaN()},
       }),
   });
 
@@ -501,7 +499,7 @@ TEST_F(CollectSetAggregateTest, mergeExtractFloatingPoint) {
 
   auto expected = makeRowVector({
       makeFlatVector<int16_t>({1}),
-      makeArrayVector<double>({{0.0, 1.0, nan, nan, nan}}),
+      makeArrayVector<double>({{0.0, 1.0, nan}}),
   });
 
   auto plan = exec::test::PlanBuilder()
@@ -518,6 +516,136 @@ TEST_F(CollectSetAggregateTest, mergeExtractFloatingPoint) {
              .project({"c0", "spark_array_sort(a0)"})
              .planNode();
   exec::test::AssertQueryBuilder(plan).assertResults(expected);
+}
+
+TEST_F(CollectSetAggregateTest, negativeZero) {
+  auto data = makeRowVector({
+      makeFlatVector<double>({-0.0, -0.0}),
+      makeFlatVector<float>({-0.0f, -0.0f}),
+      makeArrayVector<double>({{-0.0, -0.0}, {-0.0, -0.0}}),
+      makeRowVector({makeFlatVector<double>({-0.0, -0.0})}),
+  });
+  const std::vector<std::string> aggregates = {
+      "collect_set(c0)",
+      "collect_set(c1)",
+      "collect_set(c2)",
+      "collect_set(c3)",
+  };
+
+  // -0.0 is returned as 0.0, also when nested in arrays and structs.
+  const auto assertNoNegativeZero = [&](const core::PlanNodePtr& plan) {
+    const auto result =
+        exec::test::AssertQueryBuilder(plan).copyResults(pool());
+    const auto elements = [&](column_index_t column) {
+      const auto* array = result->childAt(column)->as<ArrayVector>();
+      EXPECT_EQ(array->sizeAt(0), 1);
+      return array->elements();
+    };
+    EXPECT_FALSE(
+        std::signbit(elements(0)->as<SimpleVector<double>>()->valueAt(0)));
+    EXPECT_FALSE(
+        std::signbit(elements(1)->as<SimpleVector<float>>()->valueAt(0)));
+    const auto* nested =
+        elements(2)->as<ArrayVector>()->elements()->as<SimpleVector<double>>();
+    EXPECT_FALSE(std::signbit(nested->valueAt(0)));
+    EXPECT_FALSE(std::signbit(nested->valueAt(1)));
+    EXPECT_FALSE(
+        std::signbit(elements(3)
+                         ->as<RowVector>()
+                         ->childAt(0)
+                         ->as<SimpleVector<double>>()
+                         ->valueAt(0)));
+  };
+
+  assertNoNegativeZero(
+      exec::test::PlanBuilder()
+          .values({data})
+          .singleAggregation({}, aggregates)
+          .planNode());
+  assertNoNegativeZero(
+      exec::test::PlanBuilder()
+          .values({data})
+          .partialAggregation({}, aggregates)
+          .finalAggregation()
+          .planNode());
+}
+
+TEST_F(CollectSetAggregateTest, legacyDistinctNaNs) {
+  const std::unordered_map<std::string, std::string> config{
+      {functions::sparksql::SparkQueryConfig::qualify(
+           functions::sparksql::SparkQueryConfig::
+               kLegacyCollectSetDistinctNaNs),
+       "true"}};
+
+  // Every NaN is a separate element. -0.0 equals 0.0.
+  const auto nan = std::numeric_limits<double>::quiet_NaN();
+  const auto nanf = std::numeric_limits<float>::quiet_NaN();
+  auto data = makeRowVector({
+      makeFlatVector<double>({1, nan, nan, -0.0, 0.0, -0.0}),
+      makeFlatVector<float>({1, nanf, nanf, -0.0f, 0.0f, -0.0f}),
+  });
+  auto expected = makeRowVector({
+      makeArrayVector<double>({{0.0, 1, nan, nan}}),
+      makeArrayVector<float>({{0.0f, 1, nanf, nanf}}),
+  });
+  testAggregations(
+      {data},
+      {},
+      {"collect_set(c0)", "collect_set(c1)"},
+      {"spark_array_sort(a0)", "spark_array_sort(a1)"},
+      {expected},
+      config);
+
+  // The first of -0.0 and 0.0 is returned as is, also when nested in arrays
+  // and structs.
+  data = makeRowVector({
+      makeFlatVector<double>({-0.0, 0.0}),
+      makeFlatVector<float>({-0.0f, 0.0f}),
+      makeArrayVector<double>({{-0.0, -0.0}, {-0.0, -0.0}}),
+      makeRowVector({makeFlatVector<double>({-0.0, -0.0})}),
+  });
+  const std::vector<std::string> aggregates = {
+      "collect_set(c0)",
+      "collect_set(c1)",
+      "collect_set(c2)",
+      "collect_set(c3)",
+  };
+  const auto assertNegativeZero = [&](const core::PlanNodePtr& plan) {
+    const auto result =
+        exec::test::AssertQueryBuilder(plan).configs(config).copyResults(
+            pool());
+    const auto elements = [&](column_index_t column) {
+      const auto* array = result->childAt(column)->as<ArrayVector>();
+      EXPECT_EQ(array->sizeAt(0), 1);
+      return array->elements();
+    };
+    EXPECT_TRUE(
+        std::signbit(elements(0)->as<SimpleVector<double>>()->valueAt(0)));
+    EXPECT_TRUE(
+        std::signbit(elements(1)->as<SimpleVector<float>>()->valueAt(0)));
+    const auto* nested =
+        elements(2)->as<ArrayVector>()->elements()->as<SimpleVector<double>>();
+    EXPECT_TRUE(std::signbit(nested->valueAt(0)));
+    EXPECT_TRUE(std::signbit(nested->valueAt(1)));
+    EXPECT_TRUE(
+        std::signbit(elements(3)
+                         ->as<RowVector>()
+                         ->childAt(0)
+                         ->as<SimpleVector<double>>()
+                         ->valueAt(0)));
+  };
+
+  assertNegativeZero(
+      exec::test::PlanBuilder()
+          .values({data})
+          .singleAggregation({}, aggregates)
+          .planNode());
+  assertNegativeZero(
+      exec::test::PlanBuilder()
+          .values({data})
+          .partialAggregation({}, aggregates)
+          .finalAggregation()
+          .planNode());
 }
 
 } // namespace

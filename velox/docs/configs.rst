@@ -1524,6 +1524,12 @@ Spark-specific Configuration
      - integer
      -
      - The current task's Spark partition ID. It's set by the query engine (Spark) prior to task execution.
+   * - spark.legacy_collect_set_distinct_nans
+     - bool
+     - false
+     - If true, :spark:func:`collect_set` of REAL and DOUBLE values returns every NaN input as a separate element,
+       e.g. ``[1.0, NaN, NaN]`` for the inputs 1.0, NaN and NaN, and returns the first zero that it reads, -0.0 or
+       0.0, as is. Arrays and structs return -0.0 as is too. This matches the behavior of Spark before 4.2.
    * - spark.legacy_corr_zero_variance
      - bool
      - false

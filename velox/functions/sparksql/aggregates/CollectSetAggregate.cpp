@@ -15,6 +15,8 @@
  */
 #include "velox/exec/AggregateCompanionAdapter.h"
 #include "velox/functions/lib/aggregates/SetBaseAggregate.h"
+#include "velox/functions/sparksql/SparkQueryConfig.h"
+#include "velox/functions/sparksql/aggregates/NormalizeNegativeZeros.h"
 
 namespace facebook::velox::functions::aggregate::sparksql {
 namespace {
@@ -31,8 +33,11 @@ class SparkCollectSetAggregate
   using SBase = SetBaseAggregate<T, false, false, AccumulatorType>;
 
  public:
-  explicit SparkCollectSetAggregate(const TypePtr& resultType)
-      : Base(resultType) {}
+  /// @param keepNegativeZeros Return -0.0 as is instead of 0.0.
+  explicit SparkCollectSetAggregate(
+      const TypePtr& resultType,
+      bool keepNegativeZeros = false)
+      : Base(resultType), keepNegativeZeros_{keepNegativeZeros} {}
 
   void setConstantInputs(
       const std::vector<VectorPtr>& constantInputs) override {
@@ -80,6 +85,20 @@ class SparkCollectSetAggregate
         accumulator->addValue(SBase::decoded_, i, SBase::allocator_);
       }
     });
+  }
+
+  void extractValues(char** groups, int32_t numGroups, VectorPtr* result)
+      override {
+    Base::extractValues(groups, numGroups, result);
+    // NaNs are deduplicated by the accumulator, and -0.0 by its equality with
+    // 0.0. Like Spark, return -0.0 as 0.0, also when nested.
+    if constexpr (
+        std::is_floating_point_v<T> || std::is_same_v<T, ComplexType>) {
+      if (!keepNegativeZeros_) {
+        normalizeNegativeZeros(
+            *(*result)->template as<ArrayVector>()->elements());
+      }
+    }
   }
 
   void toIntermediate(
@@ -198,12 +217,16 @@ class SparkCollectSetAggregate
   // Only used in addRawInput (partial/single step); intermediate/final
   // steps always preserve all elements from the partial output.
   bool ignoreNulls_{true};
+  const bool keepNegativeZeros_;
 };
 
+// With 'legacyDistinctNaNs', REAL and DOUBLE inputs keep every NaN as a
+// separate element, and -0.0 is returned as is, as in Spark 4.1 and earlier.
 std::unique_ptr<exec::Aggregate> createSetAgg(
     const TypeKind typeKind,
     const TypePtr& inputType,
-    const TypePtr& resultType) {
+    const TypePtr& resultType,
+    bool legacyDistinctNaNs) {
   switch (typeKind) {
     case TypeKind::BOOLEAN:
       return std::make_unique<SparkCollectSetAggregate<bool>>(resultType);
@@ -221,15 +244,21 @@ std::unique_ptr<exec::Aggregate> createSetAgg(
           "Non-decimal use of HUGEINT is not supported");
       return std::make_unique<SparkCollectSetAggregate<int128_t>>(resultType);
     case TypeKind::REAL:
-      return std::make_unique<SparkCollectSetAggregate<
-          float,
-          velox::aggregate::prestosql::FloatSetAccumulatorNaNUnaware<float>>>(
-          resultType);
+      if (legacyDistinctNaNs) {
+        return std::make_unique<SparkCollectSetAggregate<
+            float,
+            velox::aggregate::prestosql::FloatSetAccumulatorNaNUnaware<float>>>(
+            resultType, true);
+      }
+      return std::make_unique<SparkCollectSetAggregate<float>>(resultType);
     case TypeKind::DOUBLE:
-      return std::make_unique<SparkCollectSetAggregate<
-          double,
-          velox::aggregate::prestosql::FloatSetAccumulatorNaNUnaware<double>>>(
-          resultType);
+      if (legacyDistinctNaNs) {
+        return std::make_unique<SparkCollectSetAggregate<
+            double,
+            velox::aggregate::prestosql::FloatSetAccumulatorNaNUnaware<
+                double>>>(resultType, true);
+      }
+      return std::make_unique<SparkCollectSetAggregate<double>>(resultType);
     case TypeKind::TIMESTAMP:
       VELOX_DCHECK(inputType->equivalent(*TIMESTAMP()));
       return std::make_unique<SparkCollectSetAggregate<Timestamp>>(resultType);
@@ -241,7 +270,7 @@ std::unique_ptr<exec::Aggregate> createSetAgg(
       [[fallthrough]];
     case TypeKind::ROW:
       return std::make_unique<SparkCollectSetAggregate<ComplexType>>(
-          resultType);
+          resultType, legacyDistinctNaNs);
     case TypeKind::UNKNOWN:
       return std::make_unique<SparkCollectSetAggregate<UnknownValue>>(
           resultType);
@@ -279,11 +308,15 @@ void registerCollectSetAggAggregate(
       [](core::AggregationNode::Step step,
          const std::vector<TypePtr>& argTypes,
          const TypePtr& resultType,
-         const core::QueryConfig& /*config*/)
-          -> std::unique_ptr<exec::Aggregate> {
+         const core::QueryConfig& config) -> std::unique_ptr<exec::Aggregate> {
         const TypePtr& inputType =
             exec::isRawInput(step) ? argTypes[0] : argTypes[0]->childAt(0);
-        return createSetAgg(inputType->kind(), inputType, resultType);
+        return createSetAgg(
+            inputType->kind(),
+            inputType,
+            resultType,
+            functions::sparksql::SparkQueryConfig{config}
+                .legacyCollectSetDistinctNaNs());
       },
       {.ignoreDuplicates = true},
       withCompanionFunctions,

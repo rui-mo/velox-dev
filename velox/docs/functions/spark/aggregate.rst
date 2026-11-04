@@ -119,7 +119,13 @@ General Aggregate Functions
 
     Returns an array consisting of all unique values from the input ``x`` elements.
     When ``ignoreNulls`` is ``true``, null inputs are excluded and an all-null
-    input returns an empty array. NaN values are considered distinct.
+    input returns an empty array. NaN values are considered equal, as are -0.0
+    and 0.0, also when nested in arrays or structs. -0.0 is returned as 0.0.
+    If ``spark.legacy_collect_set_distinct_nans`` is true, every NaN input of
+    REAL or DOUBLE type is a separate element, and the first of -0.0 and 0.0 is
+    returned as is, also when nested in arrays or structs, as in Spark before 4.2.
+    Unlike in Spark before 4.2, arrays and structs that differ only in -0.0 and
+    0.0 are still considered equal then.
 
     When ``ignoreNulls`` is set to ``false`` (RESPECT NULLS), null values are
     included in the result set. In this mode, an all-null input produces an
