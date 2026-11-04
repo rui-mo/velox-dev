@@ -454,10 +454,11 @@ struct SubstringIndexFunction {
           std::string_view(delim.data(), delim.size()),
           count);
     } else {
+      // Widen 'count' first, because negating INT32_MIN overflows.
       index = stringImpl::stringPosition<true, false>(
           std::string_view(str.data(), str.size()),
           std::string_view(delim.data(), delim.size()),
-          -count);
+          -static_cast<int64_t>(count));
     }
 
     // If 'delim' is not found or found fewer than 'count' times,
