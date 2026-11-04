@@ -58,12 +58,9 @@ struct CorrResultAccessor {
       }
     }
 
-    // Returns true if any of the following conditions are met:
-    // 1. m2Y or m2X or c2 is NaN.
-    // 2. m2Y and m2X are not zero.
-    return std::isnan(accumulator.m2Y()) || std::isnan(accumulator.m2X()) ||
-        std::isnan(accumulator.c2()) ||
-        (accumulator.m2Y() != 0 && accumulator.m2X() != 0);
+    // Spark returns NULL when x or y has zero variance, even if the other is
+    // NaN.
+    return accumulator.m2X() != 0 && accumulator.m2Y() != 0;
   }
 
   static double result(const CorrAccumulator& accumulator) {

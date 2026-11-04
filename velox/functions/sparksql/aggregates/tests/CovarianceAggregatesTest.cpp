@@ -105,16 +105,31 @@ TEST_F(CovarianceAggregatesTest, corr) {
       std::vector<double>{std::numeric_limits<double>::quiet_NaN()})});
   testCovarianceAggResult(agg, input, expected, true);
 
-  // Output NaN when m2x or m2y equals 0 but c2 is NaN.
-  input = makeRowVector(
-      {makeFlatVector<double>({0, 0, 0, 0, 0, 0}),
-       makeFlatVector<double>(
-           {std::numeric_limits<double>::quiet_NaN(), 0, 0, 0, 0, 0})});
-
-  expected = makeRowVector({makeFlatVector<double>(
-      std::vector<double>{std::numeric_limits<double>::quiet_NaN()})});
-  testCovarianceAggResult(agg, input, expected);
-  testCovarianceAggResult(agg, input, expected, true);
+  // Output NULL when m2x or m2y equals 0, even if the other is NaN, and NaN
+  // when m2x or m2y is NaN otherwise.
+  constexpr auto kInf = std::numeric_limits<double>::infinity();
+  constexpr auto kNaN = std::numeric_limits<double>::quiet_NaN();
+  const std::vector<std::tuple<
+      std::vector<double>,
+      std::vector<double>,
+      std::optional<double>>>
+      testCases = {
+          {{0, 0, 0, 0, 0, 0}, {kNaN, 0, 0, 0, 0, 0}, std::nullopt},
+          {{kNaN, 1}, {2, 2}, std::nullopt},
+          {{kInf, 1, 3}, {2, 2, 2}, std::nullopt},
+          {{kNaN, 1, 2}, {1, 2, 3}, kNaN},
+          {{1, 2, 3}, {kInf, 2, 3}, kNaN},
+      };
+  for (const auto& [x, y, result] : testCases) {
+    SCOPED_TRACE(
+        fmt::format("x: {}, y: {}", fmt::join(x, ", "), fmt::join(y, ", ")));
+    input =
+        makeRowVector({makeFlatVector<double>(x), makeFlatVector<double>(y)});
+    expected = makeRowVector({makeNullableFlatVector<double>(
+        std::vector<std::optional<double>>{result})});
+    testCovarianceAggResult(agg, input, expected);
+    testCovarianceAggResult(agg, input, expected, true);
+  }
 
   // Output NULL when count equals 0 for legacy aggregate.
   input = makeRowVector(
