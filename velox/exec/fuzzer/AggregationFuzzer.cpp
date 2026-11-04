@@ -39,6 +39,15 @@ DEFINE_bool(
     true,
     "When true, generates plans with streaming aggregations");
 
+DEFINE_bool(
+    compare_errors_with_reference,
+    false,
+    "When true, fails if only Velox or only the reference DB throws an error "
+    "for a query. By default, a query that fails in Velox doesn't run in the "
+    "reference DB, and errors of the reference DB are ignored.");
+
+DECLARE_bool(enable_oom_injection);
+
 using facebook::velox::fuzzer::CallableSignature;
 using facebook::velox::fuzzer::SignatureTemplate;
 
@@ -1051,12 +1060,24 @@ bool AggregationFuzzer::compareEquivalentPlanResults(
     //    supports Velox vectors then we have the reference DB execute the plan
     //    and use ResultVerifier::compare api (if supported ) to validate the
     //    results.
+    // With --compare_errors_with_reference, it also fails if only one of
+    // Velox and the reference DB throws.
+    const bool compareErrors =
+        FLAGS_compare_errors_with_reference && !FLAGS_enable_oom_injection;
+    auto checkReferenceSucceeded = [&](ReferenceQueryErrorCode errorCode) {
+      VELOX_CHECK(
+          !compareErrors ||
+              errorCode != ReferenceQueryErrorCode::kReferenceQueryFail,
+          "Only the reference DB throws, plan: {}",
+          firstPlan->toString(true, true));
+    };
 
     if (resultOrError.result != nullptr) {
       if (!customVerification) {
         auto referenceResult =
             computeReferenceResults(firstPlan, referenceQueryRunner_.get());
         stats_.updateReferenceQueryStats(referenceResult.second);
+        checkReferenceSucceeded(referenceResult.second);
         auto expectedResult = referenceResult.first;
 
         if (expectedResult) {
@@ -1074,6 +1095,7 @@ bool AggregationFuzzer::compareEquivalentPlanResults(
         auto referenceResult = computeReferenceResultsAsVector(
             firstPlan, referenceQueryRunner_.get());
         stats_.updateReferenceQueryStats(referenceResult.second);
+        checkReferenceSucceeded(referenceResult.second);
 
         if (referenceResult.first && !referenceResult.first.value().empty()) {
           velox::fuzzer::ResultOrError expected;
@@ -1084,6 +1106,19 @@ bool AggregationFuzzer::compareEquivalentPlanResults(
               resultOrError, customVerification, {customVerifier}, expected);
           ++stats_.numVerified;
         }
+      }
+    } else if (compareErrors) {
+      auto referenceResult =
+          computeReferenceResults(firstPlan, referenceQueryRunner_.get());
+      stats_.updateReferenceQueryStats(referenceResult.second);
+      if (referenceResult.second == ReferenceQueryErrorCode::kSuccess) {
+        LOG(ERROR) << "Only Velox throws, plan: "
+                   << firstPlan->toString(true, true);
+        std::rethrow_exception(resultOrError.exceptionPtr);
+      }
+      if (referenceResult.second ==
+          ReferenceQueryErrorCode::kReferenceQueryFail) {
+        LOG(INFO) << "Velox and reference DB both throw";
       }
     }
 
