@@ -332,6 +332,9 @@ void ExpressionFuzzerVerifier::retryWithTry(
   }
 
   std::vector<fuzzer::InputTestCase> inputsToRetryWithoutErrors;
+  // Rows that return null with try() and are verified one at a time.
+  std::vector<fuzzer::InputTestCase> nullRowsToVerify;
+  FuzzerGenerator nullRowsRng(currentSeed_);
   for (int i = 0; i < tryResults.size(); ++i) {
     auto& tryResult = tryResults[i];
     if (tryResult.unsupportedInputUncatchableError) {
@@ -345,21 +348,41 @@ void ExpressionFuzzerVerifier::retryWithTry(
     // were never evaluated (whose result values are uninitialized).
     auto nonNullRows = extractNonNullRows(tryResult.result);
     nonNullRows.intersect(inputsToRetry[i].activeRows);
+    if (options_.tryNullRowsToVerify > 0) {
+      std::vector<vector_size_t> nullRows;
+      inputsToRetry[i].activeRows.applyToSelected([&](vector_size_t row) {
+        if (!nonNullRows.isValid(row)) {
+          nullRows.push_back(row);
+        }
+      });
+      std::shuffle(nullRows.begin(), nullRows.end(), nullRowsRng);
+      nullRows.resize(
+          std::min<size_t>(nullRows.size(), options_.tryNullRowsToVerify));
+      for (const auto row : nullRows) {
+        SelectivityVector rows(inputsToRetry[i].inputVector->size(), false);
+        rows.setValid(row, true);
+        rows.updateBounds();
+        nullRowsToVerify.push_back(
+            {inputsToRetry[i].inputVector, std::move(rows)});
+      }
+    }
     inputsToRetry[i].activeRows = nonNullRows;
     if (inputsToRetry[i].activeRows.hasSelections()) {
       inputsToRetryWithoutErrors.push_back(std::move(inputsToRetry[i]));
     }
   }
 
-  if (!inputsToRetryWithoutErrors.empty()) {
-    LOG(INFO) << "Retrying original expression on rows without errors";
-
+  // A test case fails if any of its rows fails, so the rows that fail only in
+  // Velox are not verified in a test case where another row fails in both.
+  // Verifying the rows that return null with try() one at a time finds them.
+  auto verifyRows = [&](const std::vector<fuzzer::InputTestCase>& inputs,
+                        bool canThrow) {
     try {
       verifier_.verify(
           plans,
-          inputsToRetryWithoutErrors,
+          inputs,
           resultVector ? BaseVector::copy(*resultVector) : nullptr,
-          false, // canThrow
+          canThrow,
           inputRowMetadata);
     } catch (const std::exception&) {
       if (options_.findMinimalSubexpression) {
@@ -367,11 +390,22 @@ void ExpressionFuzzerVerifier::retryWithTry(
             {&execCtx_, {false, ""}, referenceQueryRunner_},
             *vectorFuzzer_,
             plans,
-            inputsToRetryWithoutErrors,
+            inputs,
             inputRowMetadata);
       }
       throw;
     }
+  };
+
+  if (!inputsToRetryWithoutErrors.empty()) {
+    LOG(INFO) << "Retrying original expression on rows without errors";
+    verifyRows(inputsToRetryWithoutErrors, false);
+  }
+
+  if (!nullRowsToVerify.empty()) {
+    LOG(INFO) << "Verifying " << nullRowsToVerify.size()
+              << " rows that return null with try() one at a time";
+    verifyRows(nullRowsToVerify, true);
   }
 }
 

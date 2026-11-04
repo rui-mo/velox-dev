@@ -36,6 +36,15 @@ DEFINE_bool(
     false,
     "Retry failed expressions by wrapping it using a try() statement.");
 
+DEFINE_int32(
+    try_null_rows_to_verify,
+    0,
+    "With --retry_with_try, the maximum number of rows per test case that "
+    "return null with try() to verify one at a time. A test case fails if any "
+    "row fails, so the rows that fail only in Velox are not verified in a test "
+    "case where another row fails in both Velox and the reference DB. Zero "
+    "disables it.");
+
 DEFINE_bool(
     find_minimal_subexpression,
     false,
@@ -228,6 +237,7 @@ ExpressionFuzzerVerifier::Options getExpressionFuzzerVerifierOptions(
   opts.durationSeconds = FLAGS_duration_sec;
   opts.batchSize = FLAGS_batch_size;
   opts.retryWithTry = FLAGS_retry_with_try;
+  opts.tryNullRowsToVerify = FLAGS_try_null_rows_to_verify;
   opts.findMinimalSubexpression = FLAGS_find_minimal_subexpression;
   opts.disableConstantFolding = FLAGS_disable_constant_folding;
   opts.reproPersistPath = FLAGS_repro_persist_path;
