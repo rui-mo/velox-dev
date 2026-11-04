@@ -258,7 +258,13 @@ General Aggregate Functions
     NULL values are ignored. If all the values are NULL, or
     there are 0 rows, returns NULL.
     If multiple values have the same greatest frequency, the
-    return value could be any one of them.
+    return value could be any one of them. NaN values are considered
+    equal, as are -0.0 and 0.0, also when nested in arrays or structs.
+    -0.0 is returned as 0.0, also when nested in arrays, structs or
+    map values. If ``spark.legacy_mode_negative_zero`` is true, -0.0
+    is returned as is, as in Spark before 4.2. Unlike in Spark before
+    4.2, -0.0 and 0.0 are still considered equal then. Spark 3.5.1 and
+    earlier also consider NaN values distinct.
 
     Example::
 

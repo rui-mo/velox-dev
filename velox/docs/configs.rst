@@ -1550,6 +1550,11 @@ Spark-specific Configuration
        Joda date formatter performs strict checking of its input and uses different pattern string.
        For example, the 2015-07-22 10:00:00 timestamp cannot be parsed if pattern is yyyy-MM-dd because the parser does not consume whole input.
        Another example is that the 'W' pattern, which means week in month, is not supported. For more differences, see :issue:`10354`.
+   * - spark.legacy_mode_negative_zero
+     - bool
+     - false
+     - If true, :spark:func:`mode` returns -0.0 as is instead of 0.0, also when nested in arrays, structs or map
+       values. This matches the behavior of Spark before 4.2.
    * - spark.legacy_overlay_wrap_positions
      - bool
      - false

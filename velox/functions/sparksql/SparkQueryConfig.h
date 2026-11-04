@@ -165,6 +165,16 @@ class SparkQueryConfig {
       false,
       "Use simple date formatter instead of Joda for Spark.")
 
+  /// If true, mode returns -0.0 as is instead of 0.0, as in Spark 4.1 and
+  /// earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyModeNegativeZero,
+      legacyModeNegativeZero,
+      "legacy_mode_negative_zero",
+      bool,
+      false,
+      "Return -0.0 as is in Spark mode.")
+
   /// If true, overlay computes the positions where the replacement starts and
   /// the rest of the input resumes in 32-bit integers that wrap around, as in
   /// Spark 4.2.0 and earlier.

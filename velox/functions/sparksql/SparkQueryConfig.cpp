@@ -35,6 +35,7 @@ SparkQueryConfig::registeredProperties() {
     VELOX_REGISTER_SPARK_CONFIG(kLegacyCorrZeroVariance);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyCovarianceMergeEmptyBuffer);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyDateFormatter);
+    VELOX_REGISTER_SPARK_CONFIG(kLegacyModeNegativeZero);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyOverlayWrapPositions);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyStatisticalAggregate);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyTranslateNulAsDeletion);

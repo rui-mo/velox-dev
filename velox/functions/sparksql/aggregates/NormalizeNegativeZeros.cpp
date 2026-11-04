@@ -45,6 +45,10 @@ void normalizeNegativeZeros(BaseVector& vector) {
     case TypeKind::ARRAY:
       normalizeNegativeZeros(*vector.asChecked<ArrayVector>()->elements());
       break;
+    case TypeKind::MAP:
+      // Keys are kept as is, since replacing them could duplicate keys.
+      normalizeNegativeZeros(*vector.asChecked<MapVector>()->mapValues());
+      break;
     case TypeKind::ROW:
       for (const auto& child : vector.asChecked<RowVector>()->children()) {
         normalizeNegativeZeros(*child);

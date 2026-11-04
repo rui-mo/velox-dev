@@ -19,6 +19,8 @@
 #include "velox/exec/AddressableNonNullValueList.h"
 #include "velox/exec/SimpleAggregateAdapter.h"
 #include "velox/exec/Strings.h"
+#include "velox/functions/sparksql/SparkQueryConfig.h"
+#include "velox/functions/sparksql/aggregates/NormalizeNegativeZeros.h"
 
 using namespace facebook::velox::aggregate::prestosql;
 using namespace facebook::velox::exec;
@@ -28,10 +30,12 @@ namespace facebook::velox::functions::aggregate::sparksql {
 namespace {
 
 // Mode aggregate function for scalar types.
+// @tparam keepNegativeZeros Return -0.0 as is instead of 0.0.
 template <
     typename T,
     typename Hash = std::hash<T>,
-    typename EqualTo = std::equal_to<T>>
+    typename EqualTo = std::equal_to<T>,
+    bool keepNegativeZeros = false>
 class ModeAggregate {
  public:
   using InputType = Row<T>;
@@ -56,7 +60,7 @@ class ModeAggregate {
 
     explicit AccumulatorType(
         HashStringAllocator* allocator,
-        ModeAggregate<T, Hash, EqualTo>* /*fn*/)
+        ModeAggregate* /*fn*/)
         : values{AlignedStlAllocator<std::pair<const T, int64_t>, 16>(
               allocator)} {}
 
@@ -91,7 +95,14 @@ class ModeAggregate {
           [](const std::pair<T, int64_t>& p1, const std::pair<T, int64_t>& p2) {
             return p1.second < p2.second;
           });
-      out = iterator->first;
+      T result = iterator->first;
+      if constexpr (std::is_floating_point_v<T> && !keepNegativeZeros) {
+        // -0.0 is counted with 0.0 and, like in Spark, returned as 0.0.
+        if (result == T{0}) {
+          result = T{0};
+        }
+      }
+      out = result;
       return true;
     }
 
@@ -278,8 +289,14 @@ struct ComplexTypeAccumulator {
 template <typename T>
 class ComplexTypeModeAggregate : public Aggregate {
  public:
-  explicit ComplexTypeModeAggregate(TypePtr resultType, TypePtr inputType)
-      : Aggregate(std::move(resultType)), inputType_(std::move(inputType)) {}
+  /// @param keepNegativeZeros Return -0.0 as is instead of 0.0.
+  ComplexTypeModeAggregate(
+      TypePtr resultType,
+      TypePtr inputType,
+      bool keepNegativeZeros = false)
+      : Aggregate(std::move(resultType)),
+        inputType_(std::move(inputType)),
+        keepNegativeZeros_{keepNegativeZeros} {}
 
   int32_t accumulatorFixedWidthSize() const override {
     return sizeof(ComplexTypeAccumulator);
@@ -314,6 +331,10 @@ class ComplexTypeModeAggregate : public Aggregate {
         }
         accumulator->extractValues(*result, i);
       }
+    }
+    // -0.0 is counted with 0.0 and, like in Spark, returned as 0.0.
+    if (!keepNegativeZeros_) {
+      normalizeNegativeZeros(**result);
     }
   }
 
@@ -502,7 +523,26 @@ class ComplexTypeModeAggregate : public Aggregate {
   DecodedVector decodedKeys_;
   DecodedVector decodedIntermediate_;
   TypePtr inputType_;
+  const bool keepNegativeZeros_;
 };
+
+template <typename T>
+std::unique_ptr<Aggregate> createFloatingPointModeAggregate(
+    core::AggregationNode::Step step,
+    const std::vector<TypePtr>& argTypes,
+    const TypePtr& resultType,
+    bool keepNegativeZeros) {
+  using Hash = util::floating_point::NaNAwareHash<T>;
+  using Equals = util::floating_point::NaNAwareEquals<T>;
+  if (keepNegativeZeros) {
+    return std::make_unique<
+        SimpleAggregateAdapter<ModeAggregate<T, Hash, Equals, true>>>(
+        step, argTypes, resultType);
+  }
+  return std::make_unique<
+      SimpleAggregateAdapter<ModeAggregate<T, Hash, Equals>>>(
+      step, argTypes, resultType);
+}
 } // namespace
 
 void registerModeAggregate(
@@ -526,9 +566,12 @@ void registerModeAggregate(
           core::AggregationNode::Step step,
           const std::vector<TypePtr>& argTypes,
           const TypePtr& resultType,
-          const core::QueryConfig& /*config*/) -> std::unique_ptr<Aggregate> {
+          const core::QueryConfig& config) -> std::unique_ptr<Aggregate> {
         VELOX_CHECK_EQ(
             argTypes.size(), 1, "{}: unexpected number of arguments", name);
+        const bool keepNegativeZeros =
+            functions::sparksql::SparkQueryConfig{config}
+                .legacyModeNegativeZero();
 
         auto inputType =
             isRawInput(step) ? argTypes[0] : argTypes[0]->childAt(0);
@@ -558,17 +601,11 @@ void registerModeAggregate(
                 SimpleAggregateAdapter<ModeAggregate<int128_t>>>(
                 step, argTypes, resultType);
           case TypeKind::REAL:
-            return std::make_unique<SimpleAggregateAdapter<ModeAggregate<
-                float,
-                util::floating_point::NaNAwareHash<float>,
-                util::floating_point::NaNAwareEquals<float>>>>(
-                step, argTypes, resultType);
+            return createFloatingPointModeAggregate<float>(
+                step, argTypes, resultType, keepNegativeZeros);
           case TypeKind::DOUBLE:
-            return std::make_unique<SimpleAggregateAdapter<ModeAggregate<
-                double,
-                util::floating_point::NaNAwareHash<double>,
-                util::floating_point::NaNAwareEquals<double>>>>(
-                step, argTypes, resultType);
+            return createFloatingPointModeAggregate<double>(
+                step, argTypes, resultType, keepNegativeZeros);
           case TypeKind::TIMESTAMP:
             return std::make_unique<
                 SimpleAggregateAdapter<ModeAggregate<Timestamp>>>(
@@ -589,7 +626,7 @@ void registerModeAggregate(
           case TypeKind::MAP:
           case TypeKind::ROW:
             return std::make_unique<ComplexTypeModeAggregate<ComplexType>>(
-                resultType, inputType);
+                resultType, inputType, keepNegativeZeros);
           default:
             VELOX_NYI(
                 "Unknown input type for {} aggregation {}",

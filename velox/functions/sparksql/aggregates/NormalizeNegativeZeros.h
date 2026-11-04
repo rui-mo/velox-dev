@@ -20,9 +20,10 @@
 namespace facebook::velox::functions::aggregate::sparksql {
 
 /// Replaces -0.0 with 0.0 in the REAL and DOUBLE values of 'vector', including
-/// the values nested in arrays and structs. Spark aggregates that consider -0.0
-/// equal to 0.0 return it as 0.0. 'vector' and the vectors nested in it must be
-/// flat, like the results that aggregates extract.
+/// the values nested in arrays, structs and map values. Map keys are kept as
+/// is. Spark aggregates that consider -0.0 equal to 0.0 return it as 0.0.
+/// 'vector' and the vectors nested in it must be flat, like the results that
+/// aggregates extract.
 void normalizeNegativeZeros(BaseVector& vector);
 
 } // namespace facebook::velox::functions::aggregate::sparksql
