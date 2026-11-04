@@ -117,10 +117,11 @@ std::unordered_set<std::string> sparkSkippedFunctions() {
       // its generated code returns null, as Velox does. SparkQueryRunner
       // evaluates expressions without generated code.
       "levenshtein(varchar,varchar,integer) -> integer",
-      // Signatures that Spark doesn't have. Spark's element_at requires an
-      // integer index for arrays, its array_intersect requires two arrays and
-      // its array_position has no start position.
+      // Signatures that Spark doesn't have. Spark's element_at and get cast the
+      // index of an array to integer, its array_intersect requires two arrays
+      // and its array_position has no start position.
       "element_at(array(T),bigint) -> T",
+      "get(array(T),bigint) -> T",
       "array_intersect(array(array(T))) -> array(T)",
       "array_position(array(T),T,bigint) -> bigint",
       // The signature of map for more than 10 key-value pairs takes arguments
