@@ -1084,6 +1084,37 @@ TEST_F(DecimalArithmeticTest, div) {
           HugeInt::parse("99999999999999999999999999999999999999"),
           1)),
       std::nullopt);
+
+  // The dividend or the divisor exceeds 128 bits after rescaling to the same
+  // scale, while the quotient fits.
+  EXPECT_EQ(
+      (div<int128_t, int128_t>(
+          DECIMAL(38, 0),
+          DECIMAL(38, 6),
+          HugeInt::parse("10000000000000000000000000000000000000"),
+          HugeInt::parse("10000000000000"))),
+      5076944270305263616L);
+  EXPECT_EQ(
+      (div<int128_t, int128_t>(
+          DECIMAL(38, 0),
+          DECIMAL(38, 6),
+          HugeInt::parse("10000000000000000000000000000000000000"),
+          HugeInt::parse("-99999999999999999999999999999999999999"))),
+      -100000L);
+  EXPECT_EQ(
+      (div<int128_t, int128_t>(
+          DECIMAL(38, 37),
+          DECIMAL(38, 0),
+          HugeInt::parse("15000000000000000000000000000000000000"),
+          HugeInt::parse("99999999999999999999999999999999999999"))),
+      0L);
+  EXPECT_EQ(
+      (div<int128_t, int128_t>(
+          DECIMAL(38, 0),
+          DECIMAL(38, 6),
+          HugeInt::parse("10000000000000000000000000000000000000"),
+          100000)),
+      std::nullopt);
 }
 
 TEST_F(DecimalArithmeticTest, divAnsi) {
