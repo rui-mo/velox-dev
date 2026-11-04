@@ -363,16 +363,22 @@ Mathematical Functions
 
     Returns the square root of ``x``.
 
-.. spark:function:: multiply(x, y) -> [same as x]
+.. spark:function:: multiply(x, y) -> [same as x] (ANSI compliant)
 
     Returns the result of multiplying x by y. The types of x and y must be the same.
-    Corresponds to Spark's operator ``*``.
+    For integral types, overflow wraps around following the behavior when Spark ANSI mode
+    is disabled, and throws an exception when Spark ANSI mode is enabled.
+    Corresponds to Spark's operator ``*``. ::
 
-.. spark:function:: multiply(x, y) -> [decimal]
+        SELECT 127Y * 2Y; -- -2 (with ANSI mode disabled)
+        SELECT 127Y * 2Y; -- Overflow exception (with ANSI mode enabled)
+
+.. spark:function:: multiply(x, y) -> [decimal] (ANSI compliant)
 
     Returns the result of multiplying x by y. The types of x and y must be decimal which can be different precision and scale.
     The result type depends on the precision and scale of x and y.
-    Overflow results return null. Corresponds to Spark's operator ``*``. ::
+    Overflow returns NULL following the behavior when Spark ANSI mode is disabled, and throws an exception
+    when Spark ANSI mode is enabled. Corresponds to Spark's operator ``*``. ::
 
         SELECT CAST(1 as DECIMAL(17, 3)) * CAST(2 as DECIMAL(17, 3)); -- decimal 2.000000
         SELECT CAST(1 as DECIMAL(20, 3)) * CAST(20 as DECIMAL(20, 2)); -- decimal 20.00000

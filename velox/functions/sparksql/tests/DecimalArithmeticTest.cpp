@@ -790,6 +790,36 @@ TEST_F(DecimalArithmeticTest, divideLargeDivisor) {
            {power - 1, power - 1, -power + 1, -power + 1}, DECIMAL(38, 0))});
 }
 
+TEST_F(DecimalArithmeticTest, multiplyAnsi) {
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  for (const auto& func : {"multiply", "multiply_deny_precision_loss"}) {
+    SCOPED_TRACE(func);
+    assertErrorForCheckedDecimalArithmetic<int128_t, int64_t>(
+        func,
+        DECIMAL(38, 0),
+        DECIMAL(1, 0),
+        HugeInt::parse("99999999999999999999999999999999999999"),
+        2,
+        "Decimal overflow in multiply");
+    assertErrorForCheckedDecimalArithmetic<int128_t, int64_t>(
+        func,
+        DECIMAL(38, 0),
+        DECIMAL(1, 0),
+        HugeInt::parse("-99999999999999999999999999999999999999"),
+        2,
+        "Decimal overflow in multiply");
+    EXPECT_EQ(
+        (checkedDecimalArithmetic<int128_t, int64_t>(
+            func, DECIMAL(38, 0), DECIMAL(1, 0), 2, 3)),
+        6);
+    EXPECT_EQ(
+        (checkedDecimalArithmetic<int128_t, int64_t>(
+            func, DECIMAL(38, 0), DECIMAL(1, 0), std::nullopt, 2)),
+        std::nullopt);
+  }
+}
+
 TEST_F(DecimalArithmeticTest, divide) {
   auto shortFlat = makeFlatVector<int64_t>({1000, 2000}, DECIMAL(17, 3));
   // Divide short and short, returning long.
