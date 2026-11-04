@@ -302,8 +302,8 @@ struct DecimalAddSubtractBase {
 
 /// Spark decimal addition. 'allowPrecisionLoss' picks the result type the
 /// way spark.sql.decimal.allowPrecisionLoss does: with it unset the scale is
-/// held and more sums overflow instead of losing digits. Returns false on
-/// overflow, which the simple function framework reports as a null.
+/// held and more sums overflow instead of losing digits. Overflow returns
+/// null with ANSI mode off and throws with ANSI mode on.
 template <typename TExec, bool allowPrecisionLoss>
 struct DecimalAddFunction : DecimalAddSubtractBase {
   VELOX_DEFINE_FUNCTION_TYPES(TExec);
@@ -311,16 +311,26 @@ struct DecimalAddFunction : DecimalAddSubtractBase {
   template <typename A, typename B>
   void initialize(
       const std::vector<TypePtr>& inputTypes,
-      const core::QueryConfig& /*config*/,
+      const core::QueryConfig& config,
       A* /*a*/,
       B* /*b*/) {
     initializeBase<allowPrecisionLoss>(inputTypes);
+    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
   }
 
   template <typename R, typename A, typename B>
   bool call(R& out, const A& a, const B& b) {
-    return applyAdd<R, A, B>(out, a, b);
+    if (FOLLY_UNLIKELY(!applyAdd<R, A, B>(out, a, b))) {
+      if (ansiEnabled_) {
+        VELOX_USER_FAIL("Decimal overflow in add");
+      }
+      return false;
+    }
+    return true;
   }
+
+ private:
+  bool ansiEnabled_{false};
 };
 
 /// Spark decimal subtraction, an addition of the negated second argument.

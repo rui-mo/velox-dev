@@ -46,19 +46,25 @@ Mathematical Functions
 
     Returns inverse hyperbolic tangent of ``x``.
 
-.. spark:function:: add(x, y) -> [same as x]
+.. spark:function:: add(x, y) -> [same as x] (ANSI compliant)
 
     Returns the result of adding x to y. The types of x and y must be the same.
+    For integral types, overflow wraps around following the behavior when Spark ANSI mode
+    is disabled, and throws an exception when Spark ANSI mode is enabled.
     For interval inputs (``interval day to second`` and
     ``interval year to month``), overflow always throws an exception.
-    Corresponds to Spark's operator ``+``.
+    Corresponds to Spark's operator ``+``. ::
 
-.. spark:function:: add(x, y) -> decimal
+        SELECT 127Y + 1Y; -- -128 (with ANSI mode disabled)
+        SELECT 127Y + 1Y; -- Overflow exception (with ANSI mode enabled)
+
+.. spark:function:: add(x, y) -> decimal (ANSI compliant)
 
     Returns the result of adding ``x`` to ``y``. The argument types should be DECIMAL, and can have different precisions and scales.
     Fast path is implemented for cases that should not overflow. For the others, the whole parts and fractional parts of input decimals are added separately and combined finally.
     The result type is calculated with the max precision of input precisions, the max scale of input scales, and one extra digit for possible carrier.
-    Overflow results in null output. Corresponds to Spark's operator ``+``.
+    Overflow returns NULL following the behavior when Spark ANSI mode is disabled, and throws an exception
+    when Spark ANSI mode is enabled. Corresponds to Spark's operator ``+``.
 
     ::
 

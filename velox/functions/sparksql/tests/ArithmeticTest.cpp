@@ -273,6 +273,11 @@ class ArithmeticTest : public SparkFunctionBaseTest {
   }
 
   template <typename T>
+  std::optional<T> add(const std::optional<T> a, const std::optional<T> b) {
+    return evaluateOnce<T>("add(c0, c1)", a, b);
+  }
+
+  template <typename T>
   std::optional<T> checkedAdd(
       const std::optional<T> a,
       const std::optional<T> b) {
@@ -1068,6 +1073,28 @@ TEST_F(ArithmeticTest, widthBucket) {
   // value is infinite.
   EXPECT_EQ(widthBucket(kInf, 0, 4, 3), 4);
   EXPECT_EQ(widthBucket(-kInf, 0, 4, 3), 0);
+}
+
+TEST_F(ArithmeticTest, addAnsi) {
+  // Integral overflow wraps around with ANSI mode off.
+  EXPECT_EQ(add<int8_t>(INT8_MAX, 1), INT8_MIN);
+  EXPECT_EQ(add<int16_t>(INT16_MAX, 1), INT16_MIN);
+  EXPECT_EQ(add<int32_t>(INT32_MAX, 1), INT32_MIN);
+  EXPECT_EQ(add<int64_t>(INT64_MIN, -1), INT64_MAX);
+
+  queryCtx_->testingOverrideConfigUnsafe(
+      {{SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"}});
+  VELOX_ASSERT_THROW(add<int8_t>(INT8_MAX, 1), "Arithmetic overflow: 127 + 1");
+  VELOX_ASSERT_THROW(
+      add<int16_t>(INT16_MAX, 1), "Arithmetic overflow: 32767 + 1");
+  VELOX_ASSERT_THROW(
+      add<int32_t>(INT32_MAX, 1), "Arithmetic overflow: 2147483647 + 1");
+  VELOX_ASSERT_THROW(
+      add<int64_t>(INT64_MIN, -1),
+      "Arithmetic overflow: -9223372036854775808 + -1");
+  EXPECT_EQ(add<int64_t>(std::nullopt, INT64_MAX), std::nullopt);
+  EXPECT_EQ(add<int32_t>(1, 2), 3);
+  EXPECT_EQ(add<double>(kInfDouble, 1), kInfDouble);
 }
 
 TEST_F(ArithmeticTest, checkedAdd) {
