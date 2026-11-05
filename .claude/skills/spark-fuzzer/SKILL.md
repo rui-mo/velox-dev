@@ -86,6 +86,10 @@ scripts/spark-fuzzer/spark_fuzzer.py run --ansi on --runs 10 --duration-sec 300 
 - Test both ANSI modes after changing a function that reads ANSI mode. Runs
   stop at their first failure, so skip the functions with known ANSI failures
   with `--skip` until they are fixed.
+- To find the functions that Spark never verified in a mode, e.g. because
+  Spark rejects their arguments or both engines always throw, run `summary
+  <runs> --examples 0 --coverage` on runs of both modes. Test them with `run
+  --only`, or with `sql --ansi both` and unit tests.
 
 ## 3. Triage
 
