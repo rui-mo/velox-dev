@@ -203,9 +203,19 @@ enum class TimestampParseMode {
   // Same as kPrestoCast, but allows 'T' separator between date and time.
   kLegacyCast,
 
-  /// A Spark-compatible timestamp string. A mix of the above. Accepts T and
-  /// space as separator between date and time. Allows leading and trailing
-  /// spaces.
+  /// Spark's syntax of casts from strings to timestamps, like
+  /// SparkDateTimeUtils.parseTimestampString in Spark:
+  // clang-format off
+  ///   timestamp         = year ['-' month ['-' day [('T' | ' ') time]]]
+  ///   year              = ['+' | '-'] yyyy[y[y]]
+  ///   month             = [M]M
+  ///   day               = [d]d
+  ///   time              = [H]H [':' [m]m [':' [s]s ['.' digit*] [zone]]]
+  // clang-format on
+  /// Trims whitespace and ISO control characters at both ends and ignores the
+  /// digits of the fraction after the 6th. The zone is the rest of the string
+  /// without leading whitespace. Spark also accepts a time without a date and
+  /// uses the current date for it. This mode rejects it.
   kSparkCast,
 };
 

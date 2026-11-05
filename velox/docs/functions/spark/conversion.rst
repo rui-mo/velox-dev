@@ -782,16 +782,21 @@ From strings
 
 *(ANSI compliant)*
 
-Casting from strings to timestamp uses Spark-compatible timestamp parsing.
-The parser accepts date-only values, both ``' '`` and ``'T'`` as date-time
-separators, fractional seconds, and leading or trailing spaces. Both ``' '``
-and ``'T'`` date-time separators must be followed immediately by a digit.
-Leading and trailing string bytes are trimmed using Spark UTF8String-style
-trimming before the parser runs, so a bare trailing separator such as
-``"2015-03-18 "`` is handled as a date-only value.
-The year has 4 to 6 digits, and the timestamp must fit in a long of
-microseconds after the time zone is applied. That range spans from
-``-290308-12-21 19:59:05.224192`` to ``294247-01-10 04:00:54.775807`` UTC.
+Casting from strings to timestamp follows Spark's timestamp syntax::
+
+  [+|-]yyyy[y[y]][-[M]M[-[d]d[(' '|'T')[H]H[:[m]m[:[s]s[.fraction][zone]]]]]]
+
+The year has 4 to 6 digits and the other fields have 1 or 2 digits. Digits of
+the fraction after the 6th are ignored. The zone is the rest of the string
+after the seconds or the fraction, without leading whitespace, e.g. ``Z``,
+``+08:00``, ``UTC`` or ``America/Los_Angeles``. A string without a zone is in
+the session time zone. Leading and trailing string bytes are trimmed using
+Spark UTF8String-style trimming before the parser runs. Unlike Spark, which
+uses the current date for a time without a date, e.g. ``'10:00:00'`` or
+``'T10:00:00'``, Velox treats such a string as invalid.
+The timestamp must fit in a long of microseconds after the time zone is
+applied. That range spans from ``-290308-12-21 19:59:05.224192`` to
+``294247-01-10 04:00:54.775807`` UTC.
 
 Casting from invalid strings returns NULL when ANSI mode is disabled and throws
 an error when ANSI mode is enabled.
@@ -801,10 +806,16 @@ Valid examples
 ::
 
   SELECT cast('1970-01-01' as timestamp); -- 1970-01-01 00:00:00
+  SELECT cast('2020' as timestamp); -- 2020-01-01 00:00:00
   SELECT cast('2000-01-01 12:21:56' as timestamp); -- 2000-01-01 12:21:56
   SELECT cast('2000-01-01T12:21:56' as timestamp); -- 2000-01-01 12:21:56
+  SELECT cast('2020-01-01 10' as timestamp); -- 2020-01-01 10:00:00
+  SELECT cast('2020-01-01 1:2:3' as timestamp); -- 2020-01-01 01:02:03
   SELECT cast(' 2000-01-01 12:21:56 ' as timestamp); -- 2000-01-01 12:21:56
   SELECT cast('2015-03-18 12:03:17.123' as timestamp); -- 2015-03-18 12:03:17.123
+  SELECT cast('2015-03-18 12:03:17.1234567' as timestamp); -- 2015-03-18 12:03:17.123456
+  -- In session time zone America/Los_Angeles.
+  SELECT cast('2020-01-01 10:00:00 UTC' as timestamp); -- 2020-01-01 02:00:00
 
 Invalid examples
 
@@ -817,6 +828,12 @@ Invalid examples
   SELECT cast('2015-03-18 Z' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('4674534' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('294248' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('2015-03-18 10:00Z' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('2015-03-18 10:00:000' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('2015-03-18 23:59:60' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('2021-02-29' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('1000000-01-01' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('10:00:00' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
 From boolean
 ^^^^^^^^^^^^
@@ -872,9 +889,9 @@ From VARCHAR
 ^^^^^^^^^^^^
 
 Casting a string to timestamp_utc parses the input as a local timestamp,
-not subject to session timezone adjustment.
-Any timezone suffix in the string is accepted but ignored — only the
-parsed timestamp is stored.
+not subject to session timezone adjustment. The string has the same syntax as
+in casts to timestamp. A zone in the string must be valid but is ignored, and
+only the parsed timestamp is stored.
 Leading and trailing string bytes are trimmed using Spark UTF8String-style
 trimming before parsing.
 

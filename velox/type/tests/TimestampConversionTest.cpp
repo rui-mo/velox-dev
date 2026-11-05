@@ -342,9 +342,8 @@ TEST(DateTimeUtilTest, fromTimestampStringInvalid) {
   // In Spark cast mode, once a date-time separator ('T' or ' ') is consumed,
   // the time component must begin immediately with a digit. A separator
   // followed by a timezone, garbage, whitespace, or end of input is invalid.
-  // This applies to both 'T' and ' ' separators equally. Note: outer
-  // whitespace trimming is the responsibility of CastExpr, not the parser;
-  // at the parser level an untrimmed trailing separator is rejected.
+  // This applies to both 'T' and ' ' separators equally. Whitespace at both
+  // ends is trimmed first, like in Spark, so "2015-03-18 " is a valid date.
   for (const auto& invalid :
        {"2015-03-18T",
         "2015-03-18T ",
@@ -354,7 +353,6 @@ TEST(DateTimeUtilTest, fromTimestampStringInvalid) {
         "2015-03-18T\t12:00:00",
         "2015-03-18TZ",
         "2015-03-18T+08:00",
-        "2015-03-18 ",
         "2015-03-18 Z",
         "2015-03-18 +08:00",
         "2015-03-18 UTC",
@@ -370,6 +368,9 @@ TEST(DateTimeUtilTest, fromTimestampStringInvalid) {
         parseTimestampWithTimezone(invalid, TimestampParseMode::kSparkCast),
         parserError);
   }
+  EXPECT_EQ(
+      Timestamp(1426636800, 0),
+      parseTimestamp("2015-03-18 ", TimestampParseMode::kSparkCast));
   // A separator followed directly by valid time digits still parses.
   EXPECT_EQ(
       Timestamp(1426680000, 0),
