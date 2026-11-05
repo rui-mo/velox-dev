@@ -160,7 +160,9 @@ struct PModFloatFunction {
       return false;
     }
     TInput r = fmod(a, n);
-    result = (r > 0) ? r : fmod(r + n, n);
+    // Like Spark, adds the divisor only to negative remainders, so a zero
+    // remainder keeps the sign of the dividend.
+    result = (r < 0) ? fmod(r + n, n) : r;
     return true;
   }
 };

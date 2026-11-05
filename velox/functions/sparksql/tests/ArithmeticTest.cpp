@@ -86,6 +86,29 @@ TEST_F(PmodTest, double) {
   EXPECT_DOUBLE_EQ(0.1, pmod<double>(0.7, -0.3).value());
 }
 
+TEST_F(PmodTest, zeroRemainder) {
+  // Spark returns a zero remainder as is, with the sign of the dividend.
+  const auto pmodString = [&](auto a, auto n) {
+    return evaluateOnce<std::string>(
+        "cast(pmod(c0, c1) as varchar)",
+        std::optional<decltype(a)>(a),
+        std::optional<decltype(n)>(n));
+  };
+  constexpr double kInf = std::numeric_limits<double>::infinity();
+  EXPECT_EQ(pmodString(-4.0, 2.0), "-0.0");
+  EXPECT_EQ(pmodString(-0.0, 2.0), "-0.0");
+  EXPECT_EQ(pmodString(-1.5, 1.5), "-0.0");
+  EXPECT_EQ(pmodString(-3.0, -1.5), "-0.0");
+  EXPECT_EQ(pmodString(4.0, -2.0), "0.0");
+  EXPECT_EQ(pmodString(0.0, -2.0), "0.0");
+  EXPECT_EQ(pmodString(-0.0, kInf), "-0.0");
+  EXPECT_EQ(pmodString(0.0, kInf), "0.0");
+  EXPECT_EQ(pmodString(-1.0, kInf), "NaN");
+  EXPECT_EQ(pmodString(-4.0f, 2.0f), "-0.0");
+  EXPECT_EQ(pmodString(4.0f, -2.0f), "0.0");
+  EXPECT_EQ(pmodString(0.0f, -std::numeric_limits<float>::infinity()), "0.0");
+}
+
 class RemainderTest : public SparkFunctionBaseTest {
  protected:
   template <typename T>
