@@ -888,6 +888,31 @@ Valid examples
   SELECT cast(true as timestamp); -- 1970-01-01 00:00:00.000001
   SELECT cast(false as timestamp); -- 1970-01-01 00:00:00
 
+From DATE
+^^^^^^^^^
+
+*(ANSI compliant)*
+
+Casting a date to timestamp returns midnight of the given date in the session
+timezone.
+
+``cast`` throws when the result is too far from the epoch to fit in a timestamp
+(regardless of ANSI mode); ``try_cast`` returns NULL instead.
+
+Valid examples
+
+Under session timezone ``America/Los_Angeles``: ::
+
+  SELECT cast(DATE '2020-01-01' as timestamp); -- 2020-01-01 00:00:00
+  SELECT cast(date_from_unix_date(106751990) as timestamp); -- +294247-01-09 00:00:00
+
+Invalid examples
+
+Under session timezone ``America/Los_Angeles``: ::
+
+  SELECT cast(date_from_unix_date(106751991) as timestamp); -- ERROR
+  SELECT try_cast(date_from_unix_date(106751991) as timestamp); -- NULL
+
 From TIMESTAMP_UTC
 ^^^^^^^^^^^^^^^^^^
 

@@ -42,6 +42,16 @@ namespace {
 // overflows. Spark throws here unconditionally, ANSI or not.
 constexpr int64_t kMaxTimestampUtcDays = 106'751'991;
 
+// Returns whether the timestamp fits in Spark's range, i.e. microseconds since
+// the epoch in an int64.
+bool fitsInMicros(const Timestamp& timestamp) {
+  const __int128_t micros = static_cast<__int128_t>(timestamp.getSeconds()) *
+          Timestamp::kMicrosecondsInSecond +
+      timestamp.getNanos() / Timestamp::kNanosecondsInMicrosecond;
+  return micros >= std::numeric_limits<int64_t>::min() &&
+      micros <= std::numeric_limits<int64_t>::max();
+}
+
 bool equalsIgnoreAsciiCase(std::string_view text, std::string_view expected) {
   return text.size() == expected.size() &&
       std::equal(
@@ -292,12 +302,7 @@ Expected<Timestamp> SparkCastHooks::castStringToTimestamp(
       result = util::fromParsedTimestampWithTimeZone(parsed, nullptr);
     }
   }
-  // Spark stores a timestamp as a long of microseconds.
-  const __int128_t micros = static_cast<__int128_t>(result.getSeconds()) *
-          Timestamp::kMicrosecondsInSecond +
-      result.getNanos() / Timestamp::kNanosecondsInMicrosecond;
-  if (micros < std::numeric_limits<int64_t>::min() ||
-      micros > std::numeric_limits<int64_t>::max()) {
+  if (!fitsInMicros(result)) {
     if (threadSkipErrorDetails()) {
       return folly::makeUnexpected(Status::UserError());
     }
@@ -509,6 +514,11 @@ void SparkCastHooks::castDateTimestampToGMT(
 
 bool SparkCastHooks::isDateOverflowForTimestampUtc(int64_t days) const {
   return days > kMaxTimestampUtcDays || days < -kMaxTimestampUtcDays;
+}
+
+bool SparkCastHooks::isDateOverflowForTimestamp(
+    const Timestamp& timestamp) const {
+  return !fitsInMicros(timestamp);
 }
 
 exec::PolicyType SparkCastHooks::getPolicy() const {

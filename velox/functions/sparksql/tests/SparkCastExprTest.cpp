@@ -696,6 +696,67 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
         /*isTryCast=*/true);
   }
 
+  // Spark throws when local midnight of the date in the session timezone,
+  // converted to microseconds since the epoch, overflows a BIGINT.
+  void testDateToTimestampOverflow() {
+    testCast(
+        makeFlatVector<int32_t>(
+            {kMaxTimestampUtcDays, -kMaxTimestampUtcDays}, DATE()),
+        makeFlatVector<Timestamp>(
+            {Timestamp(kMaxTimestampUtcDays * 86'400, 0),
+             Timestamp(-kMaxTimestampUtcDays * 86'400, 0)}));
+    testThrow<int32_t>(
+        DATE(),
+        TIMESTAMP(),
+        {kMaxTimestampUtcDays + 1},
+        "Date value is out of range for TIMESTAMP.");
+    testThrow<int32_t>(
+        DATE(),
+        TIMESTAMP(),
+        {std::numeric_limits<int32_t>::min()},
+        "Date value is out of range for TIMESTAMP.");
+    testCast(
+        makeFlatVector<int32_t>(
+            {kMaxTimestampUtcDays + 1, -kMaxTimestampUtcDays - 1}, DATE()),
+        makeNullableFlatVector<Timestamp>({std::nullopt, std::nullopt}),
+        /*isTryCast=*/true);
+
+    // Local midnight in Los Angeles is 8 hours after midnight UTC in winter,
+    // and 7:52:58 after it in the local mean time of the far past.
+    SCOPE_EXIT {
+      setTimezone("");
+    };
+    setTimezone("America/Los_Angeles");
+    testCast(
+        makeFlatVector<int32_t>(
+            {kMaxTimestampUtcDays - 1, -kMaxTimestampUtcDays}, DATE()),
+        makeFlatVector<Timestamp>(
+            {Timestamp((kMaxTimestampUtcDays - 1) * 86'400 + 28'800, 0),
+             Timestamp(-kMaxTimestampUtcDays * 86'400 + 28'378, 0)}));
+    testThrow<int32_t>(
+        DATE(),
+        TIMESTAMP(),
+        {kMaxTimestampUtcDays},
+        "Date value is out of range for TIMESTAMP.");
+    testThrow<int32_t>(
+        DATE(),
+        TIMESTAMP(),
+        {-kMaxTimestampUtcDays - 1},
+        "Date value is out of range for TIMESTAMP.");
+
+    // Cast of an array throws, while try_cast nulls the element.
+    const auto dates =
+        makeArrayVector<int32_t>({{0, kMaxTimestampUtcDays}}, DATE());
+    VELOX_ASSERT_THROW(
+        evaluateCast(ARRAY(DATE()), ARRAY(TIMESTAMP()), makeRowVector({dates})),
+        "Date value is out of range for TIMESTAMP.");
+    testCast(
+        dates,
+        makeNullableArrayVector<Timestamp>(
+            {{Timestamp(28'800, 0), std::nullopt}}),
+        /*isTryCast=*/true);
+  }
+
   void testTimestampUtcToDateOverflow() {
     testCast(
         makeFlatVector<Timestamp>(
@@ -3566,6 +3627,14 @@ TEST_F(SparkCastExprTestAnsiOff, dateToTimestampUtcOverflow) {
 
 TEST_F(SparkCastExprTestAnsiOn, dateToTimestampUtcOverflow) {
   testDateToTimestampUtcOverflow();
+}
+
+TEST_F(SparkCastExprTestAnsiOff, dateToTimestampOverflow) {
+  testDateToTimestampOverflow();
+}
+
+TEST_F(SparkCastExprTestAnsiOn, dateToTimestampOverflow) {
+  testDateToTimestampOverflow();
 }
 
 TEST_F(SparkCastExprTestAnsiOff, timestampUtcToDateOverflow) {

@@ -197,13 +197,28 @@ VectorPtr CastExpr::castFromDate(
 
       const auto* timeZone =
           getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
+      std::optional<vector_size_t> overflowRow;
       applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
         auto timestamp = Timestamp::fromDate(inputFlatVector->valueAt(row));
         if (timeZone) {
           hooks_->castDateTimestampToGMT(timestamp, *timeZone);
         }
+        if (FOLLY_UNLIKELY(hooks_->isDateOverflowForTimestamp(timestamp))) {
+          if (!overflowRow.has_value()) {
+            overflowRow = row;
+          }
+          resultFlatVector->setNull(row, true);
+          return;
+        }
         resultFlatVector->set(row, timestamp);
       });
+      // Throw outside the loop above to retain the exception even when
+      // isTryCast_ is enabled.
+      if (overflowRow.has_value() && hooks_->truncate()) {
+        VELOX_USER_FAIL(
+            makeErrorMessage(input, overflowRow.value(), toType) +
+            " Date value is out of range for TIMESTAMP.");
+      }
 
       return castResult;
     }
