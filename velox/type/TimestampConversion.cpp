@@ -42,6 +42,7 @@
 
 #include "velox/type/TimestampConversion.h"
 #include <folly/Expected.h>
+#include <algorithm>
 #include "velox/common/base/CheckedArithmetic.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/type/FastDate.h"
@@ -761,6 +762,211 @@ bool tryParseSparkTimestampString(
   return true;
 }
 
+// Returns the offset in seconds of a Java ZoneOffset ID, i.e. 'Z' or a sign
+// followed by h, hh, hhmm, hh:mm, hhmmss or hh:mm:ss within 18 hours, like
+// Java's ZoneOffset.of(). Returns std::nullopt for other IDs.
+std::optional<int32_t> tryParseJavaZoneOffset(std::string_view id) {
+  if (id == "Z") {
+    return 0;
+  }
+  if (id.empty() || (id[0] != '+' && id[0] != '-')) {
+    return std::nullopt;
+  }
+  std::string padded;
+  if (id.size() == 2) {
+    padded = {id[0], '0', id[1]};
+    id = padded;
+  }
+  // Parses the 2 digits at 'pos', which follow a colon if 'afterColon'.
+  const auto parseField = [&](size_t pos, bool afterColon) {
+    if ((afterColon && id[pos - 1] != ':') || !characterIsDigit(id[pos]) ||
+        !characterIsDigit(id[pos + 1])) {
+      return -1;
+    }
+    return (id[pos] - '0') * 10 + (id[pos + 1] - '0');
+  };
+  int32_t minutes = 0;
+  int32_t seconds = 0;
+  switch (id.size()) {
+    case 3:
+      break;
+    case 5:
+      minutes = parseField(3, false);
+      break;
+    case 6:
+      minutes = parseField(4, true);
+      break;
+    case 7:
+      minutes = parseField(3, false);
+      seconds = parseField(5, false);
+      break;
+    case 9:
+      minutes = parseField(4, true);
+      seconds = parseField(7, true);
+      break;
+    default:
+      return std::nullopt;
+  }
+  const int32_t hours = parseField(1, false);
+  if (hours < 0 || minutes < 0 || seconds < 0 || hours > 18 || minutes > 59 ||
+      seconds > 59 || (hours == 18 && minutes + seconds > 0)) {
+    return std::nullopt;
+  }
+  const int32_t offset = (hours * 60 + minutes) * 60 + seconds;
+  return id[0] == '-' ? -offset : offset;
+}
+
+// Returns the offset in seconds of the Java region IDs with fixed offsets that
+// tz::locateZone() doesn't resolve by their exact names, i.e. the aliases of
+// UTC and Etc/GMT+h and Etc/GMT-h. Returns std::nullopt for other IDs.
+std::optional<int32_t> tryParseJavaFixedOffsetRegion(std::string_view id) {
+  static constexpr std::string_view kUtcAliases[] = {
+      "UCT",
+      "Universal",
+      "Zulu",
+      "Greenwich",
+      "GMT0",
+      "Etc/UTC",
+      "Etc/UCT",
+      "Etc/Universal",
+      "Etc/Zulu",
+      "Etc/GMT",
+      "Etc/GMT0",
+      "Etc/Greenwich"};
+  if (std::find(std::begin(kUtcAliases), std::end(kUtcAliases), id) !=
+      std::end(kUtcAliases)) {
+    return 0;
+  }
+  // Etc/GMT+h is h hours behind UTC, from Etc/GMT+12 to Etc/GMT-14, without
+  // leading zeros.
+  static constexpr std::string_view kEtcGmt = "Etc/GMT";
+  if (id.size() < kEtcGmt.size() + 2 || id.size() > kEtcGmt.size() + 3 ||
+      id.substr(0, kEtcGmt.size()) != kEtcGmt) {
+    return std::nullopt;
+  }
+  const char sign = id[kEtcGmt.size()];
+  const auto digits = id.substr(kEtcGmt.size() + 1);
+  if ((sign != '+' && sign != '-') ||
+      !std::all_of(digits.begin(), digits.end(), characterIsDigit) ||
+      (digits.size() == 2 && digits[0] == '0')) {
+    return std::nullopt;
+  }
+  int32_t hours = 0;
+  for (const char digit : digits) {
+    hours = hours * 10 + (digit - '0');
+  }
+  if (hours > (sign == '+' ? 12 : 14)) {
+    return std::nullopt;
+  }
+  return (sign == '+' ? -hours : hours) * 3'600;
+}
+
+// Resolves a Java region ID, matching its case exactly.
+bool tryResolveJavaRegion(
+    std::string_view id,
+    ParsedTimestampWithTimeZone& result) {
+  if (const auto offset = tryParseJavaFixedOffsetRegion(id)) {
+    result.offsetMillis = *offset * kMillisPerSecond;
+    return true;
+  }
+  const auto* timeZone = tz::locateZone(id, false);
+  if (timeZone == nullptr || timeZone->name() != id) {
+    return false;
+  }
+  result.timeZone = timeZone;
+  return true;
+}
+
+// Resolves the time zone of a timestamp string like Spark's
+// SparkDateTimeUtils.getZoneId(). Sets the offset of 'result' for fixed
+// offsets and its time zone for regions. Returns false for invalid zones.
+bool tryResolveSparkZoneId(
+    std::string_view zone,
+    ParsedTimestampWithTimeZone& result) {
+  // Spark pads single-digit hours and minutes of offsets with a zero, i.e. the
+  // first "+h:" anywhere and "+hh:m" at the end, also with '-' signs.
+  std::string id(zone);
+  for (size_t i = 0; i + 2 < id.size(); ++i) {
+    if ((id[i] == '+' || id[i] == '-') && characterIsDigit(id[i + 1]) &&
+        id[i + 2] == ':') {
+      id.insert(i + 1, 1, '0');
+      break;
+    }
+  }
+  const auto size = id.size();
+  if (size >= 5 && (id[size - 5] == '+' || id[size - 5] == '-') &&
+      characterIsDigit(id[size - 4]) && characterIsDigit(id[size - 3]) &&
+      id[size - 2] == ':' && characterIsDigit(id[size - 1])) {
+    id.insert(size - 1, 1, '0');
+  }
+
+  // Java's ZoneId.SHORT_IDS, which Spark resolves before ZoneId.of().
+  static constexpr std::pair<std::string_view, std::string_view> kShortIds[] = {
+      {"ACT", "Australia/Darwin"},
+      {"AET", "Australia/Sydney"},
+      {"AGT", "America/Argentina/Buenos_Aires"},
+      {"ART", "Africa/Cairo"},
+      {"AST", "America/Anchorage"},
+      {"BET", "America/Sao_Paulo"},
+      {"BST", "Asia/Dhaka"},
+      {"CAT", "Africa/Harare"},
+      {"CNT", "America/St_Johns"},
+      {"CST", "America/Chicago"},
+      {"CTT", "Asia/Shanghai"},
+      {"EAT", "Africa/Addis_Ababa"},
+      {"ECT", "Europe/Paris"},
+      {"EST", "-05:00"},
+      {"HST", "-10:00"},
+      {"IET", "America/Indiana/Indianapolis"},
+      {"IST", "Asia/Kolkata"},
+      {"JST", "Asia/Tokyo"},
+      {"MIT", "Pacific/Apia"},
+      {"MST", "-07:00"},
+      {"NET", "Asia/Yerevan"},
+      {"NST", "Pacific/Auckland"},
+      {"PLT", "Asia/Karachi"},
+      {"PNT", "America/Phoenix"},
+      {"PRT", "America/Puerto_Rico"},
+      {"PST", "America/Los_Angeles"},
+      {"SST", "Pacific/Guadalcanal"},
+      {"VST", "Asia/Ho_Chi_Minh"}};
+  for (const auto& [shortId, target] : kShortIds) {
+    if (id == shortId) {
+      id = target;
+      break;
+    }
+  }
+
+  // Like Java's ZoneId.of(). The prefixes UTC, GMT and UT alone are UTC, and
+  // followed by a sign they start an offset.
+  std::optional<int32_t> offset;
+  if (id.size() <= 1 || id[0] == '+' || id[0] == '-') {
+    offset = tryParseJavaZoneOffset(id);
+  } else {
+    size_t prefixSize = 0;
+    if (id.starts_with("UTC") || id.starts_with("GMT")) {
+      prefixSize = 3;
+    } else if (id.starts_with("UT")) {
+      prefixSize = 2;
+    }
+    if (prefixSize == 0 ||
+        (id.size() > prefixSize && id[prefixSize] != '+' &&
+         id[prefixSize] != '-')) {
+      return tryResolveJavaRegion(id, result);
+    }
+    if (id.size() == prefixSize) {
+      offset = 0;
+    } else {
+      offset = tryParseJavaZoneOffset(std::string_view(id).substr(prefixSize));
+    }
+  }
+  if (!offset.has_value()) {
+    return false;
+  }
+  result.offsetMillis = *offset * kMillisPerSecond;
+  return true;
+}
+
 } // namespace
 
 bool isLeapYear(int32_t year) {
@@ -1051,13 +1257,12 @@ Expected<ParsedTimestampWithTimeZone> fromTimestampWithTimezoneString(
     if (!tryParseSparkTimestampString(str, len, timestamp, timeZoneName)) {
       return folly::makeUnexpected(parserError(str, len));
     }
-    const tz::TimeZone* timeZone = nullptr;
-    if (!timeZoneName.empty() &&
-        (timeZone = tz::locateZone(timeZoneName, false)) == nullptr) {
+    ParsedTimestampWithTimeZone result{timestamp, nullptr, std::nullopt};
+    if (!timeZoneName.empty() && !tryResolveSparkZoneId(timeZoneName, result)) {
       return folly::makeUnexpected(
           Status::UserError("Unknown timezone value: \"{}\"", timeZoneName));
     }
-    return ParsedTimestampWithTimeZone{timestamp, timeZone, std::nullopt};
+    return result;
   }
 
   size_t pos = 0;
