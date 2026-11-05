@@ -63,6 +63,13 @@ DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendWeekOfMonth(
   return *this;
 }
 
+DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendModifiedJulianDay(
+    size_t minDigits) {
+  tokens_.emplace_back(
+      FormatPattern{DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY, minDigits});
+  return *this;
+}
+
 DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendDayOfWeek0Based(
     size_t minDigits) {
   tokens_.emplace_back(
