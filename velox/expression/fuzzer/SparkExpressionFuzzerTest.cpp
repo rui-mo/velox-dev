@@ -90,6 +90,7 @@ DECLARE_bool(velox_fuzzer_orderable_map_keys);
 using facebook::velox::fuzzer::ArgValuesGenerator;
 using facebook::velox::fuzzer::ArithmeticArgValuesGenerator;
 using facebook::velox::fuzzer::ArrayInsertArgValuesGenerator;
+using facebook::velox::fuzzer::CastArgValuesGenerator;
 using facebook::velox::fuzzer::FuzzerRunner;
 using facebook::velox::fuzzer::LevenshteinArgValuesGenerator;
 using facebook::velox::fuzzer::LikeArgValuesGenerator;
@@ -230,6 +231,7 @@ int main(int argc, char** argv) {
       argValuesGenerators = {
           {"abs", std::make_shared<ArithmeticArgValuesGenerator>()},
           {"array_insert", std::make_shared<ArrayInsertArgValuesGenerator>()},
+          {"cast", std::make_shared<CastArgValuesGenerator>()},
           {"div", std::make_shared<ArithmeticArgValuesGenerator>()},
           {"divide", std::make_shared<ArithmeticArgValuesGenerator>()},
           {"levenshtein", std::make_shared<LevenshteinArgValuesGenerator>()},

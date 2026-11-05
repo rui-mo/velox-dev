@@ -1679,4 +1679,649 @@ std::vector<core::TypedExprPtr> ArithmeticArgValuesGenerator::generate(
   return inputExpressions;
 }
 
+namespace {
+
+// The target types of casts from strings that the cast generator supports.
+enum class CastTarget {
+  kIntegral,
+  kFloatingPoint,
+  kDecimal,
+  kBoolean,
+  kDate,
+  kTimestamp,
+};
+
+// Returns true for scalar types other than the custom types of the same kind,
+// e.g. DATE, TIME and the decimal types.
+bool isPlainScalar(const TypePtr& type) {
+  return type->isPrimitiveType() &&
+      type->equivalent(*createScalarType(type->kind()));
+}
+
+std::optional<CastTarget> toCastTarget(const TypePtr& type) {
+  if (type->isDecimal()) {
+    return CastTarget::kDecimal;
+  }
+  if (type->isDate()) {
+    return CastTarget::kDate;
+  }
+  // Spark doesn't support the TIME type.
+  if (!isPlainScalar(type)) {
+    return std::nullopt;
+  }
+  switch (type->kind()) {
+    case TypeKind::TINYINT:
+    case TypeKind::SMALLINT:
+    case TypeKind::INTEGER:
+    case TypeKind::BIGINT:
+      return CastTarget::kIntegral;
+    case TypeKind::REAL:
+    case TypeKind::DOUBLE:
+      return CastTarget::kFloatingPoint;
+    case TypeKind::BOOLEAN:
+      return CastTarget::kBoolean;
+    case TypeKind::TIMESTAMP:
+      return CastTarget::kTimestamp;
+    default:
+      return std::nullopt;
+  }
+}
+
+std::string randomDigits(int32_t length, FuzzerGenerator& rng) {
+  std::string digits;
+  for (auto i = 0; i < length; ++i) {
+    digits += static_cast<char>('0' + rand<int32_t>(rng, 0, 9));
+  }
+  return digits;
+}
+
+std::string randomSign(FuzzerGenerator& rng) {
+  const auto sign = rand<int32_t>(rng, 0, 9);
+  return sign < 7 ? "" : (sign < 9 ? "-" : "+");
+}
+
+// Returns an integer whose digits fit 'kind'.
+std::string makeIntegralString(TypeKind kind, FuzzerGenerator& rng) {
+  int32_t maxDigits = 18;
+  if (kind == TypeKind::TINYINT) {
+    maxDigits = 2;
+  } else if (kind == TypeKind::SMALLINT) {
+    maxDigits = 4;
+  } else if (kind == TypeKind::INTEGER) {
+    maxDigits = 9;
+  }
+  return randomSign(rng) + randomDigits(rand<int32_t>(rng, 1, maxDigits), rng);
+}
+
+std::string makeFloatingPointString(FuzzerGenerator& rng) {
+  auto value = randomSign(rng);
+  const bool hasInteger = coinToss(rng, 0.9);
+  if (hasInteger) {
+    value += randomDigits(rand<int32_t>(rng, 1, 6), rng);
+  }
+  if (!hasInteger || coinToss(rng, 0.5)) {
+    value += "." + randomDigits(rand<int32_t>(rng, hasInteger ? 0 : 1, 6), rng);
+  }
+  if (coinToss(rng, 0.2)) {
+    value += std::string(coinToss(rng, 0.5) ? "e" : "E") + randomSign(rng) +
+        randomDigits(rand<int32_t>(rng, 1, 2), rng);
+  }
+  return value;
+}
+
+// Returns a number with at most the integer and fraction digits of 'type'.
+std::string makeDecimalString(const Type& type, FuzzerGenerator& rng) {
+  const auto [precision, scale] = getDecimalPrecisionScale(type);
+  auto value = randomSign(rng);
+  const auto integerDigits =
+      rand<int32_t>(rng, scale == 0 ? 1 : 0, precision - scale);
+  if (integerDigits > 0) {
+    value += randomDigits(integerDigits, rng);
+  } else if (coinToss(rng, 0.5)) {
+    value += "0";
+  }
+  if (scale > 0 && (integerDigits == 0 || coinToss(rng, 0.5))) {
+    value += "." +
+        randomDigits(
+                 rand<int32_t>(rng, integerDigits == 0 ? 1 : 0, scale), rng);
+  }
+  return value;
+}
+
+std::string makeBooleanString(FuzzerGenerator& rng) {
+  static const std::vector<std::string> kValues{
+      "t", "true", "y", "yes", "1", "f", "false", "n", "no", "0"};
+  auto value = randElement(kValues, rng);
+  for (auto& c : value) {
+    if (coinToss(rng, 0.2)) {
+      c = static_cast<char>(std::toupper(c));
+    }
+  }
+  return value;
+}
+
+int32_t daysInMonth(int32_t year, int32_t month) {
+  static const std::vector<int32_t> kDays{
+      31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+  return month == 2 && leap ? 29 : kDays[month - 1];
+}
+
+// Returns a valid date between the years 1 and 9999. Months and days have one
+// digit sometimes.
+std::string makeDateString(FuzzerGenerator& rng) {
+  const auto year = rand<int32_t>(rng, 1, 9999);
+  const auto month = rand<int32_t>(rng, 1, 12);
+  const auto day = rand<int32_t>(rng, 1, daysInMonth(year, month));
+  auto formatField = [&](int32_t field) {
+    return coinToss(rng, 0.1) ? std::to_string(field)
+                              : fmt::format("{:02}", field);
+  };
+  auto value = fmt::format("{:04}-", year);
+  value += formatField(month);
+  value += "-";
+  value += formatField(day);
+  return value;
+}
+
+// Returns a date, a year or a month. Spark ignores what follows a space or 'T'
+// after a date.
+std::string makeDateOnlyString(FuzzerGenerator& rng) {
+  static const std::vector<std::string> kSuffixes{
+      "T", " ", "T10:00:00", " 23:59:59.999999", "T01:02:03Z"};
+  const auto value = makeDateString(rng);
+  const auto form = rand<int32_t>(rng, 0, 9);
+  if (form == 0) {
+    return value.substr(0, 4);
+  }
+  if (form == 1) {
+    return value.substr(0, value.rfind('-'));
+  }
+  if (form == 2) {
+    return value + randElement(kSuffixes, rng);
+  }
+  return value;
+}
+
+// Returns a valid timestamp. Spark uses the current date for a time without a
+// date, so all timestamps have one.
+std::string makeTimestampString(FuzzerGenerator& rng) {
+  static const std::vector<std::string> kTimeZones{
+      "Z",
+      "UTC",
+      " UTC",
+      "+08:00",
+      "-05:30",
+      "+00:00",
+      " America/New_York",
+      "America/Los_Angeles",
+      " Asia/Kolkata",
+      "Europe/Berlin"};
+  auto value = makeDateString(rng);
+  if (coinToss(rng, 0.1)) {
+    return value;
+  }
+  value += coinToss(rng, 0.5) ? "T" : " ";
+  value += fmt::format(
+      "{:02}:{:02}", rand<int32_t>(rng, 0, 23), rand<int32_t>(rng, 0, 59));
+  // Spark rejects a time zone after a time without seconds.
+  if (coinToss(rng, 0.1)) {
+    return value;
+  }
+  value += fmt::format(":{:02}", rand<int32_t>(rng, 0, 59));
+  if (coinToss(rng, 0.4)) {
+    value += "." + randomDigits(rand<int32_t>(rng, 1, 6), rng);
+  }
+  if (coinToss(rng, 0.3)) {
+    value += randElement(kTimeZones, rng);
+  }
+  return value;
+}
+
+// Returns strings that are invalid or out of range for 'target', or have
+// unusual forms.
+const std::vector<std::string>& castEdgeStrings(CastTarget target) {
+  static const std::vector<std::string> kIntegral{
+      "127",
+      "128",
+      "-128",
+      "-129",
+      "32767",
+      "32768",
+      "-32768",
+      "-32769",
+      "2147483647",
+      "2147483648",
+      "-2147483648",
+      "-2147483649",
+      "9223372036854775807",
+      "9223372036854775808",
+      "-9223372036854775808",
+      "-9223372036854775809",
+      "123456789012345678901234567890",
+      "007",
+      "-0",
+      "1.5",
+      "-1.5",
+      "127.9",
+      "128.1",
+      ".5",
+      "5.",
+      "-.9",
+      "1e2",
+      "1E-2",
+      "",
+      " ",
+      "-",
+      "+",
+      ".",
+      "--1",
+      "+-1",
+      "1-",
+      "1 2",
+      "1_000",
+      "1,000",
+      "0x1A",
+      "1L",
+      "NaN",
+      "Infinity",
+      "\uff11\uff12",
+      "1.2.3",
+      "abc"};
+  static const std::vector<std::string> kFloatingPoint{
+      "NaN",
+      "nan",
+      "NAN",
+      "Infinity",
+      "-Infinity",
+      "+Infinity",
+      "infinity",
+      "INFINITY",
+      "inf",
+      "-inf",
+      "+inf",
+      "INF",
+      "-0",
+      "-0.0",
+      "1e39",
+      "-1e39",
+      "1e-46",
+      "3.4028235e38",
+      "3.4028236e38",
+      "1.4e-45",
+      "1e309",
+      "-1e309",
+      "1e-400",
+      "4.9e-324",
+      "1.7976931348623157e308",
+      "2.2250738585072014E-308",
+      "123456789012345678901234567890",
+      "0.1234567890123456789",
+      "1d",
+      "1f",
+      "1D",
+      "1F",
+      "-1.5d",
+      "0x1p3",
+      "0x1.8p1",
+      "0x1.8",
+      "1e",
+      "e5",
+      ".e1",
+      "1e+",
+      "",
+      " ",
+      "-",
+      ".",
+      "1.2.3",
+      "1,5",
+      "NaNx",
+      "Infinityx",
+      "abc",
+      "\uff11.\uff15"};
+  static const std::vector<std::string> kDecimal{
+      "NaN",
+      "Infinity",
+      "-Infinity",
+      "1e2",
+      "1E-2",
+      "-1.5e1",
+      "1.5e+3",
+      "1e40",
+      "-1e40",
+      "1e-40",
+      "-0",
+      "-0.0",
+      "00001",
+      "+.5",
+      "0.5",
+      "-0.5",
+      "99999999999999999999999999999999999999.5",
+      "0.000000000000000000000000000000000000005",
+      "",
+      " ",
+      "-",
+      ".",
+      "1e",
+      "e1",
+      "1.2.3",
+      "1,5",
+      "0x1A",
+      "1d",
+      "abc",
+      "\uff11.\uff15"};
+  static const std::vector<std::string> kBoolean{
+      "tru",
+      "truee",
+      "yess",
+      "2",
+      "-1",
+      "01",
+      "1.0",
+      "0.0",
+      "on",
+      "off",
+      "",
+      " ",
+      "nan",
+      "null",
+      "t r u e",
+      "\uff54\uff52\uff55\uff45"};
+  static const std::vector<std::string> kDate{
+      "2019-02-29",
+      "2020-02-29",
+      "2020-02-30",
+      "2020-04-31",
+      "2020-13-01",
+      "2020-00-01",
+      "2020-01-00",
+      "2020-01-32",
+      "0000-01-01",
+      "-0001-01-01",
+      "+2020-01-01",
+      "10000-01-01",
+      "5881580-07-11",
+      "5881580-07-12",
+      "-5877641-06-23",
+      "-5877641-06-22",
+      "999-01-01",
+      "99999999-01-01",
+      "1582-10-10",
+      "2020/01/01",
+      "2020.01.01",
+      "20200101",
+      "2020-01-01garbage",
+      "2020-01-01 garbage",
+      "2020-01-01T",
+      "2020-",
+      "2020-01-",
+      "2020-1",
+      "T2020-01-01",
+      "",
+      " ",
+      "-",
+      "2020-01-01 10:00:00",
+      "2020-01-01T10:00:00Z",
+      "\uff12\uff10\uff12\uff10-01-01"};
+  static const std::vector<std::string> kTimestamp{
+      "2020-01-01 24:00:00",
+      "2020-01-01 23:60:00",
+      "2020-01-01 23:59:60",
+      "2020-01-01 10:00:00.1234567",
+      "2020-01-01 10:00:00.123456789",
+      "2020-01-01 10:00:00.",
+      "2020-01-01 10",
+      "2020-01-01 10:00",
+      "2020-01-01 1:2:3",
+      "2020-1-1 10:00:00",
+      "2020-01-01T10:00Z",
+      "2020-01-01 10:00:00 garbage",
+      "2020-01-01 10:00:00+18:00",
+      "2020-01-01 10:00:00-18:00",
+      "2020-01-01 10:00:00+19:00",
+      "2020-01-01 10:00:00+0800",
+      "2020-01-01 10:00:00+8",
+      "2020-01-01 10:00:00-08",
+      "2020-01-01 10:00:00GMT+8",
+      "2020-01-01 10:00:00UTC+08:00",
+      "2020-01-01 10:00:00 GMT",
+      "2020-01-01 10:00:00 PST",
+      "2020-01-01 10:00:00 CET",
+      "2020-01-01 10:00:00 Invalid/Zone",
+      "2020-01-01 10:00:00America/New_York",
+      "2020-02-30 10:00:00",
+      "+2020-01-01 10:00:00",
+      "-0001-01-01 00:00:00",
+      "0000-01-01 00:00:00",
+      "10000-01-01 00:00:00",
+      "294247-01-10 04:00:54.775807",
+      "294247-01-09 00:00:00",
+      "-290308-12-21 19:59:05.224192",
+      "-290308-12-22 00:00:00",
+      "1883-11-18 12:00:00",
+      "1883-11-18 11:59:59",
+      "1800-01-01 00:00:00",
+      "1582-10-10 00:00:00",
+      "2020-03-08 02:30:00",
+      "2020-11-01 01:30:00",
+      "2020",
+      "2020-01",
+      "2020-01-01T",
+      "",
+      " ",
+      "2020/01/01 10:00:00"};
+  switch (target) {
+    case CastTarget::kIntegral:
+      return kIntegral;
+    case CastTarget::kFloatingPoint:
+      return kFloatingPoint;
+    case CastTarget::kDecimal:
+      return kDecimal;
+    case CastTarget::kBoolean:
+      return kBoolean;
+    case CastTarget::kDate:
+      return kDate;
+    case CastTarget::kTimestamp:
+      return kTimestamp;
+  }
+  VELOX_UNREACHABLE();
+}
+
+// Generates strings for a cast to 'toType'. A share of 'edgeRatio' of the
+// non-null strings comes from castEdgeStrings().
+class CastStringGenerator : public AbstractInputGenerator {
+ public:
+  CastStringGenerator(
+      size_t seed,
+      const TypePtr& type,
+      const TypePtr& toType,
+      CastTarget target,
+      double nullRatio,
+      double edgeRatio)
+      : AbstractInputGenerator(seed, type, nullptr, nullRatio),
+        toType_{toType},
+        target_{target},
+        edgeRatio_{edgeRatio} {}
+
+  variant generate() override {
+    if (coinToss(rng_, nullRatio_)) {
+      return variant::null(TypeKind::VARCHAR);
+    }
+    if (coinToss(rng_, edgeRatio_)) {
+      return variant(makeEdgeString());
+    }
+    return variant(addWhitespace(makeString()));
+  }
+
+ private:
+  std::string makeString() {
+    switch (target_) {
+      case CastTarget::kIntegral:
+        return makeIntegralString(toType_->kind(), rng_);
+      case CastTarget::kFloatingPoint:
+        return makeFloatingPointString(rng_);
+      case CastTarget::kDecimal:
+        return makeDecimalString(*toType_, rng_);
+      case CastTarget::kBoolean:
+        return makeBooleanString(rng_);
+      case CastTarget::kDate:
+        return makeDateOnlyString(rng_);
+      case CastTarget::kTimestamp:
+        return makeTimestampString(rng_);
+    }
+    VELOX_UNREACHABLE();
+  }
+
+  std::string makeEdgeString() {
+    // Decimals with too many integer digits overflow, and with too many
+    // fraction digits round.
+    if (target_ == CastTarget::kDecimal && coinToss(rng_, 0.3)) {
+      const auto [precision, scale] = getDecimalPrecisionScale(*toType_);
+      return coinToss(rng_, 0.5)
+          ? "9" + randomDigits(precision - scale, rng_)
+          : "0." + randomDigits(scale + rand<int32_t>(rng_, 1, 3), rng_);
+    }
+    return randElement(castEdgeStrings(target_), rng_);
+  }
+
+  // Spark ignores whitespace around the strings.
+  std::string addWhitespace(std::string value) {
+    static const std::vector<std::string> kWhitespace{" ", "  ", "\t", "\n"};
+    if (coinToss(rng_, 0.1)) {
+      value = randElement(kWhitespace, rng_) + value;
+    }
+    if (coinToss(rng_, 0.1)) {
+      value += randElement(kWhitespace, rng_);
+    }
+    return value;
+  }
+
+  const TypePtr toType_;
+  const CastTarget target_;
+  const double edgeRatio_;
+};
+
+// Returns a generator of the argument of a cast from 'fromType' to 'toType',
+// or nullptr to let the fuzzer generate it.
+std::unique_ptr<AbstractInputGenerator> makeCastInputGenerator(
+    size_t seed,
+    const TypePtr& fromType,
+    const TypePtr& toType,
+    double nullRatio,
+    double edgeRatio) {
+  if (fromType->kind() != toType->kind() &&
+      (fromType->isArray() || fromType->isMap() || fromType->isRow())) {
+    return nullptr;
+  }
+  switch (fromType->kind()) {
+    case TypeKind::ARRAY: {
+      auto elements = makeCastInputGenerator(
+          seed + 1,
+          fromType->childAt(0),
+          toType->childAt(0),
+          nullRatio,
+          edgeRatio);
+      if (elements == nullptr) {
+        return nullptr;
+      }
+      return std::make_unique<RandomInputGenerator<ArrayType>>(
+          seed, fromType, nullRatio, 10, std::move(elements));
+    }
+    case TypeKind::MAP: {
+      auto values = makeCastInputGenerator(
+          seed + 1,
+          fromType->childAt(1),
+          toType->childAt(1),
+          nullRatio,
+          edgeRatio);
+      if (values == nullptr) {
+        return nullptr;
+      }
+      return std::make_unique<RandomInputGenerator<MapType>>(
+          seed, fromType, nullRatio, 10, nullptr, std::move(values));
+    }
+    case TypeKind::ROW: {
+      if (fromType->size() != toType->size()) {
+        return nullptr;
+      }
+      std::vector<std::unique_ptr<AbstractInputGenerator>> fields;
+      bool hasGenerator = false;
+      for (uint32_t i = 0; i < fromType->size(); ++i) {
+        fields.push_back(makeCastInputGenerator(
+            seed + i + 1,
+            fromType->childAt(i),
+            toType->childAt(i),
+            nullRatio,
+            edgeRatio));
+        hasGenerator |= fields.back() != nullptr;
+      }
+      if (!hasGenerator) {
+        return nullptr;
+      }
+      return std::make_unique<RandomInputGenerator<RowType>>(
+          seed, fromType, std::move(fields), nullRatio);
+    }
+    default:
+      break;
+  }
+  if (fromType->isDecimal()) {
+    return std::make_unique<NumericEdgeValueGenerator>(
+        seed, fromType, nullRatio, edgeRatio);
+  }
+  if (!isPlainScalar(fromType)) {
+    return nullptr;
+  }
+  switch (fromType->kind()) {
+    case TypeKind::VARCHAR: {
+      const auto target = toCastTarget(toType);
+      if (!target.has_value()) {
+        return nullptr;
+      }
+      return std::make_unique<CastStringGenerator>(
+          seed, fromType, toType, target.value(), nullRatio, edgeRatio);
+    }
+    case TypeKind::TINYINT:
+    case TypeKind::SMALLINT:
+    case TypeKind::INTEGER:
+    case TypeKind::BIGINT:
+    case TypeKind::REAL:
+    case TypeKind::DOUBLE:
+      return std::make_unique<NumericEdgeValueGenerator>(
+          seed, fromType, nullRatio, edgeRatio);
+    default:
+      return nullptr;
+  }
+}
+
+} // namespace
+
+std::vector<core::TypedExprPtr> CastArgValuesGenerator::generate(
+    const CallableSignature& signature,
+    const VectorFuzzer::Options& options,
+    FuzzerGenerator& rng,
+    ExpressionFuzzerState& state) {
+  VELOX_CHECK_EQ(signature.args.size(), 1);
+
+  // The fuzzer generates the other half of the arguments, e.g. nested
+  // expressions.
+  if (coinToss(rng, 0.5)) {
+    return {nullptr};
+  }
+
+  // A third of the batches has no edge values, so that more of them succeed in
+  // ANSI mode.
+  const auto edgeKind = rand<int32_t>(rng, 0, 2);
+  const double edgeRatio = edgeKind == 0 ? 0.0 : (edgeKind == 1 ? 0.02 : 0.3);
+  auto generator = makeCastInputGenerator(
+      rand<uint32_t>(rng),
+      signature.args[0],
+      signature.returnType,
+      options.nullRatio,
+      edgeRatio);
+  if (generator == nullptr) {
+    return {nullptr};
+  }
+  return {addColumn(signature.args[0], std::move(generator), state)};
+}
+
 } // namespace facebook::velox::fuzzer
