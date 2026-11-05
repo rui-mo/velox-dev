@@ -118,6 +118,12 @@ class SparkCastHooks : public exec::CastHooks {
     return true;
   }
 
+  // Spark's Decimal.roundToInt truncates the nearest double of a decimal
+  // backed by a Java BigDecimal, which holds precision above 18.
+  bool longDecimalToIntegralCastUsesDouble() const override {
+    return true;
+  }
+
   exec::PolicyType getPolicy() const override;
 
   // Spark supports TIMESTAMP_UTC casts.
