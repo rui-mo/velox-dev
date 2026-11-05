@@ -719,6 +719,24 @@ TEST(DecimalTest, castFromString) {
       38,
       0,
       {DecimalUtil::kLongDecimalMin, DecimalUtil::kLongDecimalMax, 2, 200, 10});
+
+  // Zero fits any decimal type whatever its exponent. Like Java's BigDecimal,
+  // the exponent may exceed the int32 range if the scale, i.e. the number of
+  // fractional digits minus the exponent, fits in it.
+  testCastFromString<int64_t>(
+      {"0e50",
+       "-0.0e39",
+       "0e2147483647",
+       "-0e2147483647",
+       "0.000e2147483647",
+       "0e2147483648",
+       "0.0e2147483649",
+       "0e-2147483647",
+       "1e-2147483647",
+       "-1e-2147483647"},
+      10,
+      2,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
 }
 
 TEST(DecimalTest, castFromStringError) {
@@ -743,6 +761,25 @@ TEST(DecimalTest, castFromStringError) {
 
   // Forcing the scale to be zero overflows.
   testCastFromString<int128_t>("20908.23e35", 38, 0, "Value too large.");
+  testCastFromString<int64_t>("1e2147483646", 10, 2, "Value too large.");
+  testCastFromString<int64_t>("1e2147483647", 10, 2, "Value too large.");
+  testCastFromString<int64_t>("1e2147483648", 10, 2, "Value too large.");
+  testCastFromString<int128_t>("-1e2147483647", 38, 0, "Value too large.");
+
+  // The scale, i.e. the number of fractional digits minus the exponent, does
+  // not fit in int32.
+  for (const auto& input :
+       {"1e-2147483648",
+        "0e-2147483648",
+        "1.5e-2147483647",
+        "1e2147483649",
+        "1e9999999999",
+        "0e9999999999",
+        "1e99999999999999999999"}) {
+    SCOPED_TRACE(input);
+    testCastFromString<int64_t>(
+        input, 10, 2, "Value is not a number. The exponent is out of range.");
+  }
 
   // Rescale overflows.
   testCastFromString<int128_t>(
