@@ -127,6 +127,14 @@ class CastHooks {
   /// timezone adjustment.
   virtual TimestampToStringOptions timestampUtcToStringOptions() const = 0;
 
+  /// Returns the options to cast from date to string. By default, years have
+  /// at least 4 digits and no leading '+'.
+  virtual TimestampToStringOptions dateToStringOptions() const {
+    return {
+        .zeroPaddingYear = true,
+        .mode = TimestampToStringOptions::Mode::kDateOnly};
+  }
+
   /// Returns whether to cast to int by truncate.
   virtual bool truncate() const = 0;
 

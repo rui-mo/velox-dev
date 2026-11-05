@@ -85,6 +85,14 @@ class SparkCastHooks : public exec::CastHooks {
 
   TimestampToStringOptions timestampUtcToStringOptions() const override;
 
+  // Adds a positive sign at first if the year exceeds 9999.
+  TimestampToStringOptions dateToStringOptions() const override {
+    return {
+        .leadingPositiveSign = true,
+        .zeroPaddingYear = true,
+        .mode = TimestampToStringOptions::Mode::kDateOnly};
+  }
+
   bool truncate() const override {
     return allowOverflow_;
   }

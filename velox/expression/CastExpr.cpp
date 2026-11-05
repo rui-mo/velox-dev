@@ -147,13 +147,19 @@ VectorPtr CastExpr::castFromDate(
   switch (toType->kind()) {
     case TypeKind::VARCHAR: {
       auto* resultFlatVector = castResult->as<FlatVector<StringView>>();
+      const auto options = hooks_->dateToStringOptions();
+      const auto maxSize = getMaxStringLength(options);
       applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
         try {
-          // TODO Optimize to avoid creating an intermediate string.
-          auto output = DATE()->toString(inputFlatVector->valueAt(row));
+          const Timestamp timestamp(
+              static_cast<int64_t>(inputFlatVector->valueAt(row)) *
+                  Timestamp::kSecondsInDay,
+              0);
           auto writer = exec::StringWriter(resultFlatVector, row);
+          writer.resize(maxSize);
+          const auto output =
+              Timestamp::tsToStringView(timestamp, options, writer.data());
           writer.resize(output.size());
-          ::memcpy(writer.data(), output.data(), output.size());
           writer.finalize();
         } catch (const VeloxException& ue) {
           if (!ue.isUserError()) {
