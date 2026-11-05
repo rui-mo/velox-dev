@@ -180,7 +180,12 @@ int main(int argc, char** argv) {
       {facebook::velox::functions::sparksql::SparkQueryConfig::qualify(
            facebook::velox::functions::sparksql::SparkQueryConfig::
                kAnsiEnabled),
-       FLAGS_ansi_enabled ? "true" : "false"}};
+       FLAGS_ansi_enabled ? "true" : "false"},
+      // Spark casts a decimal to the nearest double.
+      {facebook::velox::functions::sparksql::SparkQueryConfig::qualify(
+           facebook::velox::functions::sparksql::SparkQueryConfig::
+               kDecimalToFloatHighPrecisionCastEnabled),
+       "true"}};
   options.hiveConfigs = {
       {facebook::velox::connector::hive::HiveConfig::kReadTimestampUnit, "6"}};
   return Runner::run(initialSeed, std::move(sparkQueryRunner), options);

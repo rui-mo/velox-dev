@@ -147,6 +147,15 @@ report, and `chosen` counts how often the fuzzer chose them:
 scripts/spark-fuzzer/spark_fuzzer.py summary runs/ansi-off runs/ansi-on --examples 0 --coverage
 ```
 
+### Velox configs
+
+Both fuzzers set the Velox config
+`spark.decimal_to_float_high_precision_cast_enabled` to true, since Spark casts
+a decimal to the nearest double. The faster default cast of Velox can be 1 ulp
+off. For example, Spark casts the DECIMAL(38, 38) value
+0.47915029692064257572693517602502762988 to 0.4791502969206426, and the
+default cast of Velox to 0.47915029692064254.
+
 ## Triaging failures
 
 ```bash
