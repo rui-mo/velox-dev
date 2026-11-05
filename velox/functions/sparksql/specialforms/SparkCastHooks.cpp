@@ -272,16 +272,32 @@ Expected<Timestamp> SparkCastHooks::castStringToTimestamp(
   if (conversionResult.hasError()) {
     return folly::makeUnexpected(conversionResult.error());
   }
+  Timestamp result;
   if (!adjustTimezone) {
     // For TIMESTAMP UTC, ignore any timezone suffix and store the parsed
     // timestamp fields as-is, not subject to session timezone adjustment.
-    return conversionResult.value().timestamp;
+    result = conversionResult.value().timestamp;
+  } else {
+    auto sessionTimezone = config_.sessionTimezone().empty()
+        ? nullptr
+        : tz::locateZone(config_.sessionTimezone());
+    result = util::fromParsedTimestampWithTimeZone(
+        conversionResult.value(), sessionTimezone);
   }
-  auto sessionTimezone = config_.sessionTimezone().empty()
-      ? nullptr
-      : tz::locateZone(config_.sessionTimezone());
-  return util::fromParsedTimestampWithTimeZone(
-      conversionResult.value(), sessionTimezone);
+  // Spark stores a timestamp as a long of microseconds.
+  const __int128_t micros = static_cast<__int128_t>(result.getSeconds()) *
+          Timestamp::kMicrosecondsInSecond +
+      result.getNanos() / Timestamp::kNanosecondsInMicrosecond;
+  if (micros < std::numeric_limits<int64_t>::min() ||
+      micros > std::numeric_limits<int64_t>::max()) {
+    if (threadSkipErrorDetails()) {
+      return folly::makeUnexpected(Status::UserError());
+    }
+    return folly::makeUnexpected(
+        Status::UserError(
+            "The value cannot be cast to TIMESTAMP due to an overflow."));
+  }
+  return result;
 }
 
 template <typename T>
