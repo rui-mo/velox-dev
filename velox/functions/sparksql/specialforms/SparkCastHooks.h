@@ -119,6 +119,10 @@ class SparkCastHooks : public exec::CastHooks {
 
   bool isDateOverflowForTimestampUtc(int64_t days) const override;
 
+  // Spark throws when the timestamp in microseconds overflows a BIGINT,
+  // regardless of ANSI mode.
+  bool isDateOverflowForTimestamp(const Timestamp& timestamp) const override;
+
   // Spark casts decimal to plain string in ANSI and TRY modes, and uses
   // scientific notation for small values in legacy mode. Overflow is allowed
   // only in legacy mode.

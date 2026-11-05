@@ -168,6 +168,12 @@ class CastHooks {
     return false;
   }
 
+  /// True if 'timestamp', the result of casting a DATE to TIMESTAMP after the
+  /// session timezone adjustment, is out of range. Default never overflows.
+  virtual bool isDateOverflowForTimestamp(const Timestamp& timestamp) const {
+    return false;
+  }
+
   /// Converts boolean to timestamp type.
   virtual Expected<Timestamp> castBooleanToTimestamp(bool seconds) const = 0;
 
