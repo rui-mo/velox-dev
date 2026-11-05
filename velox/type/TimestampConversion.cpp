@@ -154,14 +154,12 @@ inline void skipSpaces(const char* buf, size_t len, size_t& pos) {
   }
 }
 
-// If 'maxYearDigits' is set, a year with more digits is invalid.
 bool tryParseDateString(
     const char* buf,
     size_t len,
     size_t& pos,
     int64_t& daysSinceEpoch,
-    ParseMode mode,
-    std::optional<size_t> maxYearDigits = std::nullopt) {
+    ParseMode mode) {
   pos = 0;
   if (len == 0) {
     return false;
@@ -199,7 +197,6 @@ bool tryParseDateString(
   if (!characterIsDigit(buf[pos])) {
     return false;
   }
-  const size_t yearStart = pos;
   // First parse the year.
   for (; pos < len && characterIsDigit(buf[pos]); pos++) {
     year = checkedPlus((buf[pos] - '0'), checkedMultiply(year, 10));
@@ -215,9 +212,6 @@ bool tryParseDateString(
   /// `[+-]yyyy*-[m]m-[d]d *`
   /// `[+-]yyyy*-[m]m-[d]dT*`
   if (mode == ParseMode::kSparkCast && pos - sign < 4) {
-    return false;
-  }
-  if (maxYearDigits.has_value() && pos - yearStart > *maxYearDigits) {
     return false;
   }
   if (yearneg) {
@@ -382,11 +376,12 @@ void parseTimeSeparator(
       }
       break;
     case TimestampParseMode::kLegacyCast:
-    case TimestampParseMode::kSparkCast:
       if (buf[pos] == ' ' || buf[pos] == 'T') {
         pos++;
       }
       break;
+    case TimestampParseMode::kSparkCast:
+      VELOX_UNREACHABLE();
   }
 }
 
@@ -627,14 +622,9 @@ bool tryParseTimestampString(
                  len,
                  pos,
                  daysSinceEpoch,
-                 parseMode == TimestampParseMode::kIso8601 ||
-                         parseMode == TimestampParseMode::kSparkCast
+                 parseMode == TimestampParseMode::kIso8601
                      ? ParseMode::kSparkCast
-                     : ParseMode::kNonStrict,
-                 // Spark allows at most 6 digits in the year of a timestamp.
-                 parseMode == TimestampParseMode::kSparkCast
-                     ? std::optional<size_t>(6)
-                     : std::nullopt)) {
+                     : ParseMode::kNonStrict)) {
     return false;
   }
 
@@ -645,17 +635,7 @@ bool tryParseTimestampString(
   }
 
   // Try to parse a time field.
-  const size_t preSeparatorPos = pos;
   parseTimeSeparator(buf, pos, parseMode);
-
-  // In Spark cast mode, once a date-time separator ('T' or ' ') is consumed,
-  // the time component must begin immediately with a digit. This mirrors
-  // Spark's grammar: a separator followed by a timezone, garbage, or end of
-  // input is rejected.
-  if (parseMode == TimestampParseMode::kSparkCast && pos > preSeparatorPos &&
-      (pos >= len || !characterIsDigit(buf[pos]))) {
-    return false;
-  }
 
   size_t timePos = 0;
   if (!tryParseTimeString(
@@ -669,6 +649,115 @@ bool tryParseTimestampString(
 
   pos += timePos;
   result = fromDatetime(daysSinceEpoch, microsSinceMidnight);
+  return true;
+}
+
+// Returns true for the bytes that Spark trims from timestamp strings, i.e.
+// whitespace and ISO control characters.
+inline bool isSparkWhitespaceOrControl(char c) {
+  const auto byte = static_cast<unsigned char>(c);
+  return byte <= 0x20 || byte == 0x7F;
+}
+
+// Parses a timestamp string in TimestampParseMode::kSparkCast, like
+// SparkDateTimeUtils.parseTimestampString in Spark. Sets 'timeZone' to the
+// time zone after the time, without surrounding whitespace, or to an empty
+// string if there is none.
+bool tryParseSparkTimestampString(
+    const char* buf,
+    size_t len,
+    Timestamp& result,
+    std::string_view& timeZone) {
+  size_t pos = 0;
+  size_t end = len;
+  while (pos < end && isSparkWhitespaceOrControl(buf[pos])) {
+    ++pos;
+  }
+  while (end > pos && isSparkWhitespaceOrControl(buf[end - 1])) {
+    --end;
+  }
+  if (pos == end) {
+    return false;
+  }
+
+  int32_t yearSign = 1;
+  if (buf[pos] == '-' || buf[pos] == '+') {
+    yearSign = buf[pos] == '-' ? -1 : 1;
+    ++pos;
+  }
+
+  // The year, month, day, hour, minute, second and microseconds. Each
+  // separator ends the segment with the same index.
+  static constexpr char kSeparators[] = {'-', '-', ' ', ':', ':', '.'};
+  int32_t segments[] = {1, 1, 1, 0, 0, 0, 0};
+  size_t segment = 0;
+  int32_t value = 0;
+  size_t digits = 0;
+  const auto isValidDigits = [&]() {
+    switch (segment) {
+      case 0:
+        return digits >= 4 && digits <= 6;
+      case 6:
+        return true;
+      default:
+        return digits >= 1 && digits <= 2;
+    }
+  };
+
+  for (; pos < end; ++pos) {
+    const char c = buf[pos];
+    if (characterIsDigit(c)) {
+      // Spark ignores the digits of the fraction after the 6th. Other
+      // segments with that many digits are invalid.
+      if (digits < 6) {
+        value = value * 10 + (c - '0');
+      }
+      ++digits;
+      continue;
+    }
+    if (segment == 6 || (segment == 5 && c != '.')) {
+      // The rest is the time zone.
+      break;
+    }
+    // Spark also accepts a time without a date, e.g. "10:00:00" or
+    // "T10:00:00", and uses the current date for it. This is not supported.
+    if (c != kSeparators[segment] && !(segment == 2 && c == 'T')) {
+      return false;
+    }
+    if (!isValidDigits()) {
+      return false;
+    }
+    segments[segment++] = value;
+    value = 0;
+    digits = 0;
+  }
+  if (!isValidDigits()) {
+    return false;
+  }
+  segments[segment] = value;
+  if (segment == 6) {
+    for (; digits < 6; ++digits) {
+      segments[6] *= 10;
+    }
+  }
+
+  if (segments[3] > 23 || segments[4] > 59 || segments[5] > 59) {
+    return false;
+  }
+  const auto daysSinceEpoch =
+      daysSinceEpochFromDate(yearSign * segments[0], segments[1], segments[2]);
+  if (daysSinceEpoch.hasError()) {
+    return false;
+  }
+  result = fromDatetime(
+      daysSinceEpoch.value(),
+      fromTime(segments[3], segments[4], segments[5], segments[6]));
+
+  // Like Java's String.trim(), which Spark applies to the time zone.
+  while (pos < end && static_cast<unsigned char>(buf[pos]) <= 0x20) {
+    ++pos;
+  }
+  timeZone = std::string_view(buf + pos, end - pos);
   return true;
 }
 
@@ -926,6 +1015,16 @@ Status parserError(const char* str, size_t len) {
 
 Expected<Timestamp>
 fromTimestampString(const char* str, size_t len, TimestampParseMode parseMode) {
+  if (parseMode == TimestampParseMode::kSparkCast) {
+    Timestamp timestamp;
+    std::string_view timeZone;
+    if (!tryParseSparkTimestampString(str, len, timestamp, timeZone) ||
+        !timeZone.empty()) {
+      return folly::makeUnexpected(parserError(str, len));
+    }
+    return timestamp;
+  }
+
   size_t pos = 0;
   Timestamp resultTimestamp;
 
@@ -946,6 +1045,21 @@ Expected<ParsedTimestampWithTimeZone> fromTimestampWithTimezoneString(
     const char* str,
     size_t len,
     TimestampParseMode parseMode) {
+  if (parseMode == TimestampParseMode::kSparkCast) {
+    Timestamp timestamp;
+    std::string_view timeZoneName;
+    if (!tryParseSparkTimestampString(str, len, timestamp, timeZoneName)) {
+      return folly::makeUnexpected(parserError(str, len));
+    }
+    const tz::TimeZone* timeZone = nullptr;
+    if (!timeZoneName.empty() &&
+        (timeZone = tz::locateZone(timeZoneName, false)) == nullptr) {
+      return folly::makeUnexpected(
+          Status::UserError("Unknown timezone value: \"{}\"", timeZoneName));
+    }
+    return ParsedTimestampWithTimeZone{timestamp, timeZone, std::nullopt};
+  }
+
   size_t pos = 0;
   Timestamp resultTimestamp;
 

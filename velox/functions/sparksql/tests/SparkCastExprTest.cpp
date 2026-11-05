@@ -2553,6 +2553,64 @@ TEST_F(SparkCastExprTest, stringToTimestampYearDigitsAndRange) {
       "The value cannot be cast to TIMESTAMP due to an overflow.");
 }
 
+// Expected values are from Spark 4.1 with the UTC session time zone.
+TEST_F(SparkCastExprTest, stringToTimestampForms) {
+  for (auto ansiEnabled : {false, true}) {
+    SCOPED_TRACE(fmt::format("ansiEnabled: {}", ansiEnabled));
+    setAnsiSupport(ansiEnabled);
+
+    testCast<std::string, Timestamp>(
+        "timestamp",
+        {"2020-01-01 10",
+         "2020-01-01T10",
+         "2020-01-01 10:0",
+         "2020-01-01 10:00:00.",
+         "2020-01-01 10:00:00.Z",
+         "2020-01-01 10:00:00  UTC",
+         "2020-01-01 10:00:00 \x01UTC",
+         "2020-01-01 10:00:00\x01",
+         "\x01 2020-01-01",
+         "\x7f"
+         "2020-01-01\x7f",
+         "100000-01-01",
+         "-2020-01-01 10:00:00"},
+        {Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'872'800, 0),
+         Timestamp(1'577'836'800, 0),
+         Timestamp(1'577'836'800, 0),
+         Timestamp(3'093'527'980'800, 0),
+         Timestamp(-125'912'239'200, 0)});
+
+    for (const auto& invalid : std::vector<std::string>{
+             "2020-01-01 23:59:60",
+             "2020-01-01 10:00:000",
+             "2020-01-01 10:00:00123",
+             "2020-01-01T10:00Z",
+             "2020-01-01 10:00 UTC",
+             "2020-01-01 10:00+08:00",
+             "0002020-01-01",
+             "1000000-01-01",
+             "2021-02-29"}) {
+      SCOPED_TRACE(invalid);
+      const auto input =
+          makeRowVector({makeFlatVector<std::string>({invalid})});
+      if (ansiEnabled) {
+        VELOX_ASSERT_THROW(
+            evaluate("cast(c0 as timestamp)", input),
+            "Unable to parse timestamp value");
+      } else {
+        EXPECT_TRUE(evaluate("cast(c0 as timestamp)", input)->isNullAt(0));
+      }
+    }
+  }
+}
+
 TEST_F(SparkCastExprTestAnsiOn, stringToTimestampValid) {
   testStringToTimestamp();
 }
