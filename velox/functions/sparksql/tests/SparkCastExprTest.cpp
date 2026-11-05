@@ -1765,6 +1765,9 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
              0.000000000000001,
              0.999999999999999,
              0.123456789123123,
+             0.30000000000000004,
+             0.6306167244911194,
+             5e-19,
              std::nullopt}),
         makeNullableFlatVector<int128_t>(
             {134'567'890'000'000'000,
@@ -1772,8 +1775,21 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
              1'000,
              999'999'999'999'999'000,
              123'456'789'123'123'000,
+             300'000'000'000'000'040,
+             630'616'724'491'119'400,
+             1,
              std::nullopt},
             DECIMAL(38, 18)));
+
+    // The shortest digits that read back as the input are rounded, so
+    // 99999999999999.98 (the shortest digits of 99999999999999.99) fits.
+    testCast(
+        makeFlatVector<double>({99999999999999.99}),
+        makeFlatVector<int64_t>({9'999'999'999'999'998}, DECIMAL(16, 2)));
+    testCast(
+        makeFlatVector<double>({1.2345678901234567E20}),
+        makeFlatVector<int128_t>(
+            {HugeInt::parse("123456789012345670000")}, DECIMAL(38, 0)));
 
     // The smallest positive double rounds to zero.
     testCast(
@@ -1782,7 +1798,9 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
   }
 
   // Valid real-to-decimal cases. Results are identical regardless of ANSI
-  // mode, so they are shared between the ANSI ON and ANSI OFF tests.
+  // mode, so they are shared between the ANSI ON and ANSI OFF tests. A real is
+  // widened to double, so the results keep its binary error, e.g. 99999.9
+  // is 99999.8984375 as a real.
   void testRealToDecimal() {
     const auto input = makeFlatVector<float>(
         {-3333.03,
@@ -1804,42 +1822,49 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
              -10'000,
              0,
              1'000'000,
-             999'999'000,
+             999'998'984,
              100'300,
              100'500,
              99'500,
-             -212'35},
+             -21'235},
             DECIMAL(10, 4)));
 
     // Real to long decimal.
     testCast(
         input,
         makeFlatVector<int128_t>(
-            {HugeInt::parse("-333303" + zeros(16)),
-             HugeInt::parse("-222202" + zeros(16)),
+            {HugeInt::parse("-3333030029296875000000"),
+             HugeInt::parse("-2222020019531250000000"),
              -1'000'000'000'000'000'000,
              0,
              HugeInt::parse("100" + zeros(18)),
-             HugeInt::parse("999999" + zeros(17)),
-             HugeInt::parse("1003" + zeros(16)),
-             HugeInt::parse("1005" + zeros(16)),
-             HugeInt::parse("995" + zeros(16)),
-             -2'123'450'000'000'000'000},
+             HugeInt::parse("99999898437500000000000"),
+             HugeInt::parse("10029999732971191000"),
+             HugeInt::parse("10050000190734863000"),
+             HugeInt::parse("9949999809265137000"),
+             -2'123'450'040'817'260'700},
             DECIMAL(38, 18)));
     testCast(
         input,
         makeFlatVector<int128_t>(
-            {-33'330, -22'220, -10, 0, 1'000, 999'999, 100, 101, 100, -21},
+            {-33'330, -22'220, -10, 0, 1'000, 999'999, 100, 101, 99, -21},
             DECIMAL(20, 1)));
     testCast(
         makeNullableFlatVector<float>(
-            {0.134567, 0.000015, 0.000001, 0.999999, 0.123456, std::nullopt}),
+            {0.134567,
+             0.000015,
+             0.000001,
+             0.999999,
+             0.123456,
+             0.0447861,
+             std::nullopt}),
         makeNullableFlatVector<int128_t>(
-            {134'567'000'000'000'000,
-             15'000'000'000'000,
-             1'000'000'000'000,
-             999'999'000'000'000'000,
-             123'456'000'000'000'000,
+            {134'567'007'422'447'200,
+             14'999'999'621'068,
+             999'999'997'475,
+             999'998'986'721'038'800,
+             123'456'001'281'738'280,
+             44'786'099'344'491'960,
              std::nullopt},
             DECIMAL(38, 18)));
 

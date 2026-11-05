@@ -646,6 +646,11 @@ From floating-point types
 Casting a floating-point value to a decimal of given precision and scale is
 allowed. Supported types are real and double.
 
+The cast starts from the shortest decimal digits that read back as the input
+double, which Java's ``Double.toString`` prints, and rounds them half up to the
+target scale. A real input is widened to double first, so the result keeps the
+binary error of the real value.
+
 When ANSI mode is enabled, casting a value that overflows the target precision
 and scale or is not finite throws an error. Otherwise, such casts return NULL.
 
@@ -664,7 +669,11 @@ Valid examples
 
   SELECT cast(cast(99999.99 as double) as decimal(10, 4)); -- 99999.9900
   SELECT cast(cast(-1.0 as double) as decimal(10, 4)); -- -1.0000
+  SELECT cast(cast(0.30000000000000004 as double) as decimal(38, 18)); -- 0.300000000000000040
+  SELECT cast(cast(0.05 as double) as decimal(1, 1)); -- 0.1
   SELECT cast(cast(10.03 as real) as decimal(10, 4)); -- 10.0300
+  SELECT cast(cast(99999.9 as real) as decimal(10, 4)); -- 99999.8984
+  SELECT cast(cast(0.1 as real) as decimal(38, 18)); -- 0.100000001490116120
   SELECT cast(cast(0.0 as real) as decimal(10, 4)); -- 0.0000
 
 Invalid examples

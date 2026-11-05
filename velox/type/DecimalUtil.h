@@ -252,6 +252,18 @@ class DecimalUtil : public DecimalArithmetic {
     return Status::OK();
   }
 
+  /// Rescales a double to a decimal value of given precision and scale,
+  /// starting from the shortest decimal digits that read back as the double.
+  /// Java's Double.toString prints these digits. Rounds half up. Returns error
+  /// status if fails.
+  /// @tparam TOutput Either int64_t or int128_t.
+  template <typename TOutput>
+  static Status rescaleShortestDigits(
+      double value,
+      int precision,
+      int scale,
+      TOutput& output);
+
   /// Returns the max required size to convert the decimal of this precision and
   /// scale to varchar. A varchar's size is estimated with unscaled value
   /// digits, dot, leading zero, and possible minus sign.

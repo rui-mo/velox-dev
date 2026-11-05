@@ -150,6 +150,15 @@ class CastHooks {
     return false;
   }
 
+  /// Returns whether floating point to decimal casts start from the shortest
+  /// decimal digits that read back as the input double, as Java's
+  /// Double.toString prints them. A real input is widened to double first.
+  /// Otherwise, these casts keep 7 significant digits of a real and 15 of a
+  /// double.
+  virtual bool floatingPointToDecimalUsesShortestDigits() const {
+    return false;
+  }
+
   virtual PolicyType getPolicy() const = 0;
 
   /// Returns true if TIMESTAMP_UTC casts are supported.

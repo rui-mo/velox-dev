@@ -15,6 +15,9 @@
  */
 
 #include "velox/type/DecimalUtil.h"
+
+#include <double-conversion/double-conversion.h>
+
 #include "velox/type/HugeInt.h"
 
 namespace facebook::velox {
@@ -51,6 +54,74 @@ std::string formatDecimal(uint8_t scale, int128_t unscaledValue) {
       "{}{}{}", isNegative ? "-" : "", integralPart, fractionString);
 }
 } // namespace
+
+template <typename TOutput>
+Status DecimalUtil::rescaleShortestDigits(
+    double value,
+    int precision,
+    int scale,
+    TOutput& output) {
+  if (!std::isfinite(value)) {
+    return Status::UserError("The input value should be finite.");
+  }
+  if (value == 0) {
+    output = 0;
+    return Status::OK();
+  }
+
+  // 'value' is 0.<digits> * 10^point.
+  using double_conversion::DoubleToStringConverter;
+  char digits[DoubleToStringConverter::kBase10MaximalLength + 1];
+  bool negative;
+  int length;
+  int point;
+  DoubleToStringConverter::DoubleToAscii(
+      value,
+      DoubleToStringConverter::SHORTEST,
+      0,
+      digits,
+      sizeof(digits),
+      &negative,
+      &length,
+      &point);
+  int128_t rescaledValue = 0;
+  for (int i = 0; i < length; ++i) {
+    rescaledValue = rescaledValue * 10 + (digits[i] - '0');
+  }
+
+  // The result is 'rescaledValue' * 10^shift.
+  const int shift = point - length + scale;
+  if (shift >= 0) {
+    if (length + shift > precision) {
+      return Status::UserError("Result overflows.");
+    }
+    rescaledValue *= kPowersOfTen[shift];
+  } else if (-shift > length) {
+    // 'value' is below a tenth of the last digit of the result.
+    rescaledValue = 0;
+  } else {
+    const auto divisor = kPowersOfTen[-shift];
+    const bool roundUp = rescaledValue % divisor * 2 >= divisor;
+    rescaledValue = rescaledValue / divisor + (roundUp ? 1 : 0);
+    if (!valueInPrecisionRange(rescaledValue, precision)) {
+      return Status::UserError("Result overflows.");
+    }
+  }
+  output = static_cast<TOutput>(negative ? -rescaledValue : rescaledValue);
+  return Status::OK();
+}
+
+template Status DecimalUtil::rescaleShortestDigits<int64_t>(
+    double value,
+    int precision,
+    int scale,
+    int64_t& output);
+
+template Status DecimalUtil::rescaleShortestDigits<int128_t>(
+    double value,
+    int precision,
+    int scale,
+    int128_t& output);
 
 std::string DecimalUtil::toString(int128_t value, const Type& type) {
   auto [precision, scale] = getDecimalPrecisionScale(type);
