@@ -1331,6 +1331,58 @@ void CastExpr::apply(
   }
 }
 
+void CastExpr::applyTryCast(
+    const SelectivityVector& rows,
+    const VectorPtr& input,
+    exec::EvalCtx& context,
+    VectorPtr& result) {
+  ScopedVarSetter holder{context.mutableThrowOnError(), false};
+  ScopedVarSetter captureErrorDetails(
+      context.mutableCaptureErrorDetails(), false);
+
+  ScopedThreadSkipErrorDetails skipErrorDetails(true);
+
+  apply(rows, input, context, inputs_[0]->type(), type_, result);
+}
+
+void CastExpr::applyTryCastPerRowOnError(
+    const SelectivityVector& rows,
+    const VectorPtr& input,
+    exec::EvalCtx& context,
+    VectorPtr& result) {
+  // An exception can leave the evaluation context in a bad state, e.g. with
+  // the peeled encoding of the input still set. Cast in a separate context.
+  const auto applyInLocalContext = [&](const SelectivityVector& localRows,
+                                       VectorPtr& localResult) {
+    EvalCtx localContext(context.execCtx());
+    *localContext.errorsPtr() = *context.errorsPtr();
+    applyTryCast(localRows, input, localContext, localResult);
+  };
+
+  VectorPtr localResult;
+  try {
+    applyInLocalContext(rows, localResult);
+  } catch (const VeloxUserError&) {
+    localResult = nullptr;
+    context.ensureWritable(rows, type_, localResult);
+    SelectivityVector singleRow(rows.end(), false);
+    rows.applyToSelected([&](vector_size_t row) {
+      singleRow.setValid(row, true);
+      singleRow.updateBounds();
+      try {
+        VectorPtr rowResult;
+        applyInLocalContext(singleRow, rowResult);
+        localResult->copy(rowResult.get(), row, row, 1);
+      } catch (const VeloxUserError&) {
+        localResult->setNull(row, true);
+        context.setVeloxExceptionError(row, std::current_exception());
+      }
+      singleRow.setValid(row, false);
+    });
+  }
+  context.moveOrCopyResult(localResult, rows, result);
+}
+
 void CastExpr::evalSpecialForm(
     const SelectivityVector& rows,
     EvalCtx& context,
@@ -1341,16 +1393,15 @@ void CastExpr::evalSpecialForm(
   auto toType = std::const_pointer_cast<const Type>(type_);
 
   inTopLevel = true;
-  if (isTryCast()) {
-    ScopedVarSetter holder{context.mutableThrowOnError(), false};
-    ScopedVarSetter captureErrorDetails(
-        context.mutableCaptureErrorDetails(), false);
-
-    ScopedThreadSkipErrorDetails skipErrorDetails(true);
-
+  if (!isTryCast()) {
     apply(rows, input, context, fromType, toType, result);
+  } else if (hooks_->truncate() && !context.throwOnError()) {
+    // With truncate(), some errors are thrown for the whole batch so that
+    // try_cast keeps them, e.g. in castFromDate. When the caller records
+    // errors per row, e.g. in try(), each error must only affect its own row.
+    applyTryCastPerRowOnError(rows, input, context, result);
   } else {
-    apply(rows, input, context, fromType, toType, result);
+    applyTryCast(rows, input, context, result);
   }
   // Return 'input' back to the vector pool in 'context' so it can be
   // reused.
