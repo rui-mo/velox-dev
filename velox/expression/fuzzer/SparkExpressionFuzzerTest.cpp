@@ -183,7 +183,11 @@ int main(int argc, char** argv) {
       {facebook::velox::core::QueryConfig::kSessionTimezone,
        "America/Los_Angeles"},
       {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled),
-       FLAGS_ansi_enabled ? "true" : "false"}};
+       FLAGS_ansi_enabled ? "true" : "false"},
+      // Spark casts a decimal to the nearest double.
+      {SparkQueryConfig::qualify(
+           SparkQueryConfig::kDecimalToFloatHighPrecisionCastEnabled),
+       "true"}};
 
   std::unordered_map<std::string, std::shared_ptr<ArgTypesGenerator>>
       argTypesGenerators = {
