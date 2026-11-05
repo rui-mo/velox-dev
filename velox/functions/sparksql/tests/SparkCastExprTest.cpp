@@ -844,6 +844,55 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
         /*isTryCast=*/true);
   }
 
+  // Evaluates try(cast(c0 as toType)).
+  VectorPtr evaluateCastInTry(const VectorPtr& input, const TypePtr& toType) {
+    auto tryExpr = std::make_shared<const core::CallTypedExpr>(
+        toType,
+        std::vector<core::TypedExprPtr>{
+            buildCastExpr(input->type(), toType, /*isTryCast=*/false)},
+        "try");
+    return evaluate(tryExpr, makeRowVector({input}));
+  }
+
+  // The overflow errors above stop the whole query. Spark's try_* functions
+  // turn such an error into NULL for the row that caused it.
+  void testDateOverflowInTry() {
+    constexpr int64_t kOverflowDays = kMaxTimestampUtcDays + 1;
+    const auto dates =
+        makeFlatVector<int32_t>({0, kOverflowDays, 18262}, DATE());
+    assertEqualVectors(
+        makeNullableFlatVector<Timestamp>(
+            {Timestamp(0, 0), std::nullopt, Timestamp(1577836800, 0)}),
+        evaluateCastInTry(dates, TIMESTAMP()));
+    evaluateAndVerifyCastInTryDictEncoding(
+        DATE(),
+        TIMESTAMP(),
+        makeRowVector({dates}),
+        makeNullableFlatVector<Timestamp>(
+            {Timestamp(0, 0), std::nullopt, Timestamp(1577836800, 0)}));
+    assertEqualVectors(
+        makeNullableFlatVector<Timestamp>(
+            {Timestamp(0, 0), std::nullopt, Timestamp(1577836800, 0)},
+            TIMESTAMP_UTC()),
+        evaluateCastInTry(dates, TIMESTAMP_UTC()));
+    assertEqualVectors(
+        makeNullableFlatVector<int32_t>({0, std::nullopt}, DATE()),
+        evaluateCastInTry(
+            makeFlatVector<Timestamp>(
+                {Timestamp(0, 0), Timestamp(kOverflowDays * 86'400, 0)},
+                TIMESTAMP_UTC()),
+            DATE()));
+
+    // The whole array is NULL when one of its elements overflows.
+    assertEqualVectors(
+        makeNullableArrayVector<Timestamp>(
+            {std::nullopt,
+             std::vector<std::optional<Timestamp>>{Timestamp(0, 0)}}),
+        evaluateCastInTry(
+            makeArrayVector<int32_t>({{0, kOverflowDays}, {0}}, DATE()),
+            ARRAY(TIMESTAMP())));
+  }
+
   void testInvalidDate() {
     testInvalidCast<int8_t>(
         "date", {12}, "Cast from TINYINT to DATE is not supported", TINYINT());
@@ -3776,6 +3825,14 @@ TEST_F(SparkCastExprTestAnsiOff, timestampUtcToDateOverflow) {
 
 TEST_F(SparkCastExprTestAnsiOn, timestampUtcToDateOverflow) {
   testTimestampUtcToDateOverflow();
+}
+
+TEST_F(SparkCastExprTestAnsiOff, dateOverflowInTry) {
+  testDateOverflowInTry();
+}
+
+TEST_F(SparkCastExprTestAnsiOn, dateOverflowInTry) {
+  testDateOverflowInTry();
 }
 
 // Verify that casting DATE to TIMESTAMP in a timezone where midnight falls in

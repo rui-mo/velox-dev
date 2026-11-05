@@ -109,6 +109,21 @@ class CastExpr : public SpecialForm {
       VectorPtr& result);
 
  private:
+  // Applies the cast with errors turned into nulls.
+  void applyTryCast(
+      const SelectivityVector& rows,
+      const VectorPtr& input,
+      exec::EvalCtx& context,
+      VectorPtr& result);
+
+  // Same as applyTryCast. If the cast throws for the whole batch, re-runs it
+  // one row at a time and records an error for each row that throws.
+  void applyTryCastPerRowOnError(
+      const SelectivityVector& rows,
+      const VectorPtr& input,
+      exec::EvalCtx& context,
+      VectorPtr& result);
+
   VectorPtr applyMap(
       const SelectivityVector& rows,
       const MapVector* input,
