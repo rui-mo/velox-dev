@@ -352,6 +352,8 @@ Mathematical Functions
 
     Returns the positive remainder of n divided by m.
     Supported types are: TINYINT, SMALLINT, INTEGER, BIGINT, REAL and DOUBLE.
+    For REAL and DOUBLE, a zero result has the sign of n, e.g. -0.0 for
+    ``pmod(-4.0, 2.0)``.
 
 .. spark:function:: power(x, p) -> double
 
