@@ -247,6 +247,19 @@ Invalid examples
   SELECT cast('0x1.8' as double); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('' as double); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
+From DOUBLE
+^^^^^^^^^^^
+
+Casting a double out of the range of ``REAL`` to ``REAL`` returns
+``Infinity`` or ``-Infinity``, regardless of ANSI mode. ``try_cast`` returns
+the same result.
+
+::
+
+  SELECT cast(1e300D as real); -- Infinity
+  SELECT try_cast(-1e300D as real); -- -Infinity
+  SELECT cast(1e-300D as real); -- 0.0
+
 Cast to Boolean
 ---------------
 

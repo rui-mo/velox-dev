@@ -1232,6 +1232,10 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
         "bigint", {"9663372036854775809"}, {std::nullopt});
     testTryCast<int64_t, int8_t>(
         "tinyint", {456}, {std::nullopt}, DECIMAL(6, 0));
+
+    // Doubles out of the range of REAL become infinity.
+    testTryCast<double, float>(
+        "real", {1e300, -1e300, 1e-300, 1.5}, {kInf, -kInf, 0, 1.5});
   }
 
   void testOverflow() {

@@ -563,7 +563,9 @@ struct Converter<
   }
 
   static Expected<T> tryCast(const double& v) {
-    if constexpr (TPolicy::truncate) {
+    // Spark casts doubles out of the range of REAL to infinity in all modes.
+    if constexpr (
+        TPolicy::truncate || std::is_same_v<TPolicy, SparkTryCastPolicy>) {
       return T(v);
     } else {
       return tryCast<double>(v);
