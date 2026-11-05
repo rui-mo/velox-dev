@@ -431,11 +431,14 @@ void CastExpr::applyVarcharToDecimalCastKernel(
   auto sourceVector = input.as<SimpleVector<StringView>>();
   auto rawBuffer = result->asUnchecked<FlatVector<T>>()->mutableRawValues();
   const auto toPrecisionScale = getDecimalPrecisionScale(*toType);
+  std::string digitsBuffer;
 
   rows.applyToSelected([&](auto row) {
     T decimalValue;
     const auto status = DecimalUtil::castFromString<T>(
-        hooks_->removeWhiteSpaces(sourceVector->valueAt(row), *toType),
+        hooks_->toAsciiDigits(
+            hooks_->removeWhiteSpaces(sourceVector->valueAt(row), *toType),
+            digitsBuffer),
         toPrecisionScale.first,
         toPrecisionScale.second,
         decimalValue);

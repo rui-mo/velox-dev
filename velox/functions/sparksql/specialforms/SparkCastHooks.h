@@ -76,6 +76,12 @@ class SparkCastHooks : public exec::CastHooks {
   StringView removeWhiteSpaces(const StringView& view, const Type& toType)
       const override;
 
+  /// Replaces the decimal digits of other scripts in the Basic Multilingual
+  /// Plane with ASCII digits, e.g. the full-width '１' with '1'. Spark parses
+  /// decimals with Java's BigDecimal, which accepts these digits.
+  StringView toAsciiDigits(const StringView& data, std::string& buffer)
+      const override;
+
   // Supports Spark boolean to timestamp cast.
   Expected<Timestamp> castBooleanToTimestamp(bool seconds) const override;
 

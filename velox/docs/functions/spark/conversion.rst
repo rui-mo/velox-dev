@@ -568,6 +568,10 @@ Casting varchar to a decimal of given precision and scale is allowed.
 The behavior is similar with Presto except Spark allows leading and trailing
 characters trimmed by Java ``String.trim`` in input varchars.
 
+Spark parses the string with Java's ``BigDecimal``, which also accepts the
+decimal digits of other scripts in the Basic Multilingual Plane (U+0000 to
+U+FFFF), such as the full-width digits U+FF10 to U+FF19.
+
 When ANSI mode is enabled, casting from an invalid input value or a value that
 overflows the target precision and scale throws an error. Otherwise, such casts
 return NULL.
@@ -582,6 +586,8 @@ Valid examples
   SELECT cast(' -3E+2' as decimal(12, 2)); -- -300.00
   SELECT cast('-3E+2 ' as decimal(12, 2)); -- -300.00
   SELECT cast('  -3E+2  ' as decimal(12, 2)); -- -300.00
+  SELECT cast('\uFF11.\uFF15' as decimal(6, 1)); -- 1.5
+  SELECT cast('\u0661\u0662\u0663' as decimal(6, 0)); -- 123
 
 Invalid examples
 
@@ -590,6 +596,7 @@ Invalid examples
   SELECT cast('0.0444a' as decimal(38, 0)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value is not a number
   SELECT cast('' as decimal(38, 0)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value is not a number
   SELECT cast('1. 23' as decimal(38, 0)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Interior whitespace is invalid
+  SELECT cast('\U0001D7CF' as decimal(6, 0)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // U+1D7CF is outside the Basic Multilingual Plane
   SELECT cast('1.23e67' as decimal(38, 0)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
   SELECT cast('111111111111111111.23' as decimal(38, 38)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
 
