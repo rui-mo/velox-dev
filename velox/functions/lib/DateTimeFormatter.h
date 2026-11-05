@@ -122,7 +122,10 @@ enum class DateTimeFormatSpecifier : uint8_t {
   // "-0830", "-08:30", "-083015" or "-08:30:15", depending on the number of
   // times the formatter character repeats. It is the pattern letter 'X' of
   // java.time.format.DateTimeFormatter, which Spark supports.
-  ISO_ZONE_OFFSET = 25
+  ISO_ZONE_OFFSET = 25,
+
+  // Modified Julian day, the number of days since 1858-11-17, e.g: 52356
+  MODIFIED_JULIAN_DAY = 26
 };
 
 struct FormatPattern {
@@ -241,10 +244,15 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
 /// parts are literals and an empty part other than the first is a literal
 /// quote. An unclosed quote thus starts a literal that runs to the end of the
 /// pattern, and trailing quotes are ignored.
+///
+/// If 'allowModifiedJulianDay' is true, the pattern can also use the letter 'g'
+/// for the modified Julian day. Java's DateTimeFormatter supports it, and Joda
+/// doesn't.
 Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format,
     bool allowIsoZoneOffset = false,
-    bool splitOnQuotes = false);
+    bool splitOnQuotes = false,
+    bool allowModifiedJulianDay = false);
 
 Expected<std::shared_ptr<DateTimeFormatter>> buildSimpleDateTimeFormatter(
     const std::string_view& format,

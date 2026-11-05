@@ -1314,6 +1314,70 @@ TEST_F(DateTimeFunctionsTest, getTimestampAnsi) {
       std::nullopt);
 }
 
+TEST_F(DateTimeFunctionsTest, getTimestampModifiedJulianDay) {
+  const auto getTimestamp = [&](const std::optional<StringView>& dateString,
+                                const std::string& format) {
+    return evaluateOnce<Timestamp>(
+        fmt::format("get_timestamp(c0, '{}')", format), dateString);
+  };
+
+  EXPECT_EQ(getTimestamp("52356", "g"), parseTimestamp("2002-03-23"));
+  EXPECT_EQ(getTimestamp("-0001", "g"), parseTimestamp("1858-11-16"));
+  EXPECT_EQ(getTimestamp("05", "gg"), parseTimestamp("1858-11-22"));
+  EXPECT_EQ(
+      getTimestamp("0000000000000052356", "g"), parseTimestamp("2002-03-23"));
+  EXPECT_EQ(getTimestamp("-0", "g"), std::nullopt);
+  EXPECT_EQ(getTimestamp("+5", "g"), std::nullopt);
+  EXPECT_EQ(getTimestamp("5", "gg"), std::nullopt);
+  EXPECT_EQ(getTimestamp("00000000000000000052356", "g"), std::nullopt);
+  EXPECT_EQ(getTimestamp("9999999999999999999", "g"), std::nullopt);
+  EXPECT_EQ(getTimestamp("365241821059", "g"), std::nullopt);
+
+  // The fixed-width fields right after 'g' keep their digits.
+  EXPECT_EQ(
+      getTimestamp("523561030", "gHHmm"),
+      parseTimestamp("2002-03-23 10:30:00"));
+  EXPECT_EQ(
+      getTimestamp("523561", "gS"), parseTimestamp("2002-03-23 00:00:00.1"));
+  EXPECT_EQ(getTimestamp("512", "gHH"), parseTimestamp("1858-11-22 12:00:00"));
+  EXPECT_EQ(getTimestamp("-110", "gHH"), parseTimestamp("1858-11-16 10:00:00"));
+  EXPECT_EQ(getTimestamp("510", "ggHH"), std::nullopt);
+  // A variable-width field right after 'g' gets no digits.
+  EXPECT_EQ(getTimestamp("5235682", "gD"), std::nullopt);
+  EXPECT_EQ(getTimestamp("52356123", "gSSS"), std::nullopt);
+
+  // The other date fields must match the day.
+  EXPECT_EQ(
+      getTimestamp("52356 2002-03-23 082", "g yyyy-MM-dd DDD"),
+      parseTimestamp("2002-03-23"));
+  EXPECT_EQ(getTimestamp("-678576 BC", "g G"), parseTimestamp("0000-12-31"));
+  EXPECT_EQ(getTimestamp("52356 2003", "g yyyy"), std::nullopt);
+  EXPECT_EQ(getTimestamp("52356 04", "g MM"), std::nullopt);
+  EXPECT_EQ(getTimestamp("52356 Apr", "g MMM"), std::nullopt);
+  EXPECT_EQ(getTimestamp("52356 24", "g dd"), std::nullopt);
+  EXPECT_EQ(getTimestamp("52356 083", "g DDD"), std::nullopt);
+  EXPECT_EQ(getTimestamp("52356 BC", "g G"), std::nullopt);
+  EXPECT_EQ(getTimestamp("52356 52357", "g g"), std::nullopt);
+
+  VELOX_ASSERT_USER_THROW(
+      getTimestamp("52356", std::string(20, 'g')),
+      "Too many pattern letters: g");
+
+  // unix_timestamp throws parsing errors with ANSI mode enabled.
+  const auto unixTimestamp = [&](const std::optional<StringView>& dateString,
+                                 const std::string& format) {
+    return evaluateOnce<int64_t>(
+        fmt::format("unix_timestamp(c0, '{}')", format), dateString);
+  };
+  // 2002-03-23 00:00:00 UTC.
+  EXPECT_EQ(unixTimestamp("52356", "g"), 1016841600);
+  enableAnsiMode();
+  VELOX_ASSERT_USER_THROW(unixTimestamp("-0", "g"), "Invalid date format");
+  VELOX_ASSERT_USER_THROW(
+      unixTimestamp("52356 2003", "g yyyy"),
+      "The date fields of '52356 2003' conflict with its modified Julian day");
+}
+
 TEST_F(DateTimeFunctionsTest, hour) {
   const auto hour = [&](const StringView timestampStr) {
     const auto timeStamp = std::make_optional(parseTimestamp(timestampStr));
@@ -2739,6 +2803,15 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_EQ("Z", dateFormat(timestamp, "XXXXX"));
   VELOX_ASSERT_THROW(
       dateFormat(timestamp, "XXXXXX"), "Too many pattern letters: X");
+
+  // Modified Julian day.
+  EXPECT_EQ("52356", dateFormat(parseTimestamp("2002-03-23 15:29:43"), "g"));
+  EXPECT_EQ("00052356", dateFormat(parseTimestamp("2002-03-23"), "gggggggg"));
+  EXPECT_EQ("-001", dateFormat(parseTimestamp("1858-11-16 10:00:00"), "ggg"));
+  EXPECT_EQ("-678575", dateFormat(parseTimestamp("0001-01-01"), "g"));
+  EXPECT_THROW(
+      dateFormat(parseTimestamp("2002-03-23"), std::string(20, 'g')),
+      VeloxUserError);
 
   enableLegacyFormatter();
   EXPECT_EQ("4", dateFormat(parseTimestamp("1970-01-01"), "u"));

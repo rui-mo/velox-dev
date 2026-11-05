@@ -98,6 +98,14 @@ class DateTimeFormatterBuilder {
   /// will be 0001
   DateTimeFormatterBuilder& appendWeekOfMonth(size_t minDigits);
 
+  /// Appends modified Julian day to formatter builder, e.g: 52356
+  ///
+  /// \param minDigits describes the minimum number of digits this format is
+  /// required to represent modified Julian day. e.g. 2002-03-23, with min digit
+  /// being 1 the formatted result will be 52356, with min digit being 8 the
+  /// formatted result will be 00052356
+  DateTimeFormatterBuilder& appendModifiedJulianDay(size_t minDigits);
+
   /// Appends day of week to formatter builder. The number is 0 based with 0 ~ 6
   /// representing Sunday to Saturday respectively
   ///

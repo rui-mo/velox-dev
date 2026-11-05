@@ -728,3 +728,9 @@ quote. Under session timezone ``America/Los_Angeles``: ::
         SELECT unix_timestamp('2020-01-01 12:34:56.789abc', "yyyy-MM-dd HH:mm:ss.SSS'abc"); -- 1577910896
         SELECT unix_timestamp('2020-01-01 12:34:56.789', "yyyy-MM-dd HH:mm:ss.SSS'"); -- 1577910896
         SELECT unix_timestamp('2020abc', "yyyy'abc"); -- (throws exception)
+
+Like Spark, the `Joda` date formatter also accepts the pattern letter ``g`` for the modified Julian day,
+which is the number of days since 1858-11-17. ::
+
+        SELECT date_format('2002-03-23', 'g'); -- 52356
+        SELECT get_timestamp('52356', 'g'); -- timestamp `2002-03-23`

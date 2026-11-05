@@ -77,6 +77,13 @@ struct Date {
 
   std::vector<int32_t> dayOfMonthValues;
   std::vector<int32_t> dayOfYearValues;
+
+  // The parsed modified Julian day, and whether the fields that must match it
+  // were parsed.
+  std::optional<int64_t> modifiedJulianDay;
+  bool yearParsed = false;
+  bool monthParsed = false;
+  bool eraParsed = false;
 };
 
 constexpr std::string_view weekdaysFull[] = {
@@ -859,6 +866,8 @@ std::string_view getSpecifierName(DateTimeFormatSpecifier specifier) {
       return "WEEK_OF_MONTH";
     case DateTimeFormatSpecifier::ISO_ZONE_OFFSET:
       return "ISO_ZONE_OFFSET";
+    case DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY:
+      return "MODIFIED_JULIAN_DAY";
     default: {
       VELOX_UNREACHABLE("[Unexpected date format specifier]");
       return ""; // Make compiler happy.
@@ -963,6 +972,7 @@ int32_t parseFromPattern(
       return -1;
     }
     cur += size;
+    date.eraParsed = true;
   } else if (
       curPattern.specifier == DateTimeFormatSpecifier::MONTH_OF_YEAR_TEXT) {
     auto size = parseMonthText(cur, end, date);
@@ -970,6 +980,7 @@ int32_t parseFromPattern(
       return -1;
     }
     cur += size;
+    date.monthParsed = true;
     if (!date.hasYear) {
       date.hasYear = true;
       date.year = 2000;
@@ -1104,6 +1115,7 @@ int32_t parseFromPattern(
           return -1;
         }
         date.hasYear = true;
+        date.yearParsed = true;
         date.year = number;
         break;
 
@@ -1114,6 +1126,7 @@ int32_t parseFromPattern(
           }
         }
         date.month = number;
+        date.monthParsed = true;
         date.weekDateFormat = false;
         date.dayOfYearFormat = false;
         // Joda has this weird behavior where it returns 1970 as the year by
@@ -1275,6 +1288,155 @@ int32_t parseFromPattern(
   return 0;
 }
 
+// The modified Julian day of 1970-01-01.
+constexpr int64_t kModifiedJulianDayOfEpoch = 40587;
+
+// Java's range of the modified Julian day, from -999999999-01-01 to
+// 999999999-12-31.
+constexpr int64_t kMinModifiedJulianDay = -365243178575;
+constexpr int64_t kMaxModifiedJulianDay = 365241821058;
+
+// Java reads at most 19 digits for the modified Julian day.
+constexpr int64_t kMaxModifiedJulianDayDigits = 19;
+
+// Returns how many digits a numeric field keeps when it directly follows the
+// modified Julian day, as in Java's parsing of adjacent numeric fields. A
+// fixed-width field keeps its width. A variable-width field returns -1, which
+// leaves all digits to the modified Julian day. Other fields return 0, which
+// ends the adjacent fields.
+int adjacentFieldWidth(const FormatPattern& pattern) {
+  const auto count = pattern.minRepresentDigits;
+  switch (pattern.specifier) {
+    case DateTimeFormatSpecifier::YEAR:
+    case DateTimeFormatSpecifier::YEAR_OF_ERA:
+    case DateTimeFormatSpecifier::MONTH_OF_YEAR:
+    case DateTimeFormatSpecifier::DAY_OF_MONTH:
+    case DateTimeFormatSpecifier::HOUR_OF_HALFDAY:
+    case DateTimeFormatSpecifier::CLOCK_HOUR_OF_HALFDAY:
+    case DateTimeFormatSpecifier::HOUR_OF_DAY:
+    case DateTimeFormatSpecifier::CLOCK_HOUR_OF_DAY:
+    case DateTimeFormatSpecifier::MINUTE_OF_HOUR:
+    case DateTimeFormatSpecifier::SECOND_OF_MINUTE:
+      return count == 2 ? 2 : -1;
+    case DateTimeFormatSpecifier::DAY_OF_YEAR:
+      return count == 3 ? 3 : -1;
+    case DateTimeFormatSpecifier::FRACTION_OF_SECOND:
+      return count == 1 ? 1 : 0;
+    case DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY:
+      return -1;
+    default:
+      return 0;
+  }
+}
+
+// Parses the modified Julian day of tokens[index] with Java's strict rules.
+// The fixed-width numeric fields right after it keep their digits. Returns -1
+// on failure and 0 on success.
+int32_t parseModifiedJulianDay(
+    const std::vector<DateTimeToken>& tokens,
+    size_t index,
+    const char*& cur,
+    const char* end,
+    Date& date) {
+  int64_t reserved = 0;
+  for (auto i = index + 1;
+       i < tokens.size() && tokens[i].type == DateTimeToken::Type::kPattern;
+       ++i) {
+    const auto width = adjacentFieldWidth(tokens[i].pattern);
+    if (width < 0) {
+      reserved = 0;
+    }
+    if (width <= 0) {
+      break;
+    }
+    reserved += width;
+  }
+
+  const bool negative = cur < end && *cur == '-';
+  const char* digitsStart = negative ? cur + 1 : cur;
+  const char* digitsEnd = digitsStart;
+  while (digitsEnd < end &&
+         digitsEnd - digitsStart < kMaxModifiedJulianDayDigits + reserved &&
+         characterIsDigit(*digitsEnd)) {
+    ++digitsEnd;
+  }
+  const int64_t minDigits = tokens[index].pattern.minRepresentDigits;
+  const int64_t numDigits = digitsEnd - digitsStart;
+  if (numDigits < minDigits + reserved) {
+    return -1;
+  }
+
+  const auto length = numDigits - reserved;
+  int64_t value = 0;
+  for (auto digit = digitsStart; digit < digitsStart + length; ++digit) {
+    // Saturates beyond the valid range to avoid overflow.
+    value = std::min<int64_t>(value * 10 + (*digit - '0'), 1'000'000'000'000);
+  }
+  if (negative) {
+    // Java rejects a negative zero.
+    if (value == 0) {
+      return -1;
+    }
+    value = -value;
+  }
+  if (value < kMinModifiedJulianDay || value > kMaxModifiedJulianDay) {
+    return -1;
+  }
+  if (date.modifiedJulianDay.has_value() &&
+      date.modifiedJulianDay.value() != value) {
+    return -1;
+  }
+  date.modifiedJulianDay = value;
+  cur = digitsStart + length;
+  return 0;
+}
+
+// Converts the modified Julian day and the time of day into a timestamp. The
+// other parsed date fields must match the day.
+Expected<DateTimeResult> resolveModifiedJulianDay(
+    const std::string_view& input,
+    const Date& date) {
+  const int64_t days =
+      date.modifiedJulianDay.value() - kModifiedJulianDayOfEpoch;
+  std::tm tm;
+  VELOX_CHECK(Timestamp::epochToCalendarUtc(days * util::kSecsPerDay, tm));
+  const int64_t year = tm.tm_year + 1900LL;
+
+  bool valid = (!date.yearParsed || date.year == year) &&
+      (!date.monthParsed || date.month == tm.tm_mon + 1) &&
+      (!date.eraParsed || date.isAd == (year > 0));
+  for (const auto day : date.dayOfMonthValues) {
+    valid = valid && day == tm.tm_mday;
+  }
+  for (const auto day : date.dayOfYearValues) {
+    valid = valid && day == tm.tm_yday + 1;
+  }
+  if (!valid) {
+    if (threadSkipErrorDetails()) {
+      return folly::makeUnexpected(Status::UserError());
+    }
+    return folly::makeUnexpected(
+        Status::UserError(
+            "The date fields of '{}' conflict with its modified Julian day",
+            input));
+  }
+
+  // Same year range as parsing a year.
+  if (year < -292275055 || year > 292278994) {
+    if (threadSkipErrorDetails()) {
+      return folly::makeUnexpected(Status::UserError());
+    }
+    return folly::makeUnexpected(
+        Status::UserError(
+            "The modified Julian day of '{}' is out of range", input));
+  }
+
+  const int64_t microsSinceMidnight =
+      util::fromTime(date.hour, date.minute, date.second, date.microsecond);
+  return DateTimeResult{
+      util::fromDatetime(days, microsSinceMidnight), date.timezone};
+}
+
 } // namespace
 
 uint32_t DateTimeFormatter::maxResultSize(const tz::TimeZone* timezone) const {
@@ -1298,6 +1460,10 @@ uint32_t DateTimeFormatter::maxResultSize(const tz::TimeZone* timezone) const {
       case DateTimeFormatSpecifier::DAY_OF_WEEK_1_BASED:
       case DateTimeFormatSpecifier::WEEK_OF_MONTH:
         size += std::max((int)token.pattern.minRepresentDigits, 1);
+        break;
+      case DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY:
+        // The days of a timestamp fit in int32. One more for the minus sign.
+        size += std::max((int)token.pattern.minRepresentDigits, 10) + 1;
         break;
       case DateTimeFormatSpecifier::DAY_OF_WEEK_TEXT:
       case DateTimeFormatSpecifier::MONTH_OF_YEAR_TEXT:
@@ -1671,6 +1837,16 @@ int32_t DateTimeFormatter::format(
               result);
           break;
         }
+        case DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY: {
+          result += padContent(
+              static_cast<int64_t>(daysTimePoint.time_since_epoch().count()) +
+                  kModifiedJulianDayOfEpoch,
+              '0',
+              token.pattern.minRepresentDigits,
+              maxResultEnd,
+              result);
+          break;
+        }
         default:
           VELOX_UNSUPPORTED(
               "format is not supported for specifier {}",
@@ -1700,7 +1876,13 @@ Expected<DateTimeResult> DateTimeFormatter::parse(
         cur += tok.literal.size();
         break;
       case DateTimeToken::Type::kPattern:
-        if (i + 1 < tokens_.size() &&
+        if (tok.pattern.specifier ==
+            DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY) {
+          if (parseModifiedJulianDay(tokens_, i, cur, end, date) == -1) {
+            return parseFail(input, cur, end);
+          }
+        } else if (
+            i + 1 < tokens_.size() &&
             tokens_[i + 1].type == DateTimeToken::Type::kPattern) {
           if (parseFromPattern(
                   tok.pattern, input, cur, end, date, true, type_) == -1) {
@@ -1731,6 +1913,10 @@ Expected<DateTimeResult> DateTimeFormatter::parse(
     if (!date.isAm) {
       date.hour += 12;
     }
+  }
+
+  if (date.modifiedJulianDay.has_value()) {
+    return resolveModifiedJulianDay(input, date);
   }
 
   // Ensure all day of month values are valid for ending month value
@@ -1951,7 +2137,8 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
 Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format,
     bool allowIsoZoneOffset,
-    bool splitOnQuotes) {
+    bool splitOnQuotes,
+    bool allowModifiedJulianDay) {
   if (format.empty()) {
     if (threadSkipErrorDetails()) {
       return folly::makeUnexpected(Status::UserError());
@@ -2098,6 +2285,20 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
                   Status::UserError("Too many pattern letters: X"));
             }
             builder.appendIsoZoneOffset(count);
+            break;
+          }
+          [[fallthrough]];
+        case 'g':
+          // 'X' falls through to here if it is not allowed.
+          if (*startTokenPtr == 'g' && allowModifiedJulianDay) {
+            if (count > kMaxModifiedJulianDayDigits) {
+              if (threadSkipErrorDetails()) {
+                return folly::makeUnexpected(Status::UserError());
+              }
+              return folly::makeUnexpected(
+                  Status::UserError("Too many pattern letters: g"));
+            }
+            builder.appendModifiedJulianDay(count);
             break;
           }
           [[fallthrough]];

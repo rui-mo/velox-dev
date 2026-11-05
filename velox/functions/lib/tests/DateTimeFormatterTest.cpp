@@ -408,6 +408,20 @@ TEST_F(JodaDateTimeFormatterTest, invalidJodaBuild) {
   // Only Spark supports 'X'.
   EXPECT_TRUE(buildJodaDateTimeFormatter("X").hasError());
 
+  // Only Java supports the modified Julian day, up to 19 letters.
+  const auto buildWithModifiedJulianDay = [](const std::string& format) {
+    return buildJodaDateTimeFormatter(
+        format,
+        /*allowIsoZoneOffset=*/false,
+        /*splitOnQuotes=*/false,
+        /*allowModifiedJulianDay=*/true);
+  };
+  EXPECT_FALSE(buildWithModifiedJulianDay("g").hasError());
+  EXPECT_TRUE(buildWithModifiedJulianDay(std::string(20, 'g')).hasError());
+  EXPECT_TRUE(buildWithModifiedJulianDay("X").hasError());
+  EXPECT_TRUE(
+      buildJodaDateTimeFormatter("g", /*allowIsoZoneOffset=*/true).hasError());
+
   // Unclosed literal sequence
   EXPECT_TRUE(buildJodaDateTimeFormatter("'abcd").hasError());
 
