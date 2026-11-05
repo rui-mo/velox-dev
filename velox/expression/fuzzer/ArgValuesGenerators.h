@@ -456,4 +456,20 @@ class ArithmeticArgValuesGenerator : public ArgValuesGenerator {
       ExpressionFuzzerState& state) override;
 };
 
+/// Generates the argument of Spark's cast and try_cast half of the time.
+/// Strings look like values of the target type in the formats Spark accepts,
+/// e.g. numbers, booleans, dates and timestamps. Some batches also have strings
+/// that are invalid or out of range of the target type. Numbers include the
+/// edge values of their type. Arrays, maps and rows contain such values.
+class CastArgValuesGenerator : public ArgValuesGenerator {
+ public:
+  ~CastArgValuesGenerator() override = default;
+
+  std::vector<core::TypedExprPtr> generate(
+      const CallableSignature& signature,
+      const VectorFuzzer::Options& options,
+      FuzzerGenerator& rng,
+      ExpressionFuzzerState& state) override;
+};
+
 } // namespace facebook::velox::fuzzer

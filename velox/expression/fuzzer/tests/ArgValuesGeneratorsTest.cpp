@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <regex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -754,6 +755,187 @@ TEST(ArgValuesGeneratorsTest, arithmetic) {
           << edgeValue.toJson(type);
     }
     EXPECT_EQ(hasNaN, type->kind() == TypeKind::DOUBLE);
+  }
+}
+
+// Adds the strings in 'value' to 'strings'. Skips the keys of maps.
+void collectStrings(const variant& value, std::vector<std::string>& strings) {
+  if (value.isNull()) {
+    return;
+  }
+  switch (value.kind()) {
+    case TypeKind::VARCHAR:
+      strings.push_back(value.value<TypeKind::VARCHAR>());
+      break;
+    case TypeKind::ARRAY:
+      for (const auto& element : value.array()) {
+        collectStrings(element, strings);
+      }
+      break;
+    case TypeKind::MAP:
+      for (const auto& [_, mapValue] : value.map()) {
+        collectStrings(mapValue, strings);
+      }
+      break;
+    case TypeKind::ROW:
+      for (const auto& field : value.row()) {
+        collectStrings(field, strings);
+      }
+      break;
+    default:
+      VELOX_FAIL("Unexpected value: {}", value.toJsonUnsafe());
+  }
+}
+
+TEST(ArgValuesGeneratorsTest, cast) {
+  VectorFuzzer::Options options;
+  options.nullRatio = 0.1;
+  FuzzerGenerator rng{0};
+  ExpressionFuzzerState state{rng, 5};
+  CastArgValuesGenerator generator;
+
+  // Generates the argument of a cast 100 times. Returns the number of input
+  // columns and 100 values of each.
+  auto generate = [&](const TypePtr& fromType, const TypePtr& toType) {
+    const CallableSignature signature{
+        .name = "cast",
+        .args = {fromType},
+        .returnType = toType,
+        .constantArgs = {false},
+    };
+    int32_t numColumns = 0;
+    std::vector<variant> values;
+    for (auto i = 0; i < 100; ++i) {
+      state.reset();
+      const auto inputs = generator.generate(signature, options, rng, state);
+      EXPECT_EQ(inputs.size(), 1);
+      if (inputs.empty() || inputs[0] == nullptr) {
+        EXPECT_TRUE(state.inputRowTypes_.empty());
+        continue;
+      }
+      const auto field =
+          std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+              inputs[0]);
+      EXPECT_NE(field, nullptr);
+      EXPECT_EQ(state.inputRowNames_.size(), 1);
+      EXPECT_EQ(state.customInputGenerators_.size(), 1);
+      if (field == nullptr || state.inputRowNames_.size() != 1) {
+        continue;
+      }
+      ++numColumns;
+      EXPECT_EQ(state.inputRowNames_[0], field->name());
+      EXPECT_EQ(*state.inputRowTypes_[0], *fromType);
+      for (auto j = 0; j < 100; ++j) {
+        values.push_back(state.customInputGenerators_[0]->generate());
+      }
+    }
+    return std::make_pair(numColumns, values);
+  };
+
+  // Strings look like values of the target type, after trimming whitespace,
+  // in most rows. Patterns match the plain strings of the generator.
+  const std::string kTimestamp =
+      "[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}"
+      "(\\.[0-9]{1,6})?(Z|UTC| UTC|[+-][0-9]{2}:[0-9]{2}| ?[a-z]+/[a-z_]+)?)?)?";
+  const std::vector<std::pair<TypePtr, std::string>> kStringTargets{
+      {TINYINT(), "[+-]?[0-9]{1,2}"},
+      {INTEGER(), "[+-]?[0-9]{1,9}"},
+      {BIGINT(), "[+-]?[0-9]{1,18}"},
+      {REAL(), "[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(e[+-]?[0-9]{1,2})?"},
+      {DOUBLE(), "[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(e[+-]?[0-9]{1,2})?"},
+      {DECIMAL(6, 0), "[+-]?[0-9]{1,6}"},
+      {DECIMAL(18, 6), "[+-]?([0-9]{1,12}(\\.[0-9]{0,6})?|0?\\.[0-9]{1,6})"},
+      {DECIMAL(38, 38), "[+-]?0?\\.[0-9]{1,38}"},
+      {BOOLEAN(), "t|true|y|yes|1|f|false|n|no|0"},
+      {DATE(), "[0-9]{4}(-[0-9]{1,2}(-[0-9]{1,2}([T ].*)?)?)?"},
+      {TIMESTAMP(), kTimestamp},
+  };
+  for (const auto& [toType, pattern] : kStringTargets) {
+    SCOPED_TRACE(toType->toString());
+    const auto [numColumns, values] = generate(VARCHAR(), toType);
+    EXPECT_GT(numColumns, 30);
+    EXPECT_LT(numColumns, 70);
+    std::vector<std::string> strings;
+    for (const auto& value : values) {
+      collectStrings(value, strings);
+    }
+    const std::regex regex{pattern, std::regex::icase};
+    int32_t numMatches = 0;
+    bool hasWhitespace = false;
+    for (const auto& string : strings) {
+      const auto begin = string.find_first_not_of(" \t\n");
+      const auto trimmed = begin == std::string::npos
+          ? std::string()
+          : string.substr(begin, string.find_last_not_of(" \t\n") - begin + 1);
+      hasWhitespace |= trimmed.size() < string.size();
+      numMatches += std::regex_match(trimmed, regex) ? 1 : 0;
+    }
+    EXPECT_GT(numMatches, strings.size() / 2);
+    // Some batches have edge values.
+    EXPECT_GT(strings.size() - numMatches, 10);
+    EXPECT_TRUE(hasWhitespace);
+  }
+
+  // Containers contain such strings.
+  const std::vector<std::tuple<TypePtr, TypePtr, std::string>> kContainers{
+      {ARRAY(VARCHAR()),
+       ARRAY(DATE()),
+       "[0-9]{4}(-[0-9]{1,2}(-[0-9]{1,2}([T ].*)?)?)?"},
+      {MAP(VARCHAR(), VARCHAR()),
+       MAP(VARCHAR(), BOOLEAN()),
+       "t|true|y|yes|1|f|false|n|no|0"},
+      {ROW({VARCHAR()}), ROW({INTEGER()}), "[+-]?[0-9]{1,9}"},
+  };
+  for (const auto& [fromType, toType, pattern] : kContainers) {
+    SCOPED_TRACE(fromType->toString());
+    const auto [numColumns, values] = generate(fromType, toType);
+    EXPECT_GT(numColumns, 30);
+    std::vector<std::string> strings;
+    for (const auto& value : values) {
+      collectStrings(value, strings);
+    }
+    const std::regex regex{pattern, std::regex::icase};
+    const auto numMatches =
+        std::count_if(strings.begin(), strings.end(), [&](const auto& string) {
+          return std::regex_match(string, regex);
+        });
+    EXPECT_GT(strings.size(), 1'000);
+    EXPECT_GT(numMatches, strings.size() / 2);
+  }
+
+  // Numbers include the edge values of their type.
+  const std::vector<std::tuple<TypePtr, TypePtr, variant>> kNumbers{
+      {DOUBLE(), INTEGER(), variant(std::numeric_limits<double>::infinity())},
+      {BIGINT(), TINYINT(), variant(std::numeric_limits<int64_t>::max())},
+      {DECIMAL(38, 18), BIGINT(), variant(-DecimalUtil::kPowersOfTen[38] + 1)},
+  };
+  for (const auto& [fromType, toType, edgeValue] : kNumbers) {
+    SCOPED_TRACE(fromType->toString());
+    const auto [numColumns, values] = generate(fromType, toType);
+    EXPECT_GT(numColumns, 30);
+    EXPECT_NE(std::find(values.begin(), values.end(), edgeValue), values.end());
+    if (fromType->kind() == TypeKind::DOUBLE) {
+      EXPECT_TRUE(std::any_of(values.begin(), values.end(), [](const auto& v) {
+        return !v.isNull() && std::isnan(v.template value<double>());
+      }));
+    }
+  }
+
+  // The fuzzer generates the other arguments, e.g. of casts to types that Spark
+  // doesn't support, or from types without edge values.
+  const std::vector<std::pair<TypePtr, TypePtr>> kOthers{
+      {VARCHAR(), TIME_MICRO_UTC()},
+      {VARCHAR(), VARBINARY()},
+      {DATE(), VARCHAR()},
+      {BOOLEAN(), TIMESTAMP()},
+      {ARRAY(VARCHAR()), VARCHAR()},
+      {ARRAY(BOOLEAN()), ARRAY(TIMESTAMP())},
+      {ROW({DATE(), BOOLEAN()}), ROW({VARCHAR(), INTEGER()})},
+  };
+  for (const auto& [fromType, toType] : kOthers) {
+    SCOPED_TRACE(
+        fmt::format("{} -> {}", fromType->toString(), toType->toString()));
+    EXPECT_EQ(generate(fromType, toType).first, 0);
   }
 }
 
