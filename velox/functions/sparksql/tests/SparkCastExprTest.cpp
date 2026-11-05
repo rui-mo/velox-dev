@@ -287,6 +287,58 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
     testDecimalToIntegralCasts<int8_t>();
   }
 
+  // Spark casts a long decimal to TINYINT, SMALLINT or INTEGER by truncating
+  // its nearest double when the cast checks for overflow. BIGINT truncates the
+  // decimal itself. 'isTryCast' selects the casts that check for overflow.
+  void testLongDecimalToIntegral(std::optional<bool> isTryCast) {
+    const auto nines = makeFlatVector<int128_t>(
+        {HugeInt::parse("-99999999999999999999999999999999999999"),
+         HugeInt::parse("50000000000000000000000000000000000000")},
+        DECIMAL(38, 38));
+    testCast(nines, makeFlatVector<int8_t>({-1, 0}), isTryCast);
+    testCast(nines, makeFlatVector<int16_t>({-1, 0}), isTryCast);
+    testCast(nines, makeFlatVector<int32_t>({-1, 0}), isTryCast);
+    testCast(nines, makeFlatVector<int64_t>({0, 0}), isTryCast);
+
+    const auto input = makeFlatVector<int128_t>(
+        {HugeInt::parse("126999999999999999999"),
+         HugeInt::parse("-1999999999999999999"),
+         HugeInt::parse("123450000000000000000")},
+        DECIMAL(38, 18));
+    testCast(input, makeFlatVector<int8_t>({127, -2, 123}), isTryCast);
+    testCast(input, makeFlatVector<int16_t>({127, -2, 123}), isTryCast);
+    testCast(input, makeFlatVector<int32_t>({127, -2, 123}), isTryCast);
+    testCast(input, makeFlatVector<int64_t>({126, -1, 123}), isTryCast);
+
+    // The nearest doubles round up to integers that may be out of range.
+    const auto overflow = makeFlatVector<int128_t>(
+        {HugeInt::parse("127999999999999999999"),
+         HugeInt::parse("-128999999999999999999"),
+         HugeInt::parse("32767999999999999999999"),
+         HugeInt::parse("2147483647999999999999999999"),
+         HugeInt::parse("-2147483648999999999999999999")},
+        DECIMAL(38, 18));
+    testCast(
+        overflow,
+        makeNullableFlatVector<int8_t>(
+            {std::nullopt,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt}),
+        true);
+    testCast(
+        overflow,
+        makeNullableFlatVector<int16_t>(
+            {128, -129, std::nullopt, std::nullopt, std::nullopt}),
+        true);
+    testCast(
+        overflow,
+        makeNullableFlatVector<int32_t>(
+            {128, -129, 32768, std::nullopt, std::nullopt}),
+        true);
+  }
+
   // Casts 'input' to VARCHAR in each Spark cast mode. 'try_cast' and
   // 'spark_ansi_cast' produce 'plain'. 'spark_legacy_cast' produces
   // 'scientific'. 'cast' follows the session ANSI setting, which
@@ -2361,6 +2413,26 @@ TEST_F(SparkCastExprTestAnsiOn, decimalToIntegralOverflow) {
       "Out of bounds");
 }
 
+TEST_F(SparkCastExprTestAnsiOn, longDecimalToIntegral) {
+  testLongDecimalToIntegral(std::nullopt);
+
+  testThrow<int128_t>(
+      DECIMAL(38, 18),
+      TINYINT(),
+      {HugeInt::parse("127999999999999999999")},
+      "Out of bounds");
+  testThrow<int128_t>(
+      DECIMAL(38, 18),
+      SMALLINT(),
+      {HugeInt::parse("32767999999999999999999")},
+      "Out of bounds");
+  testThrow<int128_t>(
+      DECIMAL(38, 18),
+      INTEGER(),
+      {HugeInt::parse("-2147483648999999999999999999")},
+      "Out of bounds");
+}
+
 TEST_F(SparkCastExprTestAnsiOn, decimalToFloat) {
   SCOPE_EXIT {
     queryCtx_->testingOverrideConfigUnsafe({});
@@ -3263,6 +3335,18 @@ TEST_F(SparkCastExprTestAnsiOff, bigIntToBinary) {
 
 TEST_F(SparkCastExprTestAnsiOff, decimalToIntegral) {
   testDecimalToIntegral();
+}
+
+TEST_F(SparkCastExprTestAnsiOff, longDecimalToIntegral) {
+  testLongDecimalToIntegral(true);
+
+  // The legacy cast truncates the decimal itself.
+  testCast(
+      makeFlatVector<int128_t>(
+          {HugeInt::parse("-99999999999999999999999999999999999999")},
+          DECIMAL(38, 38)),
+      makeFlatVector<int32_t>({0}),
+      false);
 }
 
 TEST_F(SparkCastExprTestAnsiOff, decimalToFloat) {

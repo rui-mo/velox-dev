@@ -45,6 +45,22 @@ constexpr double kDoublePowersOfTen[] = {
 constexpr size_t kDoublePowersOfTenSize =
     sizeof(kDoublePowersOfTen) / sizeof(kDoublePowersOfTen[0]);
 
+// Returns the double nearest to a decimal, like Java's BigDecimal.doubleValue.
+// 'buffer' must fit the string of any value of the decimal type.
+inline double decimalToNearestDouble(
+    int128_t unscaledValue,
+    uint8_t scale,
+    std::string& buffer) {
+  if (scale < kDoublePowersOfTenSize &&
+      DecimalUtil::absValue<int128_t>(unscaledValue) < kDoubleMaxExact) {
+    // Both operands are exact doubles, so the division rounds only once.
+    return static_cast<double>(unscaledValue) / kDoublePowersOfTen[scale];
+  }
+  const auto size = DecimalUtil::castToString<int128_t>(
+      unscaledValue, scale, buffer.size(), buffer.data());
+  return folly::to<double>(folly::StringPiece(buffer.data(), size));
+}
+
 inline std::string makeErrorMessage(
     const BaseVector& input,
     vector_size_t row,
@@ -540,10 +556,23 @@ VectorPtr CastExpr::applyDecimalToIntegralCast(
           static_cast<To>(simpleInput->valueAt(row) / scaleFactor);
     });
   } else {
+    bool truncatesDouble = false;
+    std::string buffer;
+    if constexpr (
+        std::is_same_v<FromNativeType, int128_t> &&
+        sizeof(To) < sizeof(int64_t)) {
+      truncatesDouble = hooks_->longDecimalToIntegralCastUsesDouble();
+      buffer.resize(
+          DecimalUtil::maxStringViewSize(
+              precisionScale.first, precisionScale.second));
+    }
     applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
       auto value = simpleInput->valueAt(row);
       auto integralPart = value / scaleFactor;
-      if (hooks_->getPolicy() != SparkTryCastPolicy) {
+      if (truncatesDouble) {
+        integralPart = static_cast<FromNativeType>(
+            decimalToNearestDouble(value, precisionScale.second, buffer));
+      } else if (hooks_->getPolicy() != SparkTryCastPolicy) {
         auto fractionPart = value % scaleFactor;
         auto sign = value >= 0 ? 1 : -1;
         bool needsRoundUp =

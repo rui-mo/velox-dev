@@ -160,6 +160,12 @@ The decimal part will be truncated for casting to an integer.
 It is allowed when the truncated result exceeds the range of result type when ANSI mode
 is disabled; throws an error when ANSI mode is enabled.
 
+When ANSI mode is enabled, and for ``try_cast`` in both modes, a decimal with
+precision above 18 is converted to the nearest double before it is truncated
+to tinyint, smallint or integer. A value just below an integer can round up
+to that integer, and the range check applies to the rounded value. Casting to
+bigint truncates the decimal itself.
+
 Valid examples
 
 ::
@@ -171,6 +177,11 @@ Valid examples
   SELECT cast(cast(2147483648.90 as DECIMAL(12, 2)) as tinyint); -- 0 (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast(2147483648.90 as DECIMAL(12, 2)) as integer); -- -2147483648 (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast(2147483648.90 as DECIMAL(12, 2)) as bigint); -- 2147483648
+  SELECT cast(cast('-0.99999999999999999999999999999999999999' as DECIMAL(38, 38)) as integer); -- 0 (ANSI OFF) / -1 (ANSI ON)
+  SELECT try_cast(cast('-0.99999999999999999999999999999999999999' as DECIMAL(38, 38)) as integer); -- -1
+  SELECT cast(cast('-0.99999999999999999999999999999999999999' as DECIMAL(38, 38)) as bigint); -- 0
+  SELECT cast(cast('127.999999999999999999' as DECIMAL(38, 18)) as smallint); -- 127 (ANSI OFF) / 128 (ANSI ON)
+  SELECT try_cast(cast('127.999999999999999999' as DECIMAL(38, 18)) as tinyint); -- NULL
 
 From timestamp
 ^^^^^^^^^^^^^^

@@ -165,6 +165,12 @@ class CastHooks {
     return false;
   }
 
+  /// Returns whether a cast of a long decimal to TINYINT, SMALLINT or INTEGER
+  /// that checks for overflow truncates the nearest double of the decimal.
+  virtual bool longDecimalToIntegralCastUsesDouble() const {
+    return false;
+  }
+
   virtual PolicyType getPolicy() const = 0;
 
   /// Returns true if TIMESTAMP_UTC casts are supported.
