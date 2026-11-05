@@ -1393,6 +1393,40 @@ TEST_F(DateTimeFunctionsTest, getTimestampModifiedJulianDay) {
       "The date fields of '52356 2003' conflict with its modified Julian day");
 }
 
+TEST_F(DateTimeFunctionsTest, getTimestampOptionalSection) {
+  const auto getTimestamp = [&](const std::optional<StringView>& dateString,
+                                const std::string& format) {
+    return evaluateOnce<Timestamp>(
+        fmt::format("get_timestamp(c0, '{}')", format), dateString);
+  };
+
+  EXPECT_EQ(getTimestamp("2020", "yyyy[-MM]"), parseTimestamp("2020-01-01"));
+  EXPECT_EQ(getTimestamp("2020-05", "yyyy[-MM]"), parseTimestamp("2020-05-01"));
+  EXPECT_EQ(getTimestamp("2020-", "yyyy[-MM]"), std::nullopt);
+  EXPECT_EQ(
+      getTimestamp("2020-05-06", "yyyy[-MM[-dd]]"),
+      parseTimestamp("2020-05-06"));
+  EXPECT_EQ(
+      getTimestamp("2020-05", "yyyy[-MM[-dd]]"), parseTimestamp("2020-05-01"));
+  EXPECT_EQ(getTimestamp("2020-05-", "yyyy[-MM[-dd]]"), std::nullopt);
+  EXPECT_EQ(getTimestamp("2020", "yyyy["), parseTimestamp("2020-01-01"));
+  EXPECT_EQ(getTimestamp("", "[yyyy]"), parseTimestamp("1970-01-01"));
+  EXPECT_EQ(
+      getTimestamp("2020 12", "yyyy[ SS]"),
+      parseTimestamp("2020-01-01 00:00:00.12"));
+  EXPECT_EQ(getTimestamp("2020", "yyyy[ SS]"), parseTimestamp("2020-01-01"));
+
+  // A section that fails to match drops the fields it parsed.
+  EXPECT_EQ(
+      getTimestamp("2020 05", "yyyy[ MM-dd][ HH]"),
+      parseTimestamp("2020-01-01 05:00:00"));
+
+  enableAnsiMode();
+  VELOX_ASSERT_USER_THROW(
+      getTimestamp("2020-", "yyyy[-MM]"),
+      "Invalid date format: '2020-' is malformed at '-'");
+}
+
 TEST_F(DateTimeFunctionsTest, hour) {
   const auto hour = [&](const StringView timestampStr) {
     const auto timeStamp = std::make_optional(parseTimestamp(timestampStr));
@@ -2834,6 +2868,13 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_EQ(
       "Saturday 002002 082 000000000",
       dateFormat(timestamp, "EEEE yyyyyy DDD SSSSSSSSS"));
+
+  // Optional sections print their content.
+  EXPECT_EQ("2002-03", dateFormat(timestamp, "yyyy[-MM]"));
+  EXPECT_EQ("2002-03", dateFormat(timestamp, "[yyyy]-MM["));
+  EXPECT_EQ("1515", dateFormat(timestamp, "HH[H]"));
+  EXPECT_EQ("20020323", dateFormat(timestamp, "yyyy[[MM]dd]"));
+  EXPECT_EQ("", dateFormat(timestamp, "[]"));
 
   // Empty format.
   EXPECT_EQ("", dateFormat(parseTimestamp("1970-01-01"), ""));

@@ -44,10 +44,10 @@ void toGMTWithPreferredOffset(
 ///   - the week-based letters Y, w and e, and the letter C;
 ///   - more letters in a row than Java allows, as in 'HHH';
 ///   - a quote with no closing quote, as in "yyyy'";
-///   - the reserved characters '{', '}' and '#', and ']' without '['.
+///   - the reserved characters '{', '}' and '#'.
 /// For a parsing pattern, Spark also rejects 'E'. It accepts an unclosed quote
 /// if the parsing pattern contains 'S'. The Joda formatter builder reports the
-/// letters Velox does not implement.
+/// letters Velox does not implement, and ']' without '['.
 Status validateDateTimePattern(std::string_view pattern, bool isParsing);
 
 } // namespace facebook::velox::functions::sparksql

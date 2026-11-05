@@ -1446,6 +1446,9 @@ uint32_t DateTimeFormatter::maxResultSize(const tz::TimeZone* timezone) const {
       size += token.literal.size();
       continue;
     }
+    if (token.type != DateTimeToken::Type::kPattern) {
+      continue;
+    }
     switch (token.pattern.specifier) {
       case DateTimeFormatSpecifier::ERA:
       case DateTimeFormatSpecifier::HALFDAY_OF_DAY:
@@ -1560,11 +1563,13 @@ int32_t DateTimeFormatter::format(
 
   const char* resultStart = result;
   char* maxResultEnd = result + maxResultSize;
+  // Every field of a timestamp is available, so an optional section prints its
+  // content like the rest of the pattern, and its bounds print nothing.
   for (auto& token : tokens_) {
     if (token.type == DateTimeToken::Type::kLiteral) {
       std::memcpy(result, token.literal.data(), token.literal.size());
       result += token.literal.size();
-    } else {
+    } else if (token.type == DateTimeToken::Type::kPattern) {
       switch (token.pattern.specifier) {
         case DateTimeFormatSpecifier::ERA: {
           const std::string_view piece =
@@ -1864,37 +1869,62 @@ Expected<DateTimeResult> DateTimeFormatter::parse(
   Date date;
   const char* cur = input.data();
   const char* end = cur + input.size();
+  // The input position and the parsed fields at the start of each open
+  // optional section.
+  struct SectionStart {
+    const char* cur;
+    Date date;
+  };
+  std::vector<SectionStart> sectionStarts;
 
   for (int i = 0; i < tokens_.size(); i++) {
     auto& tok = tokens_[i];
+    bool matched = true;
     switch (tok.type) {
       case DateTimeToken::Type::kLiteral:
         if (tok.literal.size() > end - cur ||
             std::memcmp(cur, tok.literal.data(), tok.literal.size()) != 0) {
-          return parseFail(input, cur, end);
+          matched = false;
+          break;
         }
         cur += tok.literal.size();
         break;
       case DateTimeToken::Type::kPattern:
         if (tok.pattern.specifier ==
             DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY) {
-          if (parseModifiedJulianDay(tokens_, i, cur, end, date) == -1) {
-            return parseFail(input, cur, end);
-          }
-        } else if (
-            i + 1 < tokens_.size() &&
-            tokens_[i + 1].type == DateTimeToken::Type::kPattern) {
-          if (parseFromPattern(
-                  tok.pattern, input, cur, end, date, true, type_) == -1) {
-            return parseFail(input, cur, end);
-          }
+          matched = parseModifiedJulianDay(tokens_, i, cur, end, date) != -1;
         } else {
-          if (parseFromPattern(
-                  tok.pattern, input, cur, end, date, false, type_) == -1) {
-            return parseFail(input, cur, end);
-          }
+          const bool specifierNext = i + 1 < tokens_.size() &&
+              tokens_[i + 1].type == DateTimeToken::Type::kPattern;
+          matched =
+              parseFromPattern(
+                  tok.pattern, input, cur, end, date, specifierNext, type_) !=
+              -1;
         }
         break;
+      case DateTimeToken::Type::kOptionalStart:
+        sectionStarts.push_back({cur, date});
+        break;
+      case DateTimeToken::Type::kOptionalEnd:
+        sectionStarts.pop_back();
+        break;
+    }
+    if (!matched) {
+      if (sectionStarts.empty()) {
+        return parseFail(input, cur, end);
+      }
+      // Like Java's DateTimeFormatter, restore the state at the start of the
+      // innermost optional section and continue after the section.
+      cur = sectionStarts.back().cur;
+      date = std::move(sectionStarts.back().date);
+      sectionStarts.pop_back();
+      for (int depth = 1; depth > 0 && ++i < tokens_.size();) {
+        if (tokens_[i].type == DateTimeToken::Type::kOptionalStart) {
+          ++depth;
+        } else if (tokens_[i].type == DateTimeToken::Type::kOptionalEnd) {
+          --depth;
+        }
+      }
     }
   }
 
@@ -2138,7 +2168,8 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format,
     bool allowIsoZoneOffset,
     bool splitOnQuotes,
-    bool allowModifiedJulianDay) {
+    bool allowModifiedJulianDay,
+    bool allowOptionalSections) {
   if (format.empty()) {
     if (threadSkipErrorDetails()) {
       return folly::makeUnexpected(Status::UserError());
@@ -2200,6 +2231,20 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
         }
         cur += count + 2;
       }
+    } else if (allowOptionalSections && *startTokenPtr == '[') {
+      builder.appendOptionalStart();
+      ++cur;
+    } else if (allowOptionalSections && *startTokenPtr == ']') {
+      if (builder.openOptionalSections() == 0) {
+        if (threadSkipErrorDetails()) {
+          return folly::makeUnexpected(Status::UserError());
+        }
+        return folly::makeUnexpected(
+            Status::UserError(
+                "Pattern invalid as it contains ] without previous ["));
+      }
+      builder.appendOptionalEnd();
+      ++cur;
     } else {
       int count = 1;
       ++cur;

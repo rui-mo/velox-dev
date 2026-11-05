@@ -735,6 +735,14 @@ which is the number of days since 1858-11-17. ::
         SELECT date_format('2002-03-23', 'g'); -- 52356
         SELECT get_timestamp('52356', 'g'); -- timestamp `2002-03-23`
 
+Like Spark, the `Joda` date formatter reads ``[`` and ``]`` outside quotes as the bounds of an
+optional section, which can nest. Formatting prints the content of the section. Parsing skips the
+section if the input doesn't match it. ::
+
+        SELECT date_format('2002-03-23', 'yyyy[-MM]'); -- 2002-03
+        SELECT get_timestamp('2002', 'yyyy[-MM]'); -- timestamp `2002-01-01`
+        SELECT get_timestamp('2002-03', 'yyyy[-MM]'); -- timestamp `2002-03-01`
+
 Like Spark, the `Joda` date formatter rejects some patterns in both ANSI modes: the week-based
 letters ``Y``, ``w`` and ``e``, the letter ``C``, more letters in a row than Spark allows, an
 unclosed quote, the reserved characters ``{``, ``}`` and ``#``, and ``]`` without ``[``.

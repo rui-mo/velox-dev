@@ -287,6 +287,19 @@ class DateTimeFormatterBuilder {
       const char* literalStart,
       size_t literalSize);
 
+  /// Starts an optional section. DateTimeFormatter::parse skips the section if
+  /// the input doesn't match it. Sections can nest, and the sections still
+  /// open at the end of the pattern end there.
+  DateTimeFormatterBuilder& appendOptionalStart();
+
+  /// Ends the innermost open optional section.
+  DateTimeFormatterBuilder& appendOptionalEnd();
+
+  /// Returns the number of optional sections that are open.
+  int32_t openOptionalSections() const {
+    return openOptionalSections_;
+  }
+
   DateTimeFormatterBuilder& setType(DateTimeFormatterType type);
 
   std::shared_ptr<DateTimeFormatter> build();
@@ -295,6 +308,7 @@ class DateTimeFormatterBuilder {
   std::unique_ptr<char[]> literalBuf_;
   size_t bufEnd_{0};
   std::vector<DateTimeToken> tokens_;
+  int32_t openOptionalSections_{0};
   DateTimeFormatterType type_{DateTimeFormatterType::UNKNOWN};
 };
 
