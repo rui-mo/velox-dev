@@ -189,9 +189,7 @@ struct Converter<TypeKind::BOOLEAN, void, TPolicy> {
 
   static Expected<T> tryCast(const float& v) {
     if constexpr (TPolicy::truncate) {
-      if (std::isnan(v)) {
-        return false;
-      }
+      // NaN differs from zero, so it's true like in Spark.
       return v != 0;
     } else {
       return detail::callFollyTo<T>(v);
@@ -200,9 +198,7 @@ struct Converter<TypeKind::BOOLEAN, void, TPolicy> {
 
   static Expected<T> tryCast(const double& v) {
     if constexpr (TPolicy::truncate) {
-      if (std::isnan(v)) {
-        return false;
-      }
+      // NaN differs from zero, so it's true like in Spark.
       return v != 0;
     } else {
       return detail::callFollyTo<T>(v);

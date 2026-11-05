@@ -127,8 +127,10 @@ TEST_F(ConversionsTest, toBoolean) {
             1.1,
             -1.0,
             0.0000000000001,
+            kNan,
         },
         {
+            true,
             true,
             true,
             true,
@@ -143,8 +145,10 @@ TEST_F(ConversionsTest, toBoolean) {
             1.1,
             -1.0,
             0.0000000000001,
+            kNan,
         },
         {
+            true,
             true,
             true,
             true,
@@ -187,7 +191,7 @@ TEST_F(ConversionsTest, toBoolean) {
             false,
             true,
             true,
-            false,
+            true,
         },
         /*truncate*/ true);
   }
