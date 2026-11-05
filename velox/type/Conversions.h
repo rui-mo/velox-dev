@@ -476,7 +476,8 @@ struct Converter<
 
       if constexpr (std::is_same_v<T, int128_t>) {
         return std::numeric_limits<int128_t>::max();
-      } else if (v > LimitType::maxLimit()) {
+      } else if (v >= static_cast<FP>(LimitType::maxLimit())) {
+        // The limit may round up to a value out of range, e.g. 2^63 for BIGINT.
         return LimitType::max();
       } else if (v < LimitType::minLimit()) {
         return LimitType::min();

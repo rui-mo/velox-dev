@@ -4351,6 +4351,17 @@ TEST_F(SparkCastExprTestAnsiOff, castNumericToIntegralOverflow) {
       "smallint", {100000}, {static_cast<int16_t>(100000)});
   testCast<double, int32_t>(
       "integer", {3.0e10}, {std::numeric_limits<int32_t>::max()});
+
+  // The maximum of the target type rounds up to a floating-point value out of
+  // its range, e.g. 2^63 for BIGINT. That value saturates as well.
+  testCast<float, int64_t>(
+      "bigint", {9.223372E18f}, {std::numeric_limits<int64_t>::max()});
+  testCast<double, int64_t>(
+      "bigint", {9.223372036854776E18}, {std::numeric_limits<int64_t>::max()});
+  testCast<float, int32_t>(
+      "integer", {2.147483648E9f}, {std::numeric_limits<int32_t>::max()});
+  testCast<float, int16_t>("smallint", {2.147483648E9f}, {-1});
+  testCast<float, int8_t>("tinyint", {2.147483648E9f}, {-1});
 }
 
 TEST_F(SparkCastExprTestAnsiOff, tryCastFloatToIntegralSaturation) {
