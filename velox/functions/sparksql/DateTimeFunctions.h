@@ -31,9 +31,13 @@
 namespace facebook::velox::functions::sparksql {
 
 namespace detail {
+// 'isParsing' tells whether the formatter parses strings. Spark parses a
+// pattern with 'S' by splitting it on single quotes. See
+// DateTimeFormatterHelper.createBuilderWithVarLengthSecondFraction.
 Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
     const std::string_view& format,
-    DateTimeFormatterType type) {
+    DateTimeFormatterType type,
+    bool isParsing = false) {
   switch (type) {
     case DateTimeFormatterType::STRICT_SIMPLE:
       return buildSimpleDateTimeFormatter(format, /*lenient=*/false);
@@ -42,7 +46,9 @@ Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
     default:
       return buildJodaDateTimeFormatter(
           std::string_view(format.data(), format.size()),
-          /*allowIsoZoneOffset=*/true);
+          /*allowIsoZoneOffset=*/true,
+          /*splitOnQuotes=*/isParsing &&
+              format.find('S') != std::string_view::npos);
   }
 }
 
@@ -52,11 +58,13 @@ Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
 //
 // @param format The format string to be used for initializing the formatter.
 // @param legacyFormatter Whether legacy formatter is used.
+// @param isParsing Whether the formatter parses strings.
 // @return A shared pointer to a DateTimeFormatter. If the formatter
 // initialization fails and the legacy formatter is used, nullptr is returned.
 inline std::shared_ptr<DateTimeFormatter> initializeFormatter(
     const std::string_view format,
-    bool legacyFormatter) {
+    bool legacyFormatter,
+    bool isParsing = false) {
   if (format.empty() && !legacyFormatter) {
     // Unlike Joda, Spark accepts an empty pattern, which formats datetimes to
     // empty strings and only parses empty strings.
@@ -67,7 +75,8 @@ inline std::shared_ptr<DateTimeFormatter> initializeFormatter(
   auto formatter = detail::getDateTimeFormatter(
       std::string_view(format),
       legacyFormatter ? DateTimeFormatterType::STRICT_SIMPLE
-                      : DateTimeFormatterType::JODA);
+                      : DateTimeFormatterType::JODA,
+      isParsing);
   // When legacy formatter is used, returns nullptr for invalid format;
   // otherwise, throws a user error.
   if (formatter.hasError()) {
@@ -226,7 +235,9 @@ struct UnixTimestampParseWithFormatFunction
     legacyFormatter_ = SparkQueryConfig{config}.legacyDateFormatter();
     if (format != nullptr) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(format->data(), format->size()), legacyFormatter_);
+          std::string_view(format->data(), format->size()),
+          legacyFormatter_,
+          /*isParsing=*/true);
       if (formatter) {
         this->format_ = formatter;
       } else {
@@ -257,7 +268,9 @@ struct UnixTimestampParseWithFormatFunction
 
     if (!isConstFormat_) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(format.data(), format.size()), legacyFormatter_);
+          std::string_view(format.data(), format.size()),
+          legacyFormatter_,
+          /*isParsing=*/true);
       if (formatter) {
         this->format_ = formatter;
       } else {
@@ -452,7 +465,7 @@ struct GetTimestampFunction {
     }
     if (format != nullptr) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(*format), legacyFormatter_);
+          std::string_view(*format), legacyFormatter_, /*isParsing=*/true);
       if (formatter) {
         formatter_ = formatter;
       } else {
@@ -471,7 +484,7 @@ struct GetTimestampFunction {
     }
     if (!isConstantTimeFormat_) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(format), legacyFormatter_);
+          std::string_view(format), legacyFormatter_, /*isParsing=*/true);
       if (formatter) {
         formatter_ = formatter;
       } else {

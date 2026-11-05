@@ -702,3 +702,14 @@ Under session timezone ``America/Los_Angeles``: ::
         SELECT unix_timestamp('2020-01-01 10:00:00+01', 'yyyy-MM-dd HH:mm:ssX'); -- 1577869200
         SELECT unix_timestamp('2020-01-01 10:00:00Z', 'yyyy-MM-dd HH:mm:ssX'); -- 1577872800
         SELECT unix_timestamp('2020-01-01 10:00:00+01:30', 'yyyy-MM-dd HH:mm:ssX'); -- NULL
+
+With the `Joda` date formatter, :spark:func:`get_timestamp`, :spark:func:`unix_timestamp` and
+:spark:func:`to_unix_timestamp` split a pattern that contains ``S`` on single quotes, as Spark
+does. Even parts hold pattern letters and odd parts are literals. Text after an unclosed quote is a
+literal and trailing quotes are ignored. Patterns without ``S`` and the patterns of
+:spark:func:`date_format` and :spark:func:`from_unixtime` throw an exception for an unclosed
+quote. Under session timezone ``America/Los_Angeles``: ::
+
+        SELECT unix_timestamp('2020-01-01 12:34:56.789abc', "yyyy-MM-dd HH:mm:ss.SSS'abc"); -- 1577910896
+        SELECT unix_timestamp('2020-01-01 12:34:56.789', "yyyy-MM-dd HH:mm:ss.SSS'"); -- 1577910896
+        SELECT unix_timestamp('2020abc', "yyyy'abc"); -- (throws exception)

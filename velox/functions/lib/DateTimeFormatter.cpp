@@ -16,6 +16,7 @@
 
 #include "velox/functions/lib/DateTimeFormatter.h"
 #include <folly/String.h>
+#include <algorithm>
 #include <charconv>
 #include <cstring>
 #include "velox/common/base/CountBits.h"
@@ -1949,7 +1950,8 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
 
 Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format,
-    bool allowIsoZoneOffset) {
+    bool allowIsoZoneOffset,
+    bool splitOnQuotes) {
   if (format.empty()) {
     if (threadSkipErrorDetails()) {
       return folly::makeUnexpected(Status::UserError());
@@ -1961,9 +1963,31 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
   DateTimeFormatterBuilder builder(format.size());
   const char* cur = format.data();
   const char* end = cur + format.size();
+  // With 'splitOnQuotes', the index of the part that 'cur' is in.
+  size_t partIndex = 0;
 
   while (cur < end) {
     const char* startTokenPtr = cur;
+
+    if (splitOnQuotes) {
+      if (*cur == '\'') {
+        ++cur;
+        ++partIndex;
+        if (std::all_of(cur, end, [](char c) { return c == '\''; })) {
+          break;
+        }
+        if (*cur == '\'') {
+          builder.appendLiteral("'");
+        }
+        continue;
+      }
+      if (partIndex % 2 == 1) {
+        const char* partEnd = std::find(cur, end, '\'');
+        builder.appendLiteral(cur, partEnd - cur);
+        cur = partEnd;
+        continue;
+      }
+    }
 
     // Literal case
     if (*startTokenPtr == '\'') {

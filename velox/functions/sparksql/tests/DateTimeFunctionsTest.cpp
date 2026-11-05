@@ -1111,6 +1111,65 @@ TEST_F(DateTimeFunctionsTest, getTimestamp) {
       Timestamp::fromMillis(2));
 }
 
+TEST_F(DateTimeFunctionsTest, parsingPatternWithFractionSplitsOnQuotes) {
+  setQueryTimeZone("America/Los_Angeles");
+  const auto getTimestamp = [&](std::optional<StringView> input,
+                                std::optional<StringView> format) {
+    return evaluateOnce<Timestamp>("get_timestamp(c0, c1)", input, format);
+  };
+
+  // An unclosed quote starts a literal that runs to the end.
+  EXPECT_EQ(
+      getTimestamp("2020-01-01 12:34:56.789abc", "yyyy-MM-dd HH:mm:ss.SSS'abc"),
+      parseTimestamp("2020-01-01 20:34:56.789"));
+  EXPECT_EQ(
+      evaluateOnce<Timestamp>(
+          "get_timestamp(c0, 'yyyy-MM-dd HH:mm:ss.SSS''abc')",
+          std::optional<StringView>("2020-01-01 12:34:56.789abc")),
+      parseTimestamp("2020-01-01 20:34:56.789"));
+  EXPECT_EQ(getTimestamp("S", "'S"), parseTimestamp("1970-01-01 08:00:00"));
+  EXPECT_EQ(getTimestamp("x", "'S"), std::nullopt);
+  for (const auto& function : {"unix_timestamp", "to_unix_timestamp"}) {
+    EXPECT_EQ(
+        evaluateOnce<int64_t>(
+            fmt::format("{}(c0, c1)", function),
+            std::optional<StringView>("2020-01-01 12:34:56.789abc"),
+            std::optional<StringView>("yyyy-MM-dd HH:mm:ss.SSS'abc")),
+        1577910896);
+  }
+
+  // Trailing quotes are ignored.
+  EXPECT_EQ(
+      getTimestamp("2020-01-01 12:34:56.789", "yyyy-MM-dd HH:mm:ss.SSS'''"),
+      parseTimestamp("2020-01-01 20:34:56.789"));
+  EXPECT_EQ(
+      getTimestamp("2020-01-01 12:34:56.789''", "yyyy-MM-dd HH:mm:ss.SSS'''"),
+      std::nullopt);
+  EXPECT_EQ(
+      getTimestamp("12.345a", "ss.SSS'a''"),
+      parseTimestamp("1970-01-01 08:00:12.345"));
+  EXPECT_EQ(getTimestamp("12.345a'", "ss.SSS'a''"), std::nullopt);
+
+  // Quotes still escape quotes elsewhere.
+  EXPECT_EQ(
+      getTimestamp("12.345a'b", "ss.SSS'a''b'"),
+      parseTimestamp("1970-01-01 08:00:12.345"));
+  EXPECT_EQ(
+      getTimestamp("'12.3", "''ss.S"),
+      parseTimestamp("1970-01-01 08:00:12.300"));
+
+  // Without 'S' or when formatting, an unclosed quote is invalid.
+  VELOX_ASSERT_USER_THROW(
+      getTimestamp("2020abc", "yyyy'abc"),
+      "No closing single quote for literal");
+  VELOX_ASSERT_USER_THROW(
+      evaluateOnce<std::string>(
+          "date_format(c0, c1)",
+          std::optional<Timestamp>(Timestamp(0, 0)),
+          std::optional<std::string>("yyyy SSS'abc")),
+      "No closing single quote for literal");
+}
+
 TEST_F(DateTimeFunctionsTest, hour) {
   const auto hour = [&](const StringView timestampStr) {
     const auto timeStamp = std::make_optional(parseTimestamp(timestampStr));
