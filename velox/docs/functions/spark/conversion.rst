@@ -657,16 +657,8 @@ target scale. A real input is widened to double first, so the result keeps the
 binary error of the real value.
 
 When ANSI mode is enabled, casting a value that overflows the target precision
-and scale or is not finite throws an error. Otherwise, such casts return NULL.
-
-.. note::
-
-    For non-finite inputs (NaN, Infinity, and -Infinity), this is not aligned
-    with Spark, which returns NULL even in ANSI mode. Since a decimal cannot
-    represent these values, throwing in ANSI mode follows ANSI semantics and is
-    consistent with how Velox handles overflow in this cast. Spark's NULL comes
-    from catching an internal error before its ANSI check, which we treat as an
-    implementation artifact.
+and scale throws an error. Otherwise, such casts return NULL. Casting NaN,
+Infinity or -Infinity returns NULL in both modes.
 
 Valid examples
 
@@ -687,8 +679,8 @@ Invalid examples
 
   SELECT cast(cast(1e22 as double) as decimal(10, 2)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Result overflows
   SELECT cast(cast(1e38 as double) as decimal(20, 2)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Result overflows
-  SELECT cast(cast('inf' as double) as decimal(38, 2)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value is not finite
-  SELECT cast(cast('nan' as double) as decimal(38, 2)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value is not finite
+  SELECT cast(cast('inf' as double) as decimal(38, 2)); -- NULL // Value is not finite
+  SELECT cast(cast('nan' as double) as decimal(38, 2)); -- NULL // Value is not finite
 
 From boolean
 ^^^^^^^^^^^^

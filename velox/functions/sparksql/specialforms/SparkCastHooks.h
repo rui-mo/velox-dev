@@ -112,6 +112,12 @@ class SparkCastHooks : public exec::CastHooks {
     return true;
   }
 
+  // Spark parses the input as a Java BigDecimal, which rejects NaN and
+  // Infinity, and returns NULL for that failure in both ANSI modes.
+  bool nonFiniteToDecimalCastReturnsNull() const override {
+    return true;
+  }
+
   exec::PolicyType getPolicy() const override;
 
   // Spark supports TIMESTAMP_UTC casts.
