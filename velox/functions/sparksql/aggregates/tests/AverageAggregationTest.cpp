@@ -275,6 +275,33 @@ TEST_F(AverageAggregationTest, avgDecimal) {
       longDecimalExpectedResult);
 }
 
+TEST_F(AverageAggregationTest, avgDecimalOverflow) {
+  // The sum exceeds the sum type DECIMAL(38, 10), although the average would
+  // fit the result type DECIMAL(38, 14).
+  const auto data = makeRowVector({makeFlatVector<int128_t>(
+      20'000,
+      [](auto row) {
+        return row == 0 ? DecimalUtil::kLongDecimalMax : (row == 1 ? 1 : 0);
+      },
+      nullptr,
+      DECIMAL(38, 10))});
+  const auto expected = makeRowVector({makeNullableFlatVector<int128_t>(
+      std::vector<std::optional<int128_t>>{std::nullopt}, DECIMAL(38, 14))});
+  testAggregations({data}, {}, {"spark_avg(c0)"}, {expected});
+
+  // Spark throws with ANSI mode enabled.
+  const auto plan = PlanBuilder()
+                        .values({data})
+                        .singleAggregation({}, {"spark_avg(c0)"})
+                        .planNode();
+  VELOX_ASSERT_THROW(
+      AssertQueryBuilder(plan)
+          .config(
+              SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true")
+          .copyResults(pool()),
+      "Decimal overflow in average");
+}
+
 TEST_F(AverageAggregationTest, avgDecimalWithMultipleRowVectors) {
   const int64_t kRescale = DecimalUtil::kPowersOfTen[4];
   auto inputRows = {

@@ -83,7 +83,8 @@ class DecimalAverageAggregate {
 
   /// This struct stores the sum of input values, overflow during accumulation,
   /// and the count number of the input values. If the count is not 0, then if
-  /// sum is nullopt that means an overflow has happened. For null group, the
+  /// sum is nullopt that means an overflow has happened. A sum that exceeds the
+  /// precision of the sum type is an overflow too. For null group, the
   /// variables in accumulator should be meaningless, so the values of sum and
   /// count are ignored in both writeIntermediateResult and writeFinalResult.
   struct AccumulatorType {
@@ -163,19 +164,13 @@ class DecimalAverageAggregate {
         out =
             std::make_tuple(static_cast<int128_t>(0), static_cast<int64_t>(0));
       } else {
-        if (!sum.has_value()) {
+        const auto adjustedSum = computeAdjustedSum();
+        if (adjustedSum.has_value()) {
+          out = std::make_tuple(adjustedSum.value(), count);
+        } else {
           // Sum should be set to null on overflow.
           out.template set_null_at<0>();
           out.template get_writer_at<1>() = count;
-        } else {
-          auto adjustedSum =
-              DecimalUtil::adjustSumForOverflow(sum.value(), overflow);
-          if (adjustedSum.has_value()) {
-            out = std::make_tuple(adjustedSum.value(), count);
-          } else {
-            out.template set_null_at<0>();
-            out.template get_writer_at<1>() = count;
-          }
         }
       }
       return true;
@@ -200,14 +195,25 @@ class DecimalAverageAggregate {
     }
 
    private:
-    std::optional<int128_t> computeFinalResult() const {
+    // Returns the sum, or std::nullopt if it overflows the sum type.
+    std::optional<int128_t> computeAdjustedSum() const {
       if (!sum.has_value()) {
         return std::nullopt;
       }
       const auto adjustedSum =
           DecimalUtil::adjustSumForOverflow(sum.value(), overflow);
+      if (!adjustedSum.has_value() ||
+          !DecimalUtil::valueInPrecisionRange(
+              adjustedSum.value(),
+              getDecimalPrecisionScale(*fn->sumType_).first)) {
+        return std::nullopt;
+      }
+      return adjustedSum;
+    }
+
+    std::optional<int128_t> computeFinalResult() const {
+      const auto adjustedSum = computeAdjustedSum();
       if (!adjustedSum.has_value()) {
-        // Found overflow during computing adjusted sum.
         return std::nullopt;
       }
 
