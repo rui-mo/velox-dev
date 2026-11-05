@@ -860,13 +860,23 @@ TEST(ArgValuesGeneratorsTest, cast) {
       collectStrings(value, strings);
     }
     const std::regex regex{pattern, std::regex::icase};
+    // Paddings are ASCII control characters, spaces, DEL and Unicode spaces.
+    const auto isPadding = [](char c) {
+      const auto byte = static_cast<uint8_t>(c);
+      return byte <= 0x20 || byte >= 0x7f;
+    };
     int32_t numMatches = 0;
     bool hasWhitespace = false;
     for (const auto& string : strings) {
-      const auto begin = string.find_first_not_of(" \t\n");
-      const auto trimmed = begin == std::string::npos
-          ? std::string()
-          : string.substr(begin, string.find_last_not_of(" \t\n") - begin + 1);
+      auto begin = string.begin();
+      auto end = string.end();
+      while (begin < end && isPadding(*begin)) {
+        ++begin;
+      }
+      while (end > begin && isPadding(*(end - 1))) {
+        --end;
+      }
+      const std::string trimmed(begin, end);
       hasWhitespace |= trimmed.size() < string.size();
       numMatches += std::regex_match(trimmed, regex) ? 1 : 0;
     }

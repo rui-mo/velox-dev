@@ -2184,9 +2184,20 @@ class CastStringGenerator : public AbstractInputGenerator {
     return randElement(castEdgeStrings(target_), rng_);
   }
 
-  // Spark ignores whitespace around the strings.
+  // Spark trims ASCII control characters and spaces around the strings, and DEL
+  // for some target types. It keeps Unicode spaces.
   std::string addWhitespace(std::string value) {
-    static const std::vector<std::string> kWhitespace{" ", "  ", "\t", "\n"};
+    static const std::vector<std::string> kWhitespace{
+        " ",
+        "  ",
+        "\t",
+        "\n",
+        std::string(1, '\0'),
+        "\x01",
+        "\x1f",
+        "\x7f",
+        "\u00a0",
+        "\u3000"};
     if (coinToss(rng_, 0.1)) {
       value = randElement(kWhitespace, rng_) + value;
     }
