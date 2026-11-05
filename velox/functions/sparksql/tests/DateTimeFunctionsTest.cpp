@@ -1042,6 +1042,46 @@ TEST_F(DateTimeFunctionsTest, getTimestamp) {
   EXPECT_EQ(getTimestampString("", ""), "1970-01-01T08:00:00.000000000");
   EXPECT_EQ(getTimestamp("0", ""), std::nullopt);
 
+  // Pattern letter 'X' parses a zone offset, with 'Z' for zero, instead of
+  // using the session time zone.
+  const auto getTimestampWithOffset = [&](const std::string& offset,
+                                          const std::string& pattern) {
+    const auto input = "2020-01-01 10:00:00" + offset;
+    return getTimestamp(StringView(input), "yyyy-MM-dd HH:mm:ss" + pattern);
+  };
+  EXPECT_EQ(
+      getTimestampWithOffset("+01", "X"),
+      parseTimestamp("2020-01-01 09:00:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+0130", "X"),
+      parseTimestamp("2020-01-01 08:30:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("-1430", "X"),
+      parseTimestamp("2020-01-02 00:30:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+18", "X"),
+      parseTimestamp("2019-12-31 16:00:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("z", "X"), parseTimestamp("2020-01-01 10:00:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+01:30", "XXX"),
+      parseTimestamp("2020-01-01 08:30:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+013045", "XXXX"),
+      parseTimestamp("2020-01-01 08:29:15"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+01:30", "XXXXX"),
+      parseTimestamp("2020-01-01 08:30:00"));
+  // Offsets must match the pattern and be within [-18:00, 18:00].
+  EXPECT_EQ(getTimestampWithOffset("+01:30", "X"), std::nullopt);
+  EXPECT_EQ(getTimestampWithOffset("+19", "X"), std::nullopt);
+  EXPECT_EQ(getTimestampWithOffset("+24", "X"), std::nullopt);
+  EXPECT_EQ(getTimestampWithOffset("+01", "XX"), std::nullopt);
+  EXPECT_EQ(getTimestampWithOffset("+0130", "XXX"), std::nullopt);
+  EXPECT_EQ(getTimestamp("X", "X"), std::nullopt);
+  VELOX_ASSERT_THROW(
+      getTimestamp("Z", "XXXXXX"), "Too many pattern letters: X");
+
   // Parsing error.
   EXPECT_EQ(
       getTimestamp("1970-01-01 06:10:59.019", "HH:mm:ss.SSS"), std::nullopt);
@@ -2473,6 +2513,29 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_EQ(
       "2022-01-01 00:00:00",
       dateFormat(parseTimestamp("2022-01-01"), "yyyy-MM-dd HH:mm:ss"));
+
+  // Pattern letter 'X' formats the zone offset, with 'Z' for zero.
+  const auto timestamp = parseTimestamp("2020-01-01 18:00:00");
+  setQueryTimeZone("America/Los_Angeles");
+  EXPECT_EQ("-08", dateFormat(timestamp, "X"));
+  EXPECT_EQ("-0800", dateFormat(timestamp, "XX"));
+  EXPECT_EQ("-08:00", dateFormat(timestamp, "XXX"));
+  EXPECT_EQ("-0800", dateFormat(timestamp, "XXXX"));
+  EXPECT_EQ("-08:00", dateFormat(timestamp, "XXXXX"));
+  EXPECT_EQ(
+      "2020-01-01 10:00:00-08", dateFormat(timestamp, "yyyy-MM-dd HH:mm:ssX"));
+  // The local mean time of Los Angeles is -07:52:58.
+  const auto lmtTimestamp = parseTimestamp("1800-01-01 00:00:00");
+  EXPECT_EQ("-0752", dateFormat(lmtTimestamp, "X"));
+  EXPECT_EQ("-075258", dateFormat(lmtTimestamp, "XXXX"));
+  EXPECT_EQ("-07:52:58", dateFormat(lmtTimestamp, "XXXXX"));
+  setQueryTimeZone("Asia/Kolkata");
+  EXPECT_EQ("+0530", dateFormat(timestamp, "X"));
+  setQueryTimeZone("UTC");
+  EXPECT_EQ("Z", dateFormat(timestamp, "X"));
+  EXPECT_EQ("Z", dateFormat(timestamp, "XXXXX"));
+  VELOX_ASSERT_THROW(
+      dateFormat(timestamp, "XXXXXX"), "Too many pattern letters: X");
 
   enableLegacyFormatter();
   EXPECT_EQ("4", dateFormat(parseTimestamp("1970-01-01"), "u"));

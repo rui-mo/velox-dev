@@ -405,6 +405,8 @@ TEST_F(JodaDateTimeFormatterTest, invalidJodaBuild) {
   EXPECT_TRUE(buildJodaDateTimeFormatter("q").hasError());
   EXPECT_TRUE(buildJodaDateTimeFormatter("r").hasError());
   EXPECT_TRUE(buildJodaDateTimeFormatter("g").hasError());
+  // Only Spark supports 'X'.
+  EXPECT_TRUE(buildJodaDateTimeFormatter("X").hasError());
 
   // Unclosed literal sequence
   EXPECT_TRUE(buildJodaDateTimeFormatter("'abcd").hasError());

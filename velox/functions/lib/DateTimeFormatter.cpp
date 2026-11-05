@@ -67,6 +67,8 @@ struct Date {
   int32_t microsecond = 0;
   bool isAm = true; // AM -> true, PM -> false
   const tz::TimeZone* timezone = nullptr;
+  // Zone offset parsed by DateTimeFormatSpecifier::ISO_ZONE_OFFSET.
+  std::optional<int32_t> zoneOffsetSeconds;
 
   bool isClockHour = false; // Whether most recent hour specifier is clockhour
   bool isHourOfHalfDay =
@@ -556,6 +558,69 @@ int64_t parseTimezoneOffset(const char* cur, const char* end, Date& date) {
   return -1;
 }
 
+// Parses a zone offset like java.time.format.DateTimeFormatter does for 'count'
+// pattern letters 'X' in strict, case-insensitive mode. 'X' is "+HH" with
+// optional minutes "mm", 'XX' is "+HHMM", 'XXX' is "+HH:MM", 'XXXX' is "+HHMM"
+// with optional seconds "ss", 'XXXXX' is "+HH:MM" with optional seconds ":ss",
+// and "Z" is a zero offset. Returns the number of characters parsed, or -1 if
+// the input does not match or the offset is out of range.
+int64_t
+parseIsoZoneOffset(const char* cur, const char* end, size_t count, Date& date) {
+  if (cur >= end) {
+    return -1;
+  }
+  if (*cur == 'Z' || *cur == 'z') {
+    date.zoneOffsetSeconds = 0;
+    return 1;
+  }
+  if (*cur != '+' && *cur != '-') {
+    return -1;
+  }
+  const bool colon = count == 3 || count == 5;
+  const char* pos = cur + 1;
+  // Parses two digits up to 59, preceded by a colon if 'withColon' is true.
+  // Consumes no input if they don't match.
+  const auto parseTwoDigits = [&](bool withColon, int32_t& value) {
+    const char* next = pos;
+    if (withColon) {
+      if (next == end || *next != ':') {
+        return false;
+      }
+      ++next;
+    }
+    if (end - next < 2 || !characterIsDigit(next[0]) ||
+        !characterIsDigit(next[1])) {
+      return false;
+    }
+    const int32_t digits = (next[0] - '0') * 10 + (next[1] - '0');
+    if (digits > 59) {
+      return false;
+    }
+    value = digits;
+    pos = next + 2;
+    return true;
+  };
+  int32_t hours = 0;
+  int32_t minutes = 0;
+  int32_t seconds = 0;
+  if (!parseTwoDigits(false, hours)) {
+    return -1;
+  }
+  if (!parseTwoDigits(colon, minutes) && count > 1) {
+    return -1;
+  }
+  if (count >= 4) {
+    parseTwoDigits(colon, seconds);
+  }
+  // java.time.ZoneOffset is within [-18:00, 18:00].
+  const int32_t offset = hours * 3600 + minutes * 60 + seconds;
+  if (offset > 18 * 3600) {
+    return -1;
+  }
+  date.zoneOffsetSeconds = *cur == '-' ? -offset : offset;
+  return pos - cur;
+}
+
 int64_t parseEra(const char* cur, const char* end, Date& date) {
   if ((end - cur) >= 2) {
     if (std::strncmp(cur, "AD", 2) == 0 || std::strncmp(cur, "ad", 2) == 0) {
@@ -701,6 +766,43 @@ int32_t appendTimezoneOffset(int64_t offset, char* result, bool includeColon) {
   return pos;
 }
 
+// Appends a zone offset like java.time.format.DateTimeFormatter does for
+// 'count' pattern letters 'X'. 'X' omits zero minutes, 'XX' to 'XXXXX' output
+// minutes, 'XXXX' and 'XXXXX' also output non-zero seconds, and 'XXX' and
+// 'XXXXX' separate them with colons. An offset that would output only zeros is
+// "Z".
+int32_t appendIsoZoneOffset(int64_t offset, size_t count, char* result) {
+  const auto absOffset = std::abs(offset);
+  const auto hours = absOffset / 3600;
+  const auto minutes = absOffset / 60 % 60;
+  const auto seconds = absOffset % 60;
+  const bool outputMinutes = count > 1 || minutes > 0;
+  const bool outputSeconds = count >= 4 && seconds > 0;
+  if (hours == 0 && minutes == 0 && !outputSeconds) {
+    result[0] = 'Z';
+    return 1;
+  }
+
+  const bool colon = count == 3 || count == 5;
+  int32_t pos = 0;
+  const auto appendTwoDigits = [&](int64_t value, bool withColon) {
+    if (withColon) {
+      result[pos++] = ':';
+    }
+    result[pos++] = char(value / 10 + '0');
+    result[pos++] = char(value % 10 + '0');
+  };
+  result[pos++] = offset < 0 ? '-' : '+';
+  appendTwoDigits(hours, false);
+  if (outputMinutes) {
+    appendTwoDigits(minutes, colon);
+  }
+  if (outputSeconds) {
+    appendTwoDigits(seconds, colon);
+  }
+  return pos;
+}
+
 // According to DateTimeFormatSpecifier enum class
 std::string_view getSpecifierName(DateTimeFormatSpecifier specifier) {
   switch (specifier) {
@@ -754,6 +856,8 @@ std::string_view getSpecifierName(DateTimeFormatSpecifier specifier) {
       return "LITERAL_PERCENT";
     case DateTimeFormatSpecifier::WEEK_OF_MONTH:
       return "WEEK_OF_MONTH";
+    case DateTimeFormatSpecifier::ISO_ZONE_OFFSET:
+      return "ISO_ZONE_OFFSET";
     default: {
       VELOX_UNREACHABLE("[Unexpected date format specifier]");
       return ""; // Make compiler happy.
@@ -829,6 +933,13 @@ int32_t parseFromPattern(
       size = parseTimezoneName(cur, end, date);
     }
 
+    if (size == -1) {
+      return -1;
+    }
+    cur += size;
+  } else if (curPattern.specifier == DateTimeFormatSpecifier::ISO_ZONE_OFFSET) {
+    auto size =
+        parseIsoZoneOffset(cur, end, curPattern.minRepresentDigits, date);
     if (size == -1) {
       return -1;
     }
@@ -1245,6 +1356,10 @@ uint32_t DateTimeFormatter::maxResultSize(const tz::TimeZone* timezone) const {
           size += 32;
         }
         break;
+      case DateTimeFormatSpecifier::ISO_ZONE_OFFSET:
+        // The longest offset is "+HH:MM:ss".
+        size += 9;
+        break;
       default:
         VELOX_UNSUPPORTED(
             "Date format specifier is not supported: {}",
@@ -1529,6 +1644,10 @@ int32_t DateTimeFormatter::format(
               offset, result, token.pattern.minRepresentDigits == 2);
           break;
         }
+        case DateTimeFormatSpecifier::ISO_ZONE_OFFSET:
+          result += appendIsoZoneOffset(
+              offset, token.pattern.minRepresentDigits, result);
+          break;
         case DateTimeFormatSpecifier::WEEK_OF_WEEK_YEAR: {
           auto isoWeek = date::iso_week::year_weeknum_weekday{calDate};
           result += padContent(
@@ -1677,9 +1796,18 @@ Expected<DateTimeResult> DateTimeFormatter::parse(
 
   int64_t microsSinceMidnight =
       util::fromTime(date.hour, date.minute, date.second, date.microsecond);
-  return DateTimeResult{
-      util::fromDatetime(daysSinceEpoch.value(), microsSinceMidnight),
-      date.timezone};
+  const auto timestamp =
+      util::fromDatetime(daysSinceEpoch.value(), microsSinceMidnight);
+  if (date.zoneOffsetSeconds.has_value()) {
+    // Time zones only support offsets in minutes within [-14:00, 14:00], so
+    // apply the offset here and return the timestamp in UTC.
+    return DateTimeResult{
+        Timestamp(
+            timestamp.getSeconds() - *date.zoneOffsetSeconds,
+            timestamp.getNanos()),
+        tz::locateZone(0)};
+  }
+  return DateTimeResult{timestamp, date.timezone};
 }
 
 Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
@@ -1820,7 +1948,8 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
 }
 
 Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
-    const std::string_view& format) {
+    const std::string_view& format,
+    bool allowIsoZoneOffset) {
   if (format.empty()) {
     if (threadSkipErrorDetails()) {
       return folly::makeUnexpected(Status::UserError());
@@ -1935,6 +2064,19 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
         case 'Z':
           builder.appendTimeZoneOffsetId(count);
           break;
+        case 'X':
+          if (allowIsoZoneOffset) {
+            if (count > 5) {
+              if (threadSkipErrorDetails()) {
+                return folly::makeUnexpected(Status::UserError());
+              }
+              return folly::makeUnexpected(
+                  Status::UserError("Too many pattern letters: X"));
+            }
+            builder.appendIsoZoneOffset(count);
+            break;
+          }
+          [[fallthrough]];
         default:
           if (isalpha(*startTokenPtr)) {
             if (threadSkipErrorDetails()) {
