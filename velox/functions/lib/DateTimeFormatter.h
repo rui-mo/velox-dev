@@ -116,7 +116,13 @@ enum class DateTimeFormatSpecifier : uint8_t {
   LITERAL_PERCENT = 23,
 
   // Week of month based on java.text.SimpleDateFormat, e.g: 2
-  WEEK_OF_MONTH = 24
+  WEEK_OF_MONTH = 24,
+
+  // Zone offset in ISO 8601 format with 'Z' for zero, e.g: "Z", "-08",
+  // "-0830", "-08:30", "-083015" or "-08:30:15", depending on the number of
+  // times the formatter character repeats. It is the pattern letter 'X' of
+  // java.time.format.DateTimeFormatter, which Spark supports.
+  ISO_ZONE_OFFSET = 25
 };
 
 struct FormatPattern {
@@ -226,8 +232,12 @@ class DateTimeFormatter {
 Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
     const std::string_view& format);
 
+/// Builds a formatter for a Joda pattern. If 'allowIsoZoneOffset' is true, the
+/// pattern can also use the letter 'X' (DateTimeFormatSpecifier::
+/// ISO_ZONE_OFFSET), which Spark supports and Joda does not.
 Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
-    const std::string_view& format);
+    const std::string_view& format,
+    bool allowIsoZoneOffset = false);
 
 Expected<std::shared_ptr<DateTimeFormatter>> buildSimpleDateTimeFormatter(
     const std::string_view& format,

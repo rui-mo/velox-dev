@@ -690,3 +690,15 @@ returned for invalid format; otherwise, exception is thrown. ::
         SELECT from_unixtime(100, '!@#$%^&*'); -- throws exception) (for Joda date formatter)
         SELECT get_timestamp('1970-01-01', '!@#$%^&*'); -- NULL (parsing error) (for Simple date formatter)
         SELECT get_timestamp('1970-01-01', '!@#$%^&*'); -- throws exception) (for Joda date formatter)
+
+Only the `Joda` date formatter supports Spark's pattern letter ``X`` for zone offsets. The number
+of letters selects the style: ``X`` gives ``-08``, or ``-0830`` when minutes are non-zero, ``XX``
+gives ``-0800``, ``XXX`` gives ``-08:00``, ``XXXX`` gives ``-0800``, or ``-083015`` when seconds are
+non-zero, and ``XXXXX`` gives ``-08:00``, or ``-08:30:15`` when seconds are non-zero. A zero offset
+gives ``Z``. Parsing accepts the same styles, and more than five letters throw an exception.
+Under session timezone ``America/Los_Angeles``: ::
+
+        SELECT date_format('2020-01-01 10:00:00', 'yyyy-MM-dd HH:mm:ssXXX'); -- '2020-01-01 10:00:00-08:00'
+        SELECT unix_timestamp('2020-01-01 10:00:00+01', 'yyyy-MM-dd HH:mm:ssX'); -- 1577869200
+        SELECT unix_timestamp('2020-01-01 10:00:00Z', 'yyyy-MM-dd HH:mm:ssX'); -- 1577872800
+        SELECT unix_timestamp('2020-01-01 10:00:00+01:30', 'yyyy-MM-dd HH:mm:ssX'); -- NULL

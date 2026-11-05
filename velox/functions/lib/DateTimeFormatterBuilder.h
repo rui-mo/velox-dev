@@ -266,6 +266,13 @@ class DateTimeFormatterBuilder {
   /// represent time zone offset id.
   DateTimeFormatterBuilder& appendTimeZoneOffsetId(size_t minDigits);
 
+  /// Appends a zone offset in ISO 8601 format with 'Z' for zero to formatter
+  /// builder, e.g: 'Z', '-08', '-0830', '-08:30', '-083015' or '-08:30:15'.
+  ///
+  /// \param count the number of pattern letters 'X', from 1 to 5, which selects
+  /// the format like java.time.format.DateTimeFormatter does.
+  DateTimeFormatterBuilder& appendIsoZoneOffset(size_t count);
+
   DateTimeFormatterBuilder& appendLiteral(const std::string_view& literal);
 
   DateTimeFormatterBuilder& appendLiteral(
