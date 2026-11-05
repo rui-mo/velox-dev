@@ -134,6 +134,19 @@ rows, and verifies 3 of the rows that throw one at a time. The aggregation
 fuzzer runs a query in Spark also when Velox throws, and reports the errors
 that only one engine raises.
 
+`summary --coverage` counts the test cases of each function by outcome and
+ANSI mode, and lists the functions that Spark never verified in a mode. Its
+outcomes are `verified`, `both threw`, `one-sided` (an error that one engine
+skips for rows the other doesn't evaluate), `unsupported` and `unchecked`.
+Unchecked iterations of the aggregation fuzzer compare only the number of rows.
+Casts are also counted by their target type, e.g. `try_cast as ARRAY<BIGINT>`.
+The candidate functions of the expression fuzzer are those that passed runs
+report, and `chosen` counts how often the fuzzer chose them:
+
+```bash
+scripts/spark-fuzzer/spark_fuzzer.py summary runs/ansi-off runs/ansi-on --examples 0 --coverage
+```
+
 ## Triaging failures
 
 ```bash

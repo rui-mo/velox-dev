@@ -19,7 +19,8 @@ failures.
 Subcommands:
   run      Runs a fuzzer with a number of seeds and records the results.
   summary  Groups the failures recorded by 'run' by their errors, and counts
-           the test cases that Spark can't verify by their reason.
+           the test cases that Spark can't verify by their reason, and the
+           test cases of each function by their outcome.
   repro    Reruns one fuzzer iteration and prints its expressions, the Spark
            SQL and the error.
   recheck  Reruns the failed iterations of runs with the current build, e.g.
@@ -607,6 +608,254 @@ def count_unsupported(results):
     return counts
 
 
+# Outcomes of test cases, in the order of the columns of the coverage report.
+OUTCOMES = ("verified", "both threw", "one-sided", "unsupported", "unchecked")
+
+# Messages that log the outcome of a test case of the expression fuzzer. An
+# error is one-sided if only one engine throws it for the rows of the test case,
+# and both throw it for the smallest subexpression that fails.
+EXPRESSION_OUTCOMES = (
+    ("Verified results against reference DB", "verified"),
+    ("Both paths threw exception.", "both threw"),
+    ("The reference DB skipped an error that Velox throws", "one-sided"),
+    ("Velox suppressed an error that the reference DB throws", "one-sided"),
+    ("Reference DB doesn't support this query", "unsupported"),
+)
+
+# Messages that log the outcome of the Spark query of an iteration of the
+# aggregation fuzzer. Custom verifiers compare transformed results, e.g. sorted
+# arrays. Iterations without one of these messages are unchecked, e.g. those of
+# functions with null custom verifiers, which only compare the number of rows.
+AGGREGATION_OUTCOMES = (
+    ("Verified results against reference DB", "verified"),
+    ("Verified through custom verifier.", "verified"),
+    ("Velox and reference DB both throw", "both threw"),
+    ("Spark query not supported: ", "unsupported"),
+    ("Spark query unsupported: ", "unsupported"),
+)
+
+EXECUTING_EXPRESSION = re.compile(r"Executing expression (\d+) : (.*)")
+FUNCTION_CALL = re.compile(r"\b([a-z_][a-z0-9_]*)\(")
+AGGREGATE_CALL = re.compile(r":= ([a-z_][a-z0-9_]*)\(")
+CAST_TOKEN = re.compile(r"\b(try_cast|cast)\(| as (?=[A-Z])")
+TYPE_NAME = re.compile(r"[A-Z][A-Z0-9_ ]*")
+STATS_ENTRY = re.compile(r"(\S+) (\d+) [\d.]+% \d+$")
+
+
+def type_end(text, start):
+    """Returns the end of the type that starts at 'start' in 'text', e.g. of
+    'DECIMAL(6, 0)' or 'ARRAY<BIGINT>', or -1."""
+    match = TYPE_NAME.match(text, start)
+    if not match:
+        return -1
+    end = match.end()
+    if text.startswith("(", end):
+        close = text.find(")", end)
+        return close + 1 if close >= 0 else -1
+    if text.startswith("<", end):
+        depth = 0
+        for i in range(end, len(text)):
+            if text[i] == "<":
+                depth += 1
+            elif text[i] == ">":
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+        return -1
+    return end
+
+
+def cast_targets(expression):
+    """Returns the casts of an expression by their target types, e.g. 'try_cast
+    as ROW<DECIMAL>' for 'try_cast("c0" as ROW<f0:DECIMAL(6, 0)>)'. The target
+    types omit precisions, scales and field names."""
+    targets = set()
+    forms = []
+    for match in CAST_TOKEN.finditer(expression):
+        if match.group(1):
+            forms.append(match.group(1))
+            continue
+        start = match.end()
+        end = type_end(expression, start)
+        if forms and end > start and expression.startswith(")", end):
+            target = re.sub(r"\(\d+, ?\d+\)", "", expression[start:end])
+            target = re.sub(r"(?<=[<,])[^<>,:]*:", "", target)
+            targets.add(f"{forms.pop()} as {target}")
+    return targets
+
+
+def expression_names(expression):
+    """Returns the functions and the casts that an expression calls. The names
+    include words of string constants, which print without quotes."""
+    return set(FUNCTION_CALL.findall(expression)) | cast_targets(expression)
+
+
+def add_outcome(counts, names, outcome):
+    for name in names:
+        outcomes = counts.setdefault(name, {})
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+
+
+def read_expression_coverage(path, counts, chosen):
+    """Counts the test cases of an expression fuzzer log by the functions of
+    their expressions and their outcome. Adds the times the fuzzer chose each
+    candidate function to 'chosen'. Only passed runs log these."""
+    names = set()
+    in_expression = False
+    in_stats = False
+    with path.open(errors="replace") as file:
+        for line in file:
+            if not GLOG_PREFIX.match(line):
+                # Expressions with line breaks in string constants continue on
+                # the next lines.
+                if in_expression:
+                    names |= expression_names(line)
+                continue
+            message = strip_prefix(line)
+            in_expression = False
+            match = EXECUTING_EXPRESSION.match(message)
+            if match:
+                if match.group(1) == "0":
+                    names = set()
+                names |= expression_names(match.group(2))
+                in_expression = True
+                continue
+            for prefix, outcome in EXPRESSION_OUTCOMES:
+                if message.startswith(prefix):
+                    add_outcome(counts, names, outcome)
+                    break
+            if "All stats sorted by number of times" in message:
+                in_stats = True
+            elif message.startswith("Total test cases"):
+                in_stats = False
+            elif in_stats:
+                match = STATS_ENTRY.match(message)
+                if match:
+                    name = match.group(1)
+                    chosen[name] = chosen.get(name, 0) + int(match.group(2))
+
+
+def read_aggregation_coverage(path, counts):
+    """Counts the iterations of an aggregation fuzzer log by the functions of
+    their first plan and the outcome of its Spark query. Spark only runs the
+    first plan of each iteration."""
+    names = None
+    plans = 0
+    outcome = None
+    with path.open(errors="replace") as file:
+        for line in file:
+            if not GLOG_PREFIX.match(line):
+                if names is not None and plans == 1 and outcome is None:
+                    names.update(AGGREGATE_CALL.findall(line))
+                continue
+            message = strip_prefix(line)
+            if "> Started iteration" in message:
+                names, plans, outcome = set(), 0, None
+            elif names is None:
+                continue
+            elif message.startswith("Executing query plan:"):
+                plans += 1
+                if plans == 1:
+                    names.update(AGGREGATE_CALL.findall(message))
+            elif "> Done with iteration" in message:
+                add_outcome(counts, names, outcome or "unchecked")
+                names = None
+            elif plans == 1 and outcome is None:
+                for prefix, value in AGGREGATION_OUTCOMES:
+                    if message.startswith(prefix):
+                        outcome = value
+                        break
+
+
+def print_coverage(run_dirs, results_name):
+    """Prints the test cases of each function by outcome and ANSI mode, and the
+    functions that Spark never verified."""
+    # (fuzzer, ANSI mode) -> function -> outcome -> count.
+    counts = {}
+    # (fuzzer, ANSI mode) -> candidate function -> times chosen.
+    chosen = {}
+    for run_dir in run_dirs:
+        config_path = run_dir / "config.json"
+        config = json.loads(config_path.read_text()) if config_path.is_file() else {}
+        key = (config.get("fuzzer", "expression"), config.get("ansi") or "off")
+        for result in read_results(run_dir / results_name):
+            path = Path(result.get("log", ""))
+            if not path.is_file():
+                continue
+            if key[0] == "aggregation":
+                read_aggregation_coverage(path, counts.setdefault(key, {}))
+            else:
+                read_expression_coverage(
+                    path, counts.setdefault(key, {}), chosen.setdefault(key, {})
+                )
+    for fuzzer in sorted({fuzzer for fuzzer, _ in counts}):
+        modes = sorted(mode for f, mode in counts if f == fuzzer)
+        candidates = set()
+        for mode in modes:
+            candidates |= set(chosen.get((fuzzer, mode), {}))
+        if "cast" in candidates:
+            candidates.add("try_cast")
+        names = set()
+        for mode in modes:
+            names |= set(counts[(fuzzer, mode)])
+        # Without the candidates of a passed run, words of string constants
+        # can't be told apart from functions.
+        if candidates:
+            names = {n for n in names if n in candidates or " as " in n}
+            names |= candidates
+        columns = [
+            o
+            for o in OUTCOMES
+            if o == "verified"
+            or any(
+                counts[(fuzzer, mode)].get(n, {}).get(o)
+                for mode in modes
+                for n in names
+            )
+        ]
+        if candidates:
+            columns.insert(0, "chosen")
+
+        def cell(name, column):
+            values = []
+            for mode in modes:
+                if column == "chosen":
+                    value = chosen.get((fuzzer, mode), {}).get(name)
+                    values.append("-" if value is None else str(value))
+                else:
+                    values.append(
+                        str(counts[(fuzzer, mode)].get(name, {}).get(column, 0))
+                    )
+            # The fuzzer counts try_cast and the casts by target type as cast,
+            # so their chosen cells are blank.
+            if all(value == "-" for value in values):
+                return ""
+            return "/".join(values)
+
+        width = max([len(n) for n in names] + [8]) + 2
+        log(
+            f"\nCoverage of the {fuzzer} fuzzer, test cases by function and "
+            f"outcome, ANSI {'/'.join(modes)}:"
+        )
+        log("  " + "function".ljust(width) + "".join(c.rjust(16) for c in columns))
+        for name in sorted(names):
+            log(
+                "  "
+                + name.ljust(width)
+                + "".join(cell(name, c).rjust(16) for c in columns)
+            )
+        for mode in modes:
+            never = sorted(
+                n
+                for n in names
+                if not counts[(fuzzer, mode)].get(n, {}).get("verified")
+            )
+            log(
+                f"Never verified against Spark with ANSI {mode}: "
+                f"{', '.join(never) if never else 'none'}"
+            )
+
+
 def cmd_summary(args, _):
     run_dirs = [Path(d) for d in args.run_dirs] or latest_run_dirs()
     for run_dir in run_dirs:
@@ -633,6 +882,8 @@ def cmd_summary(args, _):
             : args.unsupported
         ]:
             log(f"  {count} {key}")
+    if args.coverage:
+        print_coverage(run_dirs, name)
 
 
 def iteration_command(args, seed, extra_flags):
@@ -928,6 +1179,13 @@ def main():
         default=0,
         metavar="N",
         help="Print the N most common reasons why Spark can't verify test cases.",
+    )
+    summary.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Count the test cases of each function and cast target type by "
+        "outcome and ANSI mode, e.g. verified against Spark or both threw, and "
+        "list the functions that Spark never verified.",
     )
     summary.set_defaults(handler=cmd_summary)
 
