@@ -1574,6 +1574,40 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
              -300},
             DECIMAL(12, 2)));
 
+    // Spark parses the string with Java's BigDecimal, which accepts the
+    // decimal digits of other scripts in the Basic Multilingual Plane.
+    testCast(
+        makeFlatVector<StringView>(
+            {"１.５", // Full-width digits.
+             "０９",
+             "１E２",
+             "-１.５e-１",
+             "1e０２",
+             "1.５e1",
+             " １.５ ",
+             "١٢٣", // Arabic-Indic digits.
+             "٠٩",
+             "१२.५", // Devanagari digits.
+             "１２３４５６７８９０.１２３４５６７８９"}),
+        makeFlatVector<int64_t>(
+            {150,
+             900,
+             10000,
+             -15,
+             10000,
+             1500,
+             150,
+             12300,
+             900,
+             1250,
+             123456789012},
+            DECIMAL(12, 2)));
+    testCast(
+        makeFlatVector<StringView>(
+            {"１２３４５６７８９０１２３４５６７８９０.５"}),
+        makeFlatVector<int128_t>(
+            {HugeInt::parse("12345678901234567891")}, DECIMAL(38, 0)));
+
     // Truncates the fractional digits with exponent.
     testCast(
         makeFlatVector<StringView>(
@@ -4080,6 +4114,24 @@ TEST_F(SparkCastExprTestAnsiOn, varcharToDecimal) {
       DECIMAL(12, 2),
       {"09{xi+yD"},
       "Cannot cast VARCHAR '09{xi+yD' to DECIMAL(12, 2). Value is not a number. Chars are invalid.");
+
+  // Digits outside the Basic Multilingual Plane, such as U+1D7CF, and the
+  // characters around the full-width digits U+FF10 to U+FF19 are invalid.
+  testThrow<std::string>(
+      VARCHAR(),
+      DECIMAL(12, 2),
+      {"𝟏"},
+      "Cannot cast VARCHAR '𝟏' to DECIMAL(12, 2). Value is not a number. Extracted digits are empty.");
+  testThrow<std::string>(
+      VARCHAR(),
+      DECIMAL(12, 2),
+      {"／１"},
+      "Cannot cast VARCHAR '／１' to DECIMAL(12, 2). Value is not a number. Extracted digits are empty.");
+  testThrow<std::string>(
+      VARCHAR(),
+      DECIMAL(12, 2),
+      {"１："},
+      "Cannot cast VARCHAR '１：' to DECIMAL(12, 2). Value is not a number. Chars are invalid.");
 }
 
 TEST_F(SparkCastExprTestAnsiOn, integralToDecimal) {
@@ -4401,6 +4453,15 @@ TEST_F(SparkCastExprTestAnsiOff, varcharToDecimal) {
       "decimal(12, 2)",
       {"09{xi+yD"},
       {std::nullopt},
+      VARCHAR(),
+      DECIMAL(12, 2));
+
+  // Digits outside the Basic Multilingual Plane, such as U+1D7CF, and the
+  // characters around the full-width digits U+FF10 to U+FF19 are invalid.
+  testCast<std::string, int64_t>(
+      "decimal(12, 2)",
+      {"𝟏", "／１", "１："},
+      {std::nullopt, std::nullopt, std::nullopt},
       VARCHAR(),
       DECIMAL(12, 2));
 }

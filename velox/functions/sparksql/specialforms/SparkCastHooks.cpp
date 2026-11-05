@@ -17,9 +17,11 @@
 #include "velox/functions/sparksql/specialforms/SparkCastHooks.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <optional>
@@ -28,6 +30,7 @@
 #include <folly/Range.h>
 
 #include "velox/common/base/VeloxException.h"
+#include "velox/functions/lib/Utf8Utils.h"
 #include "velox/functions/sparksql/SparkQueryConfig.h"
 #include "velox/functions/sparksql/TimestampUtils.h"
 #include "velox/type/TimestampConversion.h"
@@ -41,6 +44,26 @@ namespace {
 // Max DATE magnitude before TIMESTAMP_NTZ's microseconds-since-epoch range
 // overflows. Spark throws here unconditionally, ANSI or not.
 constexpr int64_t kMaxTimestampUtcDays = 106'751'991;
+
+// The digit zero of each script whose decimal digits are in the Basic
+// Multilingual Plane, as Java 21's Character.isDigit reports them. Each script
+// encodes its digits 0 to 9 as 10 consecutive code points.
+constexpr std::array<int32_t, 37> kDigitZeros = {
+    0x0030, 0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6,
+    0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66, 0x0DE6, 0x0E50, 0x0ED0,
+    0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80,
+    0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900,
+    0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10};
+
+// Returns the value of 'codePoint' if it is a digit in kDigitZeros, or -1.
+int32_t digitValue(int32_t codePoint) {
+  for (const auto zero : kDigitZeros) {
+    if (codePoint >= zero && codePoint < zero + 10) {
+      return codePoint - zero;
+    }
+  }
+  return -1;
+}
 
 // Returns whether the timestamp fits in Spark's range, i.e. microseconds since
 // the epoch in an int64.
@@ -508,6 +531,31 @@ StringView SparkCastHooks::removeWhiteSpaces(
     default:
       return trimUtf8StringAll(view);
   }
+}
+
+StringView SparkCastHooks::toAsciiDigits(
+    const StringView& data,
+    std::string& buffer) const {
+  const char* const end = data.data() + data.size();
+  const char* nonAscii =
+      std::find_if(data.data(), end, [](char c) { return !IS_ASCII(c); });
+  if (nonAscii == end) {
+    return data;
+  }
+  buffer.assign(data.data(), nonAscii);
+  for (const char* pos = nonAscii; pos < end;) {
+    int32_t codePoint;
+    const auto length = tryGetUtf8CharLength(pos, end - pos, codePoint);
+    // Invalid UTF-8 bytes are copied, so the parsing rejects them.
+    const auto digit = length > 0 ? digitValue(codePoint) : -1;
+    if (digit >= 0) {
+      buffer.push_back(static_cast<char>('0' + digit));
+    } else {
+      buffer.append(pos, std::abs(length));
+    }
+    pos += std::abs(length);
+  }
+  return StringView(buffer);
 }
 
 void SparkCastHooks::castDateTimestampToGMT(

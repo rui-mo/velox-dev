@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <string>
 #include <type_traits>
 
 #include <folly/Expected.h>
@@ -124,6 +125,16 @@ class CastHooks {
   virtual StringView removeWhiteSpaces(
       const StringView& view,
       const Type& toType) const = 0;
+
+  /// Returns 'data', the trimmed input of a cast from string to decimal, with
+  /// the decimal digits of other scripts replaced by ASCII digits. The result
+  /// may point to 'buffer'. By default, returns 'data', so the cast rejects
+  /// these digits.
+  virtual StringView toAsciiDigits(
+      const StringView& data,
+      std::string& /*buffer*/) const {
+    return data;
+  }
 
   /// Returns the options to cast from timestamp to string.
   virtual const TimestampToStringOptions& timestampToStringOptions() const = 0;
