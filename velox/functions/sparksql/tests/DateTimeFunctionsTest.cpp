@@ -329,7 +329,6 @@ TEST_F(DateTimeFunctionsTest, unixTimestampCustomFormat) {
   };
 
   EXPECT_EQ(0, unixTimestamp("1970-01-01", "yyyy-MM-dd"));
-  EXPECT_EQ(-31536000, unixTimestamp("1969", "YYYY"));
   EXPECT_EQ(86400, unixTimestamp("1970-01-02", "yyyy-MM-dd"));
   EXPECT_EQ(86410, unixTimestamp("1970-01-02 00:00:10", "yyyy-MM-dd HH:mm:ss"));
 
@@ -342,6 +341,19 @@ TEST_F(DateTimeFunctionsTest, unixTimestampCustomFormat) {
   VELOX_ASSERT_USER_THROW(
       unixTimestamp("2022-12-12 asd 07:45:31", "yyyy-MM-dd 'asd HH:mm:ss"),
       "No closing single quote for literal");
+  VELOX_ASSERT_USER_THROW(
+      unixTimestamp("2020", "yyyy'"), "No closing single quote for literal");
+  // Spark splits a parsing pattern with 'S' on quotes, which accepts an
+  // unclosed quote.
+  EXPECT_EQ(1577836800, unixTimestamp("2020 123", "yyyy SSS'"));
+
+  // Spark rejects week-based letters, and text day-of-week for parsing.
+  VELOX_ASSERT_USER_THROW(
+      unixTimestamp("1969", "YYYY"),
+      "All week-based patterns are unsupported since Spark 3.0, detected week-based character: Y.");
+  VELOX_ASSERT_USER_THROW(
+      unixTimestamp("2002-03-23 Sat", "yyyy-MM-dd E"),
+      "Illegal pattern character found in datetime pattern: E.");
 
   // Empty format only parses empty strings.
   EXPECT_EQ(0, unixTimestamp("", ""));
@@ -427,7 +439,7 @@ TEST_F(DateTimeFunctionsTest, unixTimestampDateInput) {
 // unix_timestamp and to_unix_timestamp are aliases.
 TEST_F(DateTimeFunctionsTest, toUnixTimestamp) {
   std::optional<StringView> dateStr = "1970-01-01 08:32:11"_sv;
-  std::optional<StringView> formatStr = "YYYY-MM-dd HH:mm:ss"_sv;
+  std::optional<StringView> formatStr = "yyyy-MM-dd HH:mm:ss"_sv;
 
   EXPECT_EQ(
       evaluateOnce<int64_t>("unix_timestamp(c0)", dateStr),
@@ -1197,6 +1209,9 @@ TEST_F(DateTimeFunctionsTest, getTimestamp) {
   VELOX_ASSERT_THROW(
       getTimestamp("2023-07-13 21:34", "yyyy-MM-dd HH:II"),
       "Specifier I is not supported");
+  VELOX_ASSERT_USER_THROW(
+      getTimestamp("2002-03-23 Sat", "yyyy-MM-dd E"),
+      "Illegal pattern character found in datetime pattern: E.");
 
   enableLegacyFormatter();
   // Returns null for invalid datetime format when legacy date formatter is
@@ -1562,6 +1577,9 @@ TEST_F(DateTimeFunctionsTest, fromUnixtime) {
       fromUnixTime(0, "FF/MM/dd"), "Specifier F is not supported");
   VELOX_ASSERT_THROW(
       fromUnixTime(0, "yyyy-MM-dd HH:II"), "Specifier I is not supported");
+  VELOX_ASSERT_USER_THROW(
+      fromUnixTime(0, "C"),
+      "Illegal pattern character found in datetime pattern: C.");
 
   // Empty format.
   EXPECT_EQ(fromUnixTime(0, ""), "");
@@ -2767,13 +2785,61 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_THROW(
       dateFormat(parseTimestamp("1970-01-01"), "'abcd"), VeloxUserError);
 
+  // Spark rejects the patterns that Java's DateTimeFormatter rejects, and
+  // week-based letters.
+  const auto timestamp = parseTimestamp("2002-03-23 15:29:43");
+  VELOX_ASSERT_USER_THROW(
+      dateFormat(timestamp, "yyyy C"),
+      "Illegal pattern character found in datetime pattern: C.");
+  for (const auto* pattern : {"Y", "w", "e"}) {
+    VELOX_ASSERT_USER_THROW(
+        dateFormat(timestamp, pattern),
+        "All week-based patterns are unsupported since Spark 3.0");
+  }
+  VELOX_ASSERT_USER_THROW(
+      dateFormat(timestamp, "HHH"),
+      "Too many letters in datetime pattern: HHH");
+  for (const auto* pattern :
+       {"GGGGG",
+        "yyyyyyy",
+        "MMMMM",
+        "DDDD",
+        "ddd",
+        "EEEEE",
+        "aa",
+        "hhh",
+        "KKK",
+        "kkk",
+        "mmm",
+        "sss",
+        "SSSSSSSSSS",
+        "zzzzz",
+        "ZZZZZZ",
+        "xxxxxx"}) {
+    VELOX_ASSERT_USER_THROW(
+        dateFormat(timestamp, pattern), "Too many letters in datetime pattern");
+  }
+  for (const auto* pattern : {"'", "yyyy'", "'a''"}) {
+    VELOX_ASSERT_USER_THROW(
+        dateFormat(timestamp, pattern), "No closing single quote for literal");
+  }
+  for (const auto* pattern : {"yyyy{", "}", "#"}) {
+    VELOX_ASSERT_USER_THROW(
+        dateFormat(timestamp, pattern), "Pattern includes reserved character");
+  }
+  VELOX_ASSERT_USER_THROW(
+      dateFormat(timestamp, "yyyy]"),
+      "Pattern invalid as it contains ] without previous [");
+  EXPECT_EQ("C{#}] it's", dateFormat(timestamp, "'C{#}] it''s'"));
+  EXPECT_EQ(
+      "Saturday 002002 082 000000000",
+      dateFormat(timestamp, "EEEE yyyyyy DDD SSSSSSSSS"));
+
   // Empty format.
   EXPECT_EQ("", dateFormat(parseTimestamp("1970-01-01"), ""));
 
   // Check Simple tests.
   EXPECT_EQ("AD", dateFormat(parseTimestamp("1970-01-01"), "G"));
-  EXPECT_EQ("19", dateFormat(parseTimestamp("1900-01-01"), "C"));
-  EXPECT_EQ("2020", dateFormat(parseTimestamp("2020-01-01"), "Y"));
   EXPECT_EQ("1", dateFormat(parseTimestamp("2022-01-01"), "D"));
   EXPECT_EQ("1", dateFormat(parseTimestamp("2022-01-01"), "d"));
   EXPECT_EQ("AM", dateFormat(parseTimestamp("2022-01-01 00:00:00"), "a"));
@@ -2782,27 +2848,28 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
       dateFormat(parseTimestamp("2022-01-01"), "yyyy-MM-dd HH:mm:ss"));
 
   // Pattern letter 'X' formats the zone offset, with 'Z' for zero.
-  const auto timestamp = parseTimestamp("2020-01-01 18:00:00");
+  const auto offsetTimestamp = parseTimestamp("2020-01-01 18:00:00");
   setQueryTimeZone("America/Los_Angeles");
-  EXPECT_EQ("-08", dateFormat(timestamp, "X"));
-  EXPECT_EQ("-0800", dateFormat(timestamp, "XX"));
-  EXPECT_EQ("-08:00", dateFormat(timestamp, "XXX"));
-  EXPECT_EQ("-0800", dateFormat(timestamp, "XXXX"));
-  EXPECT_EQ("-08:00", dateFormat(timestamp, "XXXXX"));
+  EXPECT_EQ("-08", dateFormat(offsetTimestamp, "X"));
+  EXPECT_EQ("-0800", dateFormat(offsetTimestamp, "XX"));
+  EXPECT_EQ("-08:00", dateFormat(offsetTimestamp, "XXX"));
+  EXPECT_EQ("-0800", dateFormat(offsetTimestamp, "XXXX"));
+  EXPECT_EQ("-08:00", dateFormat(offsetTimestamp, "XXXXX"));
   EXPECT_EQ(
-      "2020-01-01 10:00:00-08", dateFormat(timestamp, "yyyy-MM-dd HH:mm:ssX"));
+      "2020-01-01 10:00:00-08",
+      dateFormat(offsetTimestamp, "yyyy-MM-dd HH:mm:ssX"));
   // The local mean time of Los Angeles is -07:52:58.
   const auto lmtTimestamp = parseTimestamp("1800-01-01 00:00:00");
   EXPECT_EQ("-0752", dateFormat(lmtTimestamp, "X"));
   EXPECT_EQ("-075258", dateFormat(lmtTimestamp, "XXXX"));
   EXPECT_EQ("-07:52:58", dateFormat(lmtTimestamp, "XXXXX"));
   setQueryTimeZone("Asia/Kolkata");
-  EXPECT_EQ("+0530", dateFormat(timestamp, "X"));
+  EXPECT_EQ("+0530", dateFormat(offsetTimestamp, "X"));
   setQueryTimeZone("UTC");
-  EXPECT_EQ("Z", dateFormat(timestamp, "X"));
-  EXPECT_EQ("Z", dateFormat(timestamp, "XXXXX"));
+  EXPECT_EQ("Z", dateFormat(offsetTimestamp, "X"));
+  EXPECT_EQ("Z", dateFormat(offsetTimestamp, "XXXXX"));
   VELOX_ASSERT_THROW(
-      dateFormat(timestamp, "XXXXXX"), "Too many pattern letters: X");
+      dateFormat(offsetTimestamp, "XXXXXX"), "Too many pattern letters: X");
 
   // Modified Julian day.
   EXPECT_EQ("52356", dateFormat(parseTimestamp("2002-03-23 15:29:43"), "g"));

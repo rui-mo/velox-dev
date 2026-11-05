@@ -15,6 +15,9 @@
  */
 #pragma once
 
+#include <string_view>
+
+#include "velox/common/base/Status.h"
 #include "velox/type/Timestamp.h"
 #include "velox/type/tz/TimeZoneMap.h"
 
@@ -34,5 +37,17 @@ void toGMTWithPreferredOffset(
     Timestamp& time,
     const tz::TimeZone& zone,
     int64_t preferredOffset);
+
+/// Returns an error for a datetime 'pattern' that Spark rejects in both ANSI
+/// modes and the Joda formatter accepts. Spark checks patterns with Java's
+/// DateTimeFormatter and rejects:
+///   - the week-based letters Y, w and e, and the letter C;
+///   - more letters in a row than Java allows, as in 'HHH';
+///   - a quote with no closing quote, as in "yyyy'";
+///   - the reserved characters '{', '}' and '#', and ']' without '['.
+/// For a parsing pattern, Spark also rejects 'E'. It accepts an unclosed quote
+/// if the parsing pattern contains 'S'. The Joda formatter builder reports the
+/// letters Velox does not implement.
+Status validateDateTimePattern(std::string_view pattern, bool isParsing);
 
 } // namespace facebook::velox::functions::sparksql
