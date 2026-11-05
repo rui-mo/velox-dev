@@ -154,12 +154,14 @@ inline void skipSpaces(const char* buf, size_t len, size_t& pos) {
   }
 }
 
+// If 'maxYearDigits' is set, a year with more digits is invalid.
 bool tryParseDateString(
     const char* buf,
     size_t len,
     size_t& pos,
     int64_t& daysSinceEpoch,
-    ParseMode mode) {
+    ParseMode mode,
+    std::optional<size_t> maxYearDigits = std::nullopt) {
   pos = 0;
   if (len == 0) {
     return false;
@@ -197,6 +199,7 @@ bool tryParseDateString(
   if (!characterIsDigit(buf[pos])) {
     return false;
   }
+  const size_t yearStart = pos;
   // First parse the year.
   for (; pos < len && characterIsDigit(buf[pos]); pos++) {
     year = checkedPlus((buf[pos] - '0'), checkedMultiply(year, 10));
@@ -212,6 +215,9 @@ bool tryParseDateString(
   /// `[+-]yyyy*-[m]m-[d]d *`
   /// `[+-]yyyy*-[m]m-[d]dT*`
   if (mode == ParseMode::kSparkCast && pos - sign < 4) {
+    return false;
+  }
+  if (maxYearDigits.has_value() && pos - yearStart > *maxYearDigits) {
     return false;
   }
   if (yearneg) {
@@ -624,7 +630,11 @@ bool tryParseTimestampString(
                  parseMode == TimestampParseMode::kIso8601 ||
                          parseMode == TimestampParseMode::kSparkCast
                      ? ParseMode::kSparkCast
-                     : ParseMode::kNonStrict)) {
+                     : ParseMode::kNonStrict,
+                 // Spark allows at most 6 digits in the year of a timestamp.
+                 parseMode == TimestampParseMode::kSparkCast
+                     ? std::optional<size_t>(6)
+                     : std::nullopt)) {
     return false;
   }
 

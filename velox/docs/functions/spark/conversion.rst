@@ -729,6 +729,9 @@ separators, fractional seconds, and leading or trailing spaces. Both ``' '``
 and ``'T'`` date-time separators must be followed immediately by a digit.
 Outer whitespace is trimmed before the parser runs, so a bare trailing
 separator such as ``"2015-03-18 "`` is handled as a date-only value.
+The year has 4 to 6 digits, and the timestamp must fit in a long of
+microseconds after the time zone is applied. That range spans from
+``-290308-12-21 19:59:05.224192`` to ``294247-01-10 04:00:54.775807`` UTC.
 
 Casting from invalid strings returns NULL when ANSI mode is disabled and throws
 an error when ANSI mode is enabled.
@@ -752,6 +755,8 @@ Invalid examples
   SELECT cast('2015-03-18T' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('2015-03-18T 12:00:00' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('2015-03-18 Z' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('4674534' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('294248' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
 From boolean
 ^^^^^^^^^^^^

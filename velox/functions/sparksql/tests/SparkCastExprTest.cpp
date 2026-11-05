@@ -2270,6 +2270,81 @@ TEST_F(SparkCastExprTest, tryCastStringToTimestampInvalid) {
   }
 }
 
+TEST_F(SparkCastExprTest, stringToTimestampYearDigitsAndRange) {
+  // A timestamp year has 4 to 6 digits, and the timestamp must fit in a long
+  // of microseconds after the time zone is applied.
+  SCOPE_EXIT {
+    setTimezone("");
+  };
+  setTimezone("America/Los_Angeles");
+  testCast(
+      makeNullableFlatVector<std::string>({
+          "294247",
+          "-290307",
+          "+002020-01-01 10:00:00",
+          "294247-01-09 20:00:54.775807",
+          "-290308-12-21 12:06:07.224192",
+          "4674534",
+          "0002020",
+          "0002020-01-01",
+          "294248",
+          "-290308",
+          "294247-01-09 20:00:54.775808",
+          "-290308-12-21 12:06:07.224191",
+          "294247-01-10 04:00:54.775808Z",
+      }),
+      makeNullableFlatVector<Timestamp>({
+          Timestamp(9'223'371'273'600, 0),
+          Timestamp(-9'223'371'130'022, 0),
+          Timestamp(1'577'901'600, 0),
+          Timestamp(9'223'372'036'854, 775'807'000),
+          Timestamp(-9'223'372'036'855, 224'192'000),
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+      }));
+
+  // A date year can have 7 digits.
+  testCast<std::string, int32_t>(
+      "date", {"0002020-01-01"}, {18262}, VARCHAR(), DATE());
+
+  testCast(
+      makeNullableFlatVector<std::string>({
+          "294247-01-10 04:00:54.775807",
+          "-290308-12-21 19:59:05.224192",
+          "294247-01-10 04:00:54.775808",
+          "-290308-12-21 19:59:05.224191",
+          "4674534",
+      }),
+      makeNullableFlatVector<Timestamp>(
+          {Timestamp(9'223'372'036'854, 775'807'000),
+           Timestamp(-9'223'372'036'855, 224'192'000),
+           std::nullopt,
+           std::nullopt,
+           std::nullopt},
+          TIMESTAMP_UTC()));
+
+  queryCtx_->testingOverrideConfigUnsafe({
+      {core::QueryConfig::kSessionTimezone, "America/Los_Angeles"},
+      {core::QueryConfig::kAdjustTimestampToTimezone, "true"},
+      {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"},
+  });
+  auto castOne = [&](const std::string& value) {
+    return evaluate(
+        "cast(c0 as timestamp)",
+        makeRowVector({makeFlatVector<std::string>({value})}));
+  };
+  VELOX_ASSERT_THROW(castOne("4674534"), "Unable to parse timestamp value");
+  VELOX_ASSERT_THROW(
+      castOne("294248"),
+      "The value cannot be cast to TIMESTAMP due to an overflow.");
+}
+
 TEST_F(SparkCastExprTestAnsiOn, stringToTimestampValid) {
   testStringToTimestamp();
 }
