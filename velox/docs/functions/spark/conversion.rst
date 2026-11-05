@@ -98,6 +98,8 @@ Valid examples
   SELECT cast(127.8 as tinyint); -- 127
   SELECT cast(1234567.89 as smallint); -- -10617 (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast('inf' as double) as bigint); -- 9223372036854775807 (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast(cast('9223372036854775807' as float) as bigint); -- 9223372036854775807
+  SELECT cast(cast('2147483648' as float) as integer); -- 2147483647 (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast('nan' as double) as integer); -- 0 (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast('nan' as double) as smallint); -- 0 (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast('nan' as double) as tinyint); -- 0 (ANSI OFF) / ERROR (ANSI ON)
