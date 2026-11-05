@@ -783,15 +783,30 @@ Casting from strings to timestamp follows Spark's timestamp syntax::
 
 The year has 4 to 6 digits and the other fields have 1 or 2 digits. Digits of
 the fraction after the 6th are ignored. The zone is the rest of the string
-after the seconds or the fraction, without leading whitespace, e.g. ``Z``,
-``+08:00``, ``UTC`` or ``America/Los_Angeles``. A string without a zone is in
-the session time zone. Leading and trailing string bytes are trimmed using
-Spark UTF8String-style trimming before the parser runs. Unlike Spark, which
-uses the current date for a time without a date, e.g. ``'10:00:00'`` or
-``'T10:00:00'``, Velox treats such a string as invalid.
-The timestamp must fit in a long of microseconds after the time zone is
-applied. That range spans from ``-290308-12-21 19:59:05.224192`` to
-``294247-01-10 04:00:54.775807`` UTC.
+after the seconds or the fraction, without leading whitespace. A string without
+a zone is in the session time zone. Leading and trailing
+string bytes are trimmed using Spark UTF8String-style trimming before the
+parser runs. Unlike Spark, which uses the current date for a time
+without a date, e.g. ``'10:00:00'`` or ``'T10:00:00'``, Velox treats such a
+string as invalid. The timestamp must fit in a long of microseconds after the
+time zone is applied. That range spans from ``-290308-12-21 19:59:05.224192``
+to ``294247-01-10 04:00:54.775807`` UTC.
+
+The zone is case-sensitive and has one of these forms, like Java's
+``ZoneId.of`` with ``ZoneId.SHORT_IDS`` in Spark:
+
+* ``Z``, or an offset of at most 18 hours: a sign followed by ``h``, ``hh``,
+  ``hh:mm``, ``hhmm``, ``hh:mm:ss`` or ``hhmmss``. A single-digit hour before
+  a colon and a single-digit minute at the end are also valid, e.g. ``+8:00``,
+  ``+8:00:00`` or ``+08:0``.
+* ``UTC``, ``GMT`` or ``UT``, alone or followed by an offset, e.g. ``UTC+8``.
+* A region ID, e.g. ``America/Los_Angeles``, ``Etc/GMT+8`` or ``Zulu``.
+* A short ID, e.g. ``PST`` for ``America/Los_Angeles`` or ``EST`` for
+  ``-05:00``.
+
+Unlike Spark, Velox doesn't support the region IDs ``SystemV/*``, e.g.
+``SystemV/PST8``, and ``America/Coyhaique``, which are missing from its time
+zone database.
 
 Casting from invalid strings returns NULL when ANSI mode is disabled and throws
 an error when ANSI mode is enabled.
@@ -811,6 +826,13 @@ Valid examples
   SELECT cast('2015-03-18 12:03:17.1234567' as timestamp); -- 2015-03-18 12:03:17.123456
   -- In session time zone America/Los_Angeles.
   SELECT cast('2020-01-01 10:00:00 UTC' as timestamp); -- 2020-01-01 02:00:00
+  -- In session time zone UTC.
+  SELECT cast('2020-01-01 10:00:00 +8' as timestamp); -- 2020-01-01 02:00:00
+  SELECT cast('2020-01-01 10:00:00 UTC+5:30' as timestamp); -- 2020-01-01 04:30:00
+  SELECT cast('2020-01-01 10:00:00 GMT-08:00' as timestamp); -- 2020-01-01 18:00:00
+  SELECT cast('2020-01-01 10:00:00 PST' as timestamp); -- 2020-01-01 18:00:00
+  SELECT cast('2020-01-01 10:00:00 Etc/GMT-8' as timestamp); -- 2020-01-01 02:00:00
+  SELECT cast('2020-01-01 10:00:00 Asia/Shanghai' as timestamp); -- 2020-01-01 02:00:00
 
 Invalid examples
 
@@ -829,6 +851,8 @@ Invalid examples
   SELECT cast('2021-02-29' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('1000000-01-01' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('10:00:00' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('2020-01-01 10:00:00 utc' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
+  SELECT cast('2020-01-01 10:00:00 +19:00' as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
 From boolean
 ^^^^^^^^^^^^

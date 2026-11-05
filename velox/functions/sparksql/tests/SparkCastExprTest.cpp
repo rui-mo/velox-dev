@@ -2611,6 +2611,97 @@ TEST_F(SparkCastExprTest, stringToTimestampForms) {
   }
 }
 
+TEST_F(SparkCastExprTest, stringToTimestampZoneIds) {
+  // 2020-01-01 10:00:00 UTC.
+  constexpr int64_t kSeconds = 1'577'872'800;
+  // Zone IDs that Spark accepts, with their offsets from UTC on that day in
+  // seconds.
+  const std::vector<std::pair<std::string, int64_t>> validZones = {
+      {"Z", 0},
+      {"UT", 0},
+      {"UTC-0", 0},
+      {"-0", 0},
+      {"UCT", 0},
+      {"Zulu", 0},
+      {"GMT0", 0},
+      {"Etc/UTC", 0},
+      {"Etc/GMT-0", 0},
+      {"+5", 18'000},
+      {"+0530", 19'800},
+      {"+053045", 19'845},
+      {"+05:30:45", 19'845},
+      {"+01:02:03", 3'723},
+      {"+18:00", 64'800},
+      {"-18", -64'800},
+      {"+8:0", 28'800},
+      {"+8:00:00", 28'800},
+      {"UTC+5:30", 19'800},
+      {"UTC+18", 64'800},
+      {"GMT-8", -28'800},
+      {"GMT+0800", 28'800},
+      {"GMT+8:30", 30'600},
+      {"UT+8", 28'800},
+      {"Etc/GMT+8", -28'800},
+      {"Etc/GMT-14", 50'400},
+      {"Etc/GMT+12", -43'200},
+      {"EST", -18'000},
+      {"PST", -28'800},
+      {"CTT", 28'800},
+      {"US/Pacific", -28'800},
+      {"EST5EDT", -18'000},
+      {"MST7MDT", -25'200}};
+  // Zone IDs that Spark rejects.
+  const std::vector<std::string> invalidZones = {
+      "z",
+      "utc",
+      "america/new_york",
+      "etc/gmt+8",
+      "Etc/GMT+13",
+      "Etc/GMT+08",
+      "UTC0",
+      "UT0",
+      "+19:00",
+      "+18:00:01",
+      "+08:00:0",
+      "\x7fUTC"};
+
+  std::vector<std::string> strings;
+  std::vector<Timestamp> expected;
+  for (const auto& [zone, offset] : validZones) {
+    strings.push_back("2020-01-01 10:00:00 " + zone);
+    expected.push_back(Timestamp(kSeconds - offset, 0));
+  }
+  const auto input = makeFlatVector<std::string>(strings);
+  for (auto ansiEnabled : {false, true}) {
+    SCOPED_TRACE(fmt::format("ansiEnabled: {}", ansiEnabled));
+    setAnsiSupport(ansiEnabled);
+
+    testCast(input, makeFlatVector<Timestamp>(expected));
+    // Casts to timestamp_ntz validate the zone and ignore it.
+    testCast(
+        input,
+        makeFlatVector<Timestamp>(
+            std::vector<Timestamp>(strings.size(), Timestamp(kSeconds, 0)),
+            TIMESTAMP_UTC()));
+
+    for (const auto& zone : invalidZones) {
+      SCOPED_TRACE(zone);
+      const std::vector<std::optional<std::string>> invalid = {
+          "2020-01-01 10:00:00 " + zone};
+      for (const auto& type :
+           std::vector<TypePtr>{TIMESTAMP(), TIMESTAMP_UTC()}) {
+        if (ansiEnabled) {
+          testThrow<std::string>(
+              VARCHAR(), type, invalid, "Unknown timezone value");
+        } else {
+          testCast<std::string, Timestamp>(
+              VARCHAR(), type, invalid, {std::nullopt});
+        }
+      }
+    }
+  }
+}
+
 TEST_F(SparkCastExprTestAnsiOn, stringToTimestampValid) {
   testStringToTimestamp();
 }
