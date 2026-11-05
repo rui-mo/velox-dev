@@ -116,7 +116,6 @@ Status validateDateTimePattern(std::string_view pattern, bool isParsing) {
   // splits the pattern on quotes and accepts an unclosed one.
   const bool allowUnclosedQuote =
       isParsing && pattern.find('S') != std::string_view::npos;
-  int32_t openSections = 0;
   size_t pos = 0;
   while (pos < pattern.size()) {
     const char c = pattern[pos];
@@ -145,15 +144,6 @@ Status validateDateTimePattern(std::string_view pattern, bool isParsing) {
       if (c == '{' || c == '}' || c == '#') {
         return Status::UserError(
             "Pattern includes reserved character: '{}'", c);
-      }
-      if (c == '[') {
-        ++openSections;
-      } else if (c == ']') {
-        if (openSections == 0) {
-          return Status::UserError(
-              "Pattern invalid as it contains ] without previous [");
-        }
-        --openSections;
       }
       ++pos;
     }

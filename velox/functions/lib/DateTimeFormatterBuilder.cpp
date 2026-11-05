@@ -225,6 +225,19 @@ DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendLiteral(
   return *this;
 }
 
+DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendOptionalStart() {
+  tokens_.emplace_back(DateTimeToken::Type::kOptionalStart);
+  ++openOptionalSections_;
+  return *this;
+}
+
+DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendOptionalEnd() {
+  VELOX_CHECK_GT(openOptionalSections_, 0, "No optional section to end");
+  tokens_.emplace_back(DateTimeToken::Type::kOptionalEnd);
+  --openOptionalSections_;
+  return *this;
+}
+
 DateTimeFormatterBuilder& DateTimeFormatterBuilder::setType(
     DateTimeFormatterType type) {
   type_ = type;

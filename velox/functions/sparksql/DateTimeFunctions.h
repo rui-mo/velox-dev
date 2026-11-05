@@ -51,7 +51,8 @@ Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
           /*allowIsoZoneOffset=*/true,
           /*splitOnQuotes=*/isParsing &&
               format.find('S') != std::string_view::npos,
-          /*allowModifiedJulianDay=*/true);
+          /*allowModifiedJulianDay=*/true,
+          /*allowOptionalSections=*/true);
   }
 }
 

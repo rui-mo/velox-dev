@@ -429,6 +429,45 @@ TEST_F(JodaDateTimeFormatterTest, invalidJodaBuild) {
   EXPECT_TRUE(buildJodaDateTimeFormatter("").hasError());
 }
 
+TEST_F(JodaDateTimeFormatterTest, optionalSections) {
+  // Joda reads '[' and ']' as literals.
+  std::vector<DateTimeToken> expected = {
+      DateTimeToken(FormatPattern{DateTimeFormatSpecifier::YEAR, 4}),
+      DateTimeToken("[-"),
+      DateTimeToken(FormatPattern{DateTimeFormatSpecifier::MONTH_OF_YEAR, 2}),
+      DateTimeToken("]")};
+  EXPECT_EQ(expected, getJodaDateTimeFormatter("yyyy[-MM]")->tokens());
+
+  // Java starts an optional section with '[' and ends it with ']'.
+  const auto buildJava = [](const std::string& pattern) {
+    return buildJodaDateTimeFormatter(
+        pattern,
+        /*allowIsoZoneOffset=*/false,
+        /*splitOnQuotes=*/false,
+        /*allowModifiedJulianDay=*/true,
+        /*allowOptionalSections=*/true);
+  };
+  const DateTimeToken start(DateTimeToken::Type::kOptionalStart);
+  const DateTimeToken end(DateTimeToken::Type::kOptionalEnd);
+  expected = {
+      DateTimeToken(FormatPattern{DateTimeFormatSpecifier::YEAR, 4}),
+      start,
+      DateTimeToken("-"),
+      DateTimeToken(FormatPattern{DateTimeFormatSpecifier::MONTH_OF_YEAR, 2}),
+      start,
+      start,
+      end,
+      end,
+      DateTimeToken("[]"),
+      start};
+  EXPECT_EQ(expected, buildJava("yyyy[-MM[[]]'[]'[").value()->tokens());
+
+  VELOX_ASSERT_ERROR_STATUS(
+      buildJava("yyyy]").error(),
+      StatusCode::kUserError,
+      "Pattern invalid as it contains ] without previous [");
+}
+
 TEST_F(JodaDateTimeFormatterTest, invalid) {
   // Parse:
   EXPECT_THROW(parseJoda("", ""), VeloxUserError);

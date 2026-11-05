@@ -140,7 +140,9 @@ struct FormatPattern {
 };
 
 struct DateTimeToken {
-  enum class Type { kPattern, kLiteral } type;
+  /// kOptionalStart and kOptionalEnd mark the bounds of an optional section,
+  /// which Java's DateTimeFormatter writes as '[' and ']'.
+  enum class Type { kPattern, kLiteral, kOptionalStart, kOptionalEnd } type;
   union {
     FormatPattern pattern;
     std::string_view literal;
@@ -152,14 +154,18 @@ struct DateTimeToken {
   explicit DateTimeToken(const std::string_view& literal)
       : type(Type::kLiteral), literal(literal) {}
 
+  /// Creates a token that starts or ends an optional section.
+  explicit DateTimeToken(Type type) : type(type), literal() {}
+
   bool operator==(const DateTimeToken& right) const {
     if (type == right.type) {
       if (type == Type::kLiteral) {
         return literal == right.literal;
-      } else {
+      } else if (type == Type::kPattern) {
         return pattern.specifier == right.pattern.specifier &&
             pattern.minRepresentDigits == right.pattern.minRepresentDigits;
       }
+      return true;
     }
     return false;
   }
@@ -248,11 +254,17 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
 /// If 'allowModifiedJulianDay' is true, the pattern can also use the letter 'g'
 /// for the modified Julian day. Java's DateTimeFormatter supports it, and Joda
 /// doesn't.
+///
+/// If 'allowOptionalSections' is true, '[' and ']' start and end an optional
+/// section, as in Java's DateTimeFormatter. Formatting prints the section.
+/// Parsing skips the section and drops the fields it parsed if the input
+/// doesn't match it. Joda reads '[' and ']' as literals.
 Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format,
     bool allowIsoZoneOffset = false,
     bool splitOnQuotes = false,
-    bool allowModifiedJulianDay = false);
+    bool allowModifiedJulianDay = false,
+    bool allowOptionalSections = false);
 
 Expected<std::shared_ptr<DateTimeFormatter>> buildSimpleDateTimeFormatter(
     const std::string_view& format,
