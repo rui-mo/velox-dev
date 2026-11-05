@@ -2736,6 +2736,55 @@ TEST_F(SparkCastExprTest, stringToTimestampAtDstTransitions) {
   }
 }
 
+TEST_F(SparkCastExprTest, dateToString) {
+  SCOPE_EXIT {
+    queryCtx_->testingOverrideConfigUnsafe({});
+  };
+  // Years have at least 4 digits. Years after 9999 start with '+'.
+  for (auto ansiEnabled : {false, true}) {
+    SCOPED_TRACE(fmt::format("ansiEnabled: {}", ansiEnabled));
+    queryCtx_->testingOverrideConfigUnsafe({
+        {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled),
+         std::to_string(ansiEnabled)},
+    });
+    testCast<int32_t, std::string>(
+        DATE(),
+        VARCHAR(),
+        {std::numeric_limits<int32_t>::min(),
+         -100'000'000,
+         -4'371'588,
+         -4'371'587,
+         -1'000'000,
+         -719'893,
+         -719'529,
+         -719'528,
+         -719'163,
+         -719'162,
+         0,
+         2'932'896,
+         2'932'897,
+         36'500'000,
+         std::numeric_limits<int32_t>::max(),
+         std::nullopt},
+        {"-5877641-06-23",
+         "-271821-04-20",
+         "-10000-12-31",
+         "-9999-01-01",
+         "-0768-02-04",
+         "-0001-01-01",
+         "-0001-12-31",
+         "0000-01-01",
+         "0000-12-31",
+         "0001-01-01",
+         "1970-01-01",
+         "9999-12-31",
+         "+10000-01-01",
+         "+101903-08-11",
+         "+5881580-07-11",
+         std::nullopt});
+  }
+}
+
 TEST_F(SparkCastExprTestAnsiOn, stringToTimestampValid) {
   testStringToTimestamp();
 }

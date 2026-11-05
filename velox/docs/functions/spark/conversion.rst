@@ -370,6 +370,21 @@ Valid examples
   SELECT cast(cast(0.0000000123 as decimal(38, 10)) as string); -- '1.23E-8' (ANSI OFF) / '0.0000000123' (ANSI ON)
   SELECT try_cast(cast(0.0000000123 as decimal(38, 10)) as string); -- '0.0000000123'
 
+From DATE
+^^^^^^^^^
+
+Casting a date to a string returns ISO 8601 format, and the year part is padded with zeros to 4 characters.
+When the year exceeds 9999, a positive sign is added.
+
+Valid examples
+
+::
+
+  SELECT cast(date '1970-01-01' as string); -- '1970-01-01'
+  SELECT cast(date '0384-01-01' as string); -- '0384-01-01'
+  SELECT cast(date '-0010-02-01' as string); -- '-0010-02-01'
+  SELECT cast(date '10000-01-01' as string); -- '+10000-01-01'
+
 From TIMESTAMP
 ^^^^^^^^^^^^^^
 
