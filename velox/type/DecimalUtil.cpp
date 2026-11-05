@@ -322,8 +322,11 @@ Status DecimalUtil::parseStringToDecimalComponents(
     // Truncate the fractionalDigits.
     if (parsedScale > toScale) {
       if (-exponent >= toScale) {
-        // The fractional digits could be dropped.
-        if (fractionSize > 0 && decimalComponents.fractionalDigits[0] >= '5') {
+        // The fractional digits could be dropped. Their first digit is the
+        // first dropped digit only if the whole digits end at the target scale.
+        // Otherwise, rescaling rounds on the whole digits.
+        if (-exponent == toScale && fractionSize > 0 &&
+            decimalComponents.fractionalDigits[0] >= '5') {
           roundUp = true;
         }
         decimalComponents.fractionalDigits = "";
