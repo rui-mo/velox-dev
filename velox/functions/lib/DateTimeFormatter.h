@@ -235,9 +235,16 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
 /// Builds a formatter for a Joda pattern. If 'allowIsoZoneOffset' is true, the
 /// pattern can also use the letter 'X' (DateTimeFormatSpecifier::
 /// ISO_ZONE_OFFSET), which Spark supports and Joda does not.
+///
+/// If 'splitOnQuotes' is true, the pattern is split on single quotes as Spark
+/// does for a parsing pattern with 'S': even parts hold pattern letters, odd
+/// parts are literals and an empty part other than the first is a literal
+/// quote. An unclosed quote thus starts a literal that runs to the end of the
+/// pattern, and trailing quotes are ignored.
 Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
     const std::string_view& format,
-    bool allowIsoZoneOffset = false);
+    bool allowIsoZoneOffset = false,
+    bool splitOnQuotes = false);
 
 Expected<std::shared_ptr<DateTimeFormatter>> buildSimpleDateTimeFormatter(
     const std::string_view& format,
