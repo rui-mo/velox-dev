@@ -534,6 +534,33 @@ TEST_F(SparkQueryRunnerTest, DISABLED_unevaluatedExpressions) {
   }
 }
 
+// Verifies that with the projection session configs, Spark evaluates each of
+// nested casts. This test requires a Spark coordinator running at localhost, so
+// disable it by default.
+TEST_F(SparkQueryRunnerTest, DISABLED_nestedCasts) {
+  auto aggregatePool = rootPool_->addAggregateChild("nestedCasts");
+  auto queryRunner = std::make_unique<fuzzer::SparkQueryRunner>(
+      aggregatePool.get(),
+      "localhost:15002",
+      "test",
+      "nestedCasts",
+      fuzzer::SparkQueryRunner::kDefaultQueryTimeout,
+      fuzzer::SparkQueryRunner::projectionSessionConfigs());
+
+  // The cast to real rounds 389851911 to 389851904. Spark's SimplifyCasts
+  // optimizer rule casts the integer to double directly instead.
+  auto plan =
+      exec::test::PlanBuilder()
+          .values({makeRowVector({makeFlatVector<int32_t>({389851911})})})
+          .project({"cast(cast(cast(c0 as real) as double) as integer)"})
+          .planNode();
+  auto result = queryRunner->executeAndReturnVector(plan);
+  ASSERT_EQ(result.second, ReferenceQueryErrorCode::kSuccess);
+  exec::test::assertEqualResults(
+      result.first.value(),
+      {makeRowVector({makeFlatVector<int32_t>({389851904})})});
+}
+
 // Verifies that Spark evaluates expressions without generated code, which
 // differs from the interpreted evaluation of some expressions. This test
 // requires a Spark coordinator running at localhost, so disable it by default.

@@ -106,6 +106,7 @@ SESSION_CONFIGS = {
             "NullPropagation",
             "SimplifyBinaryComparison",
             "SimplifyExtractValueOps",
+            "SimplifyCasts",
         ]
     ),
     "spark.sql.subexpressionElimination.enabled": "false",

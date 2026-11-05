@@ -50,7 +50,7 @@ describes the move to Spark 4.3.0.
 | Java | 21. Java 17 prints some floats and doubles with more digits (JDK-4511638). |
 | Session configs | ANSI mode off, time zone `America/Los_Angeles`, `mapKeyDedupPolicy=LAST_WIN`, `CORRECTED` Parquet datetime rebase |
 | Evaluation | Interpreted: `spark.sql.codegen.wholeStage=false`, `spark.sql.codegen.factoryMode=NO_CODEGEN` |
-| Optimizer | Excludes `ConstantFolding`, `ReorderAssociativeOperator`, `SimplifyConditionals`, `NullPropagation`, `SimplifyBinaryComparison` and `SimplifyExtractValueOps`, and disables subexpression elimination |
+| Optimizer | Excludes `ConstantFolding`, `ReorderAssociativeOperator`, `SimplifyConditionals`, `NullPropagation`, `SimplifyBinaryComparison`, `SimplifyExtractValueOps` and `SimplifyCasts`, and disables subexpression elimination |
 | Executor | `spark.executor.killOnFatalError.depth 0`, so an `OutOfMemoryError` fails the task instead of killing the executor |
 
 Spark's semantics are those of its interpreted evaluation, which Velox follows.

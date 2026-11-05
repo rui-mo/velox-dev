@@ -415,14 +415,17 @@ SparkQueryRunner::projectionSessionConfigs() {
       // condition are lost. NullPropagation, SimplifyBinaryComparison and
       // SimplifyExtractValueOps replace isnull(e) and e = e with false and
       // true if e is not nullable, and get(array(e0, e1), 0) with e0, without
-      // evaluating e and e1, so errors in them are lost too.
+      // evaluating e and e1, so errors in them are lost too. SimplifyCasts
+      // treats a cast from integer to real as exact, e.g. it evaluates
+      // cast(cast(c0 as real) as double) as cast(c0 as double).
       {"spark.sql.optimizer.excludedRules",
        "org.apache.spark.sql.catalyst.optimizer.ConstantFolding,"
        "org.apache.spark.sql.catalyst.optimizer.ReorderAssociativeOperator,"
        "org.apache.spark.sql.catalyst.optimizer.SimplifyConditionals,"
        "org.apache.spark.sql.catalyst.optimizer.NullPropagation,"
        "org.apache.spark.sql.catalyst.optimizer.SimplifyBinaryComparison,"
-       "org.apache.spark.sql.catalyst.optimizer.SimplifyExtractValueOps"},
+       "org.apache.spark.sql.catalyst.optimizer.SimplifyExtractValueOps,"
+       "org.apache.spark.sql.catalyst.optimizer.SimplifyCasts"},
       {"spark.sql.subexpressionElimination.enabled", "false"},
   };
   return kConfigs;

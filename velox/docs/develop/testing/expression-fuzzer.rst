@@ -213,7 +213,9 @@ whose branches are the same even if the condition throws. For the same reason, t
 Spark's ``NullPropagation``, ``SimplifyBinaryComparison`` and ``SimplifyExtractValueOps``
 optimizer rules, which replace e.g. ``isnull(e)`` and ``e = e`` with ``false`` and ``true`` if
 ``e`` is not nullable, and ``get(array(e0, e1), 0)`` with ``e0``, without evaluating ``e`` and
-``e1``.
+``e1``. They also exclude Spark's ``SimplifyCasts`` optimizer rule, which treats a cast from an
+integer to a floating-point type as exact, e.g. it evaluates
+``cast(cast(c0 as real) as double)`` as ``cast(c0 as double)``.
 
 Spark's generated code validates constant arguments before it evaluates any row, e.g. the time
 zone of ``from_utc_timestamp`` and the pattern of ``date_format``, so it throws even if no row
