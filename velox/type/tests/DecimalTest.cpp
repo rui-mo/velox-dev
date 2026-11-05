@@ -854,6 +854,24 @@ TEST(DecimalTest, castFromStringNegativeExponent) {
       38,
       0,
       std::vector<int128_t>{1, 0, 1, 0, 1, 0, -1, 0, 1, 0, 0, 1, 1, 0});
+
+  // Rounds once, on the first digit beyond the target scale.
+  testCastFromString<int64_t>(
+      {"4.5e-3",
+       "44.5e-3",
+       "-44.5e-3",
+       "4.99e-3",
+       "9.5e-3",
+       "99.5e-3",
+       "149.5e-3",
+       "5.5e-3",
+       ".5e-3",
+       "4.5e-2",
+       "-4.5e-2"},
+      10,
+      2,
+      {0, 4, -4, 0, 1, 10, 15, 1, 0, 5, -5});
+  testCastFromString<int64_t>({"4.5e-1", "-4.5e-1", "4.5e0"}, 10, 0, {0, 0, 5});
 }
 } // namespace
 } // namespace facebook::velox
