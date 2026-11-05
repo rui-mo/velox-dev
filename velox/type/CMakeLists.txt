@@ -79,6 +79,7 @@ velox_link_libraries(
   velox_external_date
   velox_status
   Boost::headers
+  double-conversion::double-conversion
   Folly::folly
   re2::re2
 )

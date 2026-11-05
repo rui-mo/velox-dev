@@ -106,6 +106,12 @@ class SparkCastHooks : public exec::CastHooks {
 
   bool decimalToFloatHighPrecisionCastEnabled() const override;
 
+  // Spark converts a floating point value to a decimal through
+  // Double.toString.
+  bool floatingPointToDecimalUsesShortestDigits() const override {
+    return true;
+  }
+
   exec::PolicyType getPolicy() const override;
 
   // Spark supports TIMESTAMP_UTC casts.
