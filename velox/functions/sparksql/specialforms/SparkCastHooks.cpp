@@ -271,17 +271,26 @@ Expected<Timestamp> SparkCastHooks::castStringToTimestamp(
   if (conversionResult.hasError()) {
     return folly::makeUnexpected(conversionResult.error());
   }
+  auto& parsed = conversionResult.value();
   Timestamp result;
   if (!adjustTimezone) {
     // For TIMESTAMP UTC, ignore any timezone suffix and store the parsed
     // timestamp fields as-is, not subject to session timezone adjustment.
-    result = conversionResult.value().timestamp;
+    result = parsed.timestamp;
   } else {
-    auto sessionTimezone = config_.sessionTimezone().empty()
-        ? nullptr
-        : tz::locateZone(config_.sessionTimezone());
-    result = util::fromParsedTimestampWithTimeZone(
-        conversionResult.value(), sessionTimezone);
+    const tz::TimeZone* timeZone = parsed.timeZone;
+    if (timeZone == nullptr && !parsed.offsetMillis.has_value() &&
+        !config_.sessionTimezone().empty()) {
+      timeZone = tz::locateZone(config_.sessionTimezone());
+    }
+    if (timeZone != nullptr) {
+      // Like Java's ZonedDateTime.of, moves a local time in a gap forward by
+      // the length of the gap.
+      result = parsed.timestamp;
+      toGMTWithGapCorrection(result, *timeZone);
+    } else {
+      result = util::fromParsedTimestampWithTimeZone(parsed, nullptr);
+    }
   }
   // Spark stores a timestamp as a long of microseconds.
   const __int128_t micros = static_cast<__int128_t>(result.getSeconds()) *

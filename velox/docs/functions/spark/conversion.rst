@@ -789,7 +789,10 @@ Casting from strings to timestamp follows Spark's timestamp syntax::
 The year has 4 to 6 digits and the other fields have 1 or 2 digits. Digits of
 the fraction after the 6th are ignored. The zone is the rest of the string
 after the seconds or the fraction, without leading whitespace. A string without
-a zone is in the session time zone. Leading and trailing
+a zone is in the session time zone. A local time in a gap of the zone, where
+clocks jump forward, e.g. at the start of daylight saving time, moves forward
+by the length of the gap. A local time in an overlap, where clocks go back,
+takes the earlier of its two instants. Leading and trailing
 string bytes are trimmed using Spark UTF8String-style trimming before the
 parser runs. Unlike Spark, which uses the current date for a time
 without a date, e.g. ``'10:00:00'`` or ``'T10:00:00'``, Velox treats such a
@@ -831,6 +834,7 @@ Valid examples
   SELECT cast('2015-03-18 12:03:17.1234567' as timestamp); -- 2015-03-18 12:03:17.123456
   -- In session time zone America/Los_Angeles.
   SELECT cast('2020-01-01 10:00:00 UTC' as timestamp); -- 2020-01-01 02:00:00
+  SELECT cast('2020-03-08 02:30:00' as timestamp); -- 2020-03-08 03:30:00
   -- In session time zone UTC.
   SELECT cast('2020-01-01 10:00:00 +8' as timestamp); -- 2020-01-01 02:00:00
   SELECT cast('2020-01-01 10:00:00 UTC+5:30' as timestamp); -- 2020-01-01 04:30:00
