@@ -498,17 +498,29 @@ class DecimalUtil : public DecimalArithmetic {
   /// message that can represent a decimal value. Secondly, processes the
   /// exponent to get the scale. Thirdly, compute the rescaled value. Returns
   /// status for the outcome of computing.
+  ///
+  /// If 'rejectZeroWithLargeExponent' is true, rejects a zero with more than 38
+  /// integral digits, like Spark 4.2.0, 4.1.3 and earlier, e.g. '0e38'. Like
+  /// Java's BigDecimal, a zero has 1 plus its exponent minus its number of
+  /// fractional digits integral digits, computed in int32, e.g. '0e2147483647'
+  /// has INT32_MIN integral digits.
   template <typename T>
   static Status castFromString(
       const StringView s,
       int32_t toPrecision,
       int32_t toScale,
-      T& decimalValue) {
+      T& decimalValue,
+      bool rejectZeroWithLargeExponent = false) {
     int32_t parsedPrecision = 0;
     int32_t parsedScale = 0;
     int128_t out = 0;
     VELOX_RETURN_NOT_OK(parseStringToDecimalComponents(
-        s, toScale, parsedPrecision, parsedScale, out));
+        s,
+        toScale,
+        parsedPrecision,
+        parsedScale,
+        out,
+        rejectZeroWithLargeExponent));
 
     const auto status = rescaleWithRoundUp<int128_t, T>(
         out,
@@ -549,6 +561,7 @@ class DecimalUtil : public DecimalArithmetic {
       int32_t toScale,
       int32_t& parsedPrecision,
       int32_t& parsedScale,
-      int128_t& out);
+      int128_t& out,
+      bool rejectZeroWithLargeExponent);
 }; // DecimalUtil
 } // namespace facebook::velox

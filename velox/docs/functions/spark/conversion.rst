@@ -485,6 +485,11 @@ When ANSI mode is enabled, casting from an invalid input value or a value that
 overflows the target precision and scale throws an error. Otherwise, such casts
 return NULL.
 
+Zero fits any decimal type, also with a large exponent, e.g. ``'0e50'``. If
+``spark.legacy_decimal_zero_large_exponent`` is true, a zero with more than 38
+integral digits, as Java's ``BigDecimal`` counts them, overflows instead, e.g.
+``'0e38'``, as in Spark before 4.1.4 and in Spark 4.2.0.
+
 Valid examples
 
 ::

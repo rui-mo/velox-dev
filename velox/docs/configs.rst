@@ -1550,6 +1550,12 @@ Spark-specific Configuration
        Joda date formatter performs strict checking of its input and uses different pattern string.
        For example, the 2015-07-22 10:00:00 timestamp cannot be parsed if pattern is yyyy-MM-dd because the parser does not consume whole input.
        Another example is that the 'W' pattern, which means week in month, is not supported. For more differences, see :issue:`10354`.
+   * - spark.legacy_decimal_zero_large_exponent
+     - bool
+     - false
+     - If true, casts from VARCHAR to DECIMAL treat a zero with more than 38 integral digits, as Java's
+       ``BigDecimal`` counts them, as too large, e.g. ``'0e38'``. They return NULL then, or throw an error when
+       ``spark.ansi_enabled`` is true. This matches the behavior of Spark before 4.1.4, and of Spark 4.2.0.
    * - spark.legacy_mode_negative_zero
      - bool
      - false

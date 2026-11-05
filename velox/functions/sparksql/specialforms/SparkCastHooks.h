@@ -62,6 +62,9 @@ class SparkCastHooks : public exec::CastHooks {
       const tz::TimeZone* timeZone,
       int64_t sessionStartTimeMs) const override;
 
+  // Follows spark.legacy_decimal_zero_large_exponent.
+  bool stringToDecimalCastRejectsZeroWithLargeExponent() const override;
+
   // Parses the string as Java's Float.parseFloat does, e.g. '1.5f' and
   // '0x1.8p1'. Also allows 'inf', 'infinity' and 'nan' in any letter case, the
   // first two with an optional sign.

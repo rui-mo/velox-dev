@@ -3269,6 +3269,41 @@ TEST_F(SparkCastExprTestAnsiOn, integralToDecimal) {
   testOverflowThrow.operator()<int64_t>();
 }
 
+TEST_F(SparkCastExprTest, varcharToDecimalLegacyZeroLargeExponent) {
+  // Zero overflows if 1 minus its scale, i.e. its number of integral digits in
+  // Java's BigDecimal, exceeds 38 in wrapping 32-bit arithmetic.
+  const std::vector<std::string> overflows = {
+      "0e38", "00e38", "-0e50", "0.000e2147483647", "0e2147483646"};
+  for (const bool ansiEnabled : {false, true}) {
+    SCOPED_TRACE(fmt::format("ansiEnabled: {}", ansiEnabled));
+    queryCtx_->testingOverrideConfigUnsafe({
+        {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled),
+         std::to_string(ansiEnabled)},
+        {SparkQueryConfig::qualify(
+             SparkQueryConfig::kLegacyDecimalZeroLargeExponent),
+         "true"},
+    });
+    testCast(
+        makeFlatVector<StringView>(
+            {"0e37", "0.0e38", "0.00e38", "0e2147483647"}),
+        makeFlatVector<int64_t>({0, 0, 0, 0}, DECIMAL(10, 2)));
+    for (const auto& overflow : overflows) {
+      if (ansiEnabled) {
+        testThrow<std::string>(
+            VARCHAR(),
+            DECIMAL(10, 2),
+            {overflow},
+            fmt::format(
+                "Cannot cast VARCHAR '{}' to DECIMAL(10, 2). Value too large.",
+                overflow));
+      } else {
+        testCast<std::string, int64_t>(
+            VARCHAR(), DECIMAL(10, 2), {overflow}, {std::nullopt});
+      }
+    }
+  }
+}
+
 TEST_F(SparkCastExprTestAnsiOn, decimalToDecimal) {
   // Regular cases produce the same results regardless of ANSI mode.
   testDecimalToDecimal();

@@ -148,7 +148,7 @@ namespace {
 struct DecimalComponents {
   std::string_view wholeDigits;
   std::string_view fractionalDigits;
-  std::optional<int32_t> exponent = std::nullopt;
+  std::optional<int64_t> exponent = std::nullopt;
   int8_t sign = 1;
 };
 
@@ -224,7 +224,21 @@ parseDecimalComponents(const char* s, size_t size, DecimalComponents& out) {
             "Non-digit character is not allowed in the exponent part.");
       }
     }
-    out.exponent = folly::to<int32_t>(std::string_view(s + pos, size - pos));
+    // Like Java's BigDecimal, the scale, i.e. the number of fractional digits
+    // minus the exponent, must fit in int32.
+    const auto exponent =
+        folly::tryTo<int64_t>(std::string_view(s + pos, size - pos));
+    int64_t scale;
+    if (exponent.hasError() ||
+        __builtin_sub_overflow(
+            static_cast<int64_t>(out.fractionalDigits.size()),
+            exponent.value(),
+            &scale) ||
+        scale < std::numeric_limits<int32_t>::min() ||
+        scale > std::numeric_limits<int32_t>::max()) {
+      return Status::UserError("The exponent is out of range.");
+    }
+    out.exponent = exponent.value();
     return Status::OK();
   }
   return pos == size ? Status::OK() : Status::UserError("Chars are invalid.");
@@ -270,7 +284,8 @@ Status DecimalUtil::parseStringToDecimalComponents(
     int32_t toScale,
     int32_t& parsedPrecision,
     int32_t& parsedScale,
-    int128_t& out) {
+    int128_t& out,
+    bool rejectZeroWithLargeExponent) {
   DecimalComponents decimalComponents;
   if (auto status =
           parseDecimalComponents(s.data(), s.size(), decimalComponents);
@@ -302,8 +317,9 @@ Status DecimalUtil::parseStringToDecimalComponents(
       parsedScale = fractionSize;
     }
   } else {
-    const auto exponent = decimalComponents.exponent.value();
-    parsedScale = -exponent + fractionSize;
+    // The exponent may exceed the int32 range while the scale fits in it.
+    const int64_t exponent = decimalComponents.exponent.value();
+    parsedScale = static_cast<int32_t>(fractionSize - exponent);
     // Truncate the fractionalDigits.
     if (parsedScale > toScale) {
       if (-exponent >= toScale) {
@@ -314,7 +330,7 @@ Status DecimalUtil::parseStringToDecimalComponents(
         decimalComponents.fractionalDigits = "";
         parsedScale -= fractionSize;
       } else {
-        const auto reduceDigits = exponent + toScale;
+        const auto reduceDigits = static_cast<int32_t>(exponent + toScale);
         if (fractionSize > reduceDigits &&
             decimalComponents.fractionalDigits[reduceDigits] >= '5') {
           roundUp = true;
@@ -339,17 +355,26 @@ Status DecimalUtil::parseStringToDecimalComponents(
 
   if (parsedScale < 0) {
     // Force the scale to be zero, to avoid negative scales (due to
-    // compatibility issues with external systems such as databases).
-    if (-parsedScale + toScale > LongDecimalType::kMaxPrecision) {
-      return Status::UserError("Value too large.");
-    }
+    // compatibility issues with external systems such as databases). Zero fits
+    // any decimal type whatever its exponent, e.g. '0e50'.
+    if (out != 0) {
+      // Computed in int64 since the scale can be as small as int32 min.
+      const int64_t scaleUp = static_cast<int64_t>(toScale) - parsedScale;
+      if (scaleUp > LongDecimalType::kMaxPrecision) {
+        return Status::UserError("Value too large.");
+      }
 
-    bool overflow =
-        __builtin_mul_overflow(out, kPowersOfTen[-parsedScale + toScale], &out);
-    if (UNLIKELY(overflow)) {
+      bool overflow = __builtin_mul_overflow(out, kPowersOfTen[scaleUp], &out);
+      if (UNLIKELY(overflow)) {
+        return Status::UserError("Value too large.");
+      }
+      parsedPrecision -= parsedScale;
+    } else if (
+        rejectZeroWithLargeExponent &&
+        static_cast<int32_t>(1U - static_cast<uint32_t>(parsedScale)) >
+            LongDecimalType::kMaxPrecision) {
       return Status::UserError("Value too large.");
     }
-    parsedPrecision -= parsedScale;
     parsedScale = toScale;
   }
   return Status::OK();

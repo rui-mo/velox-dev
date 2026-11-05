@@ -165,6 +165,16 @@ class SparkQueryConfig {
       false,
       "Use simple date formatter instead of Joda for Spark.")
 
+  /// If true, casts from string to decimal reject zero with more than 38
+  /// integral digits, e.g. '0e38', as in Spark 4.2.0, 4.1.3 and earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyDecimalZeroLargeExponent,
+      legacyDecimalZeroLargeExponent,
+      "legacy_decimal_zero_large_exponent",
+      bool,
+      false,
+      "Reject zero with a large exponent in Spark casts from string to decimal.")
+
   /// If true, mode returns -0.0 as is instead of 0.0, as in Spark 4.1 and
   /// earlier.
   VELOX_SPARK_CONFIG(

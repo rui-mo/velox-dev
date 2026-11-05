@@ -413,7 +413,8 @@ void CastExpr::applyVarcharToDecimalCastKernel(
         hooks_->removeWhiteSpaces(sourceVector->valueAt(row)),
         toPrecisionScale.first,
         toPrecisionScale.second,
-        decimalValue);
+        decimalValue,
+        hooks_->stringToDecimalCastRejectsZeroWithLargeExponent());
     if (status.ok()) {
       rawBuffer[row] = decimalValue;
     } else {

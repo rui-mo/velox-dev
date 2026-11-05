@@ -102,6 +102,12 @@ class CastHooks {
       const tz::TimeZone* timeZone,
       int64_t sessionStartTimeMs) const = 0;
 
+  /// Returns whether casts from string to decimal reject a zero with more than
+  /// 38 integral digits, e.g. '0e38'. See DecimalUtil::castFromString.
+  virtual bool stringToDecimalCastRejectsZeroWithLargeExponent() const {
+    return false;
+  }
+
   /// 'data' is guaranteed to be non-empty and has been processed by
   /// removeWhiteSpaces.
   virtual Expected<float> castStringToReal(const StringView& data) const = 0;

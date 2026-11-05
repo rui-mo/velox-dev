@@ -360,6 +360,10 @@ Expected<Timestamp> SparkCastHooks::castBooleanToTimestamp(bool val) const {
   return Timestamp::fromMicrosNoError(val ? 1 : 0);
 }
 
+bool SparkCastHooks::stringToDecimalCastRejectsZeroWithLargeExponent() const {
+  return SparkQueryConfig{config_}.legacyDecimalZeroLargeExponent();
+}
+
 bool SparkCastHooks::decimalToFloatHighPrecisionCastEnabled() const {
   return SparkQueryConfig{config_}.decimalToFloatHighPrecisionCastEnabled();
 }
