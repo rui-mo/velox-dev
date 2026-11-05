@@ -893,6 +893,10 @@ TEST_F(SparkQueryRunnerTest, isSupported) {
            .argumentType("decimal(a_precision, a_scale)")
            .argumentType("function(decimal(a_precision, a_scale), boolean)")
            .build()));
+  EXPECT_TRUE(queryRunner->isSupported(*exec::FunctionSignatureBuilder()
+                                            .returnType("decimal(38, 18)")
+                                            .argumentType("decimal(6, 0)")
+                                            .build()));
   EXPECT_TRUE(
       queryRunner->isSupported(*exec::FunctionSignatureBuilder()
                                     .returnType("interval year to month")
