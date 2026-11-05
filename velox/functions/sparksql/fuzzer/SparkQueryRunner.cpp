@@ -323,6 +323,11 @@ bool isSupportedType(
       !isSupportedTypeName(type.baseName())) {
     return false;
   }
+  // The precision and scale of a decimal are integer variables or literals,
+  // e.g. decimal(a_precision, a_scale) or decimal(6, 0).
+  if (boost::algorithm::iequals(type.baseName(), "decimal")) {
+    return true;
+  }
   for (const auto& parameter : type.parameters()) {
     if (!isSupportedType(parameter, variables)) {
       return false;
