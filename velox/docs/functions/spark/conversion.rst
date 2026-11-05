@@ -302,6 +302,19 @@ Invalid examples
   SELECT cast('tr' as boolean); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast('tru' as boolean); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
+From floating-point types
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Casting a floating-point number to boolean returns false for zero and true
+otherwise, including for ``NaN``, regardless of ANSI mode.
+
+::
+
+  SELECT cast(0.0D as boolean); -- false
+  SELECT cast(-0.0D as boolean); -- false
+  SELECT cast(cast('NaN' as double) as boolean); -- true
+  SELECT cast(cast('Infinity' as real) as boolean); -- true
+
 Cast to String
 --------------
 From floating-point types

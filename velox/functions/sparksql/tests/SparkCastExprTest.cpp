@@ -1072,6 +1072,15 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
       testCast<int8_t, bool>("boolean", {12}, {true});
       testCast<int8_t, bool>("boolean", {-1}, {true});
 
+      // NaN differs from zero, so it's true.
+      testCast<float, bool>(
+          REAL(), BOOLEAN(), {kNan, 0.0, -0.0}, {true, false, false});
+      testCast<double, bool>(
+          DOUBLE(),
+          BOOLEAN(),
+          {std::numeric_limits<double>::quiet_NaN(), 0.0, -0.0},
+          {true, false, false});
+
       testCast<std::string, bool>("boolean", {"1"}, {true});
       testCast<std::string, bool>("boolean", {"t"}, {true});
       testCast<std::string, bool>("boolean", {"y"}, {true});
@@ -3233,7 +3242,6 @@ TEST_F(SparkCastExprTestAnsiOff, primitiveValidCornerCases) {
   testCast<double, bool>("boolean", {0.1}, {true});
   testCast<double, bool>("boolean", {-0.1}, {true});
   testCast<double, bool>("boolean", {-1.0}, {true});
-  testCast<float, bool>("boolean", {kNan}, {false});
   testCast<float, bool>("boolean", {kInf}, {true});
   testCast<double, bool>("boolean", {0.0000000000001}, {true});
 
