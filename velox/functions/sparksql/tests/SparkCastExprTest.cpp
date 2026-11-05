@@ -2702,6 +2702,40 @@ TEST_F(SparkCastExprTest, stringToTimestampZoneIds) {
   }
 }
 
+TEST_F(SparkCastExprTest, stringToTimestampAtDstTransitions) {
+  SCOPE_EXIT {
+    queryCtx_->testingOverrideConfigUnsafe({});
+  };
+  // Clocks jumped from 02:00 to 03:00 on 2020-03-08 in America/Los_Angeles and
+  // on 2020-03-29 in Europe/Paris. Local times in these gaps move forward by an
+  // hour. Clocks went back from 02:00 to 01:00 on 2020-11-01 in
+  // America/Los_Angeles. Local times in this overlap take the earlier instant.
+  const auto input = makeFlatVector<std::string>(
+      {"2020-03-08 02:00:00",
+       "2020-03-08 02:30:00",
+       "2020-03-08 02:59:59.999999",
+       "2020-03-29 02:30:00 Europe/Paris",
+       "2020-11-01 01:30:00"});
+  // 2020-03-08 10:00:00, 10:30:00 and 10:59:59.999999 UTC, 2020-03-29 01:30:00
+  // UTC and 2020-11-01 08:30:00 UTC.
+  const auto expected = makeFlatVector<Timestamp>(
+      {Timestamp(1'583'661'600, 0),
+       Timestamp(1'583'663'400, 0),
+       Timestamp(1'583'665'199, 999'999'000),
+       Timestamp(1'585'445'400, 0),
+       Timestamp(1'604'219'400, 0)});
+  for (auto ansiEnabled : {false, true}) {
+    SCOPED_TRACE(fmt::format("ansiEnabled: {}", ansiEnabled));
+    queryCtx_->testingOverrideConfigUnsafe({
+        {core::QueryConfig::kSessionTimezone, "America/Los_Angeles"},
+        {core::QueryConfig::kAdjustTimestampToTimezone, "true"},
+        {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled),
+         std::to_string(ansiEnabled)},
+    });
+    testCast(input, expected);
+  }
+}
+
 TEST_F(SparkCastExprTestAnsiOn, stringToTimestampValid) {
   testStringToTimestamp();
 }
