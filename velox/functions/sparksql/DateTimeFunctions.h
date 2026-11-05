@@ -37,13 +37,15 @@ namespace detail {
 Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
     const std::string_view& format,
     DateTimeFormatterType type,
-    bool isParsing = false) {
+    bool isParsing) {
   switch (type) {
     case DateTimeFormatterType::STRICT_SIMPLE:
       return buildSimpleDateTimeFormatter(format, /*lenient=*/false);
     case DateTimeFormatterType::LENIENT_SIMPLE:
       return buildSimpleDateTimeFormatter(format, /*lenient=*/true);
     default:
+      VELOX_RETURN_UNEXPECTED_NOT_OK(
+          validateDateTimePattern(format, isParsing));
       return buildJodaDateTimeFormatter(
           std::string_view(format.data(), format.size()),
           /*allowIsoZoneOffset=*/true,
@@ -59,13 +61,14 @@ Expected<std::shared_ptr<DateTimeFormatter>> getDateTimeFormatter(
 //
 // @param format The format string to be used for initializing the formatter.
 // @param legacyFormatter Whether legacy formatter is used.
-// @param isParsing Whether the formatter parses strings.
+// @param isParsing Whether the formatter parses strings. Spark accepts fewer
+// patterns for parsing.
 // @return A shared pointer to a DateTimeFormatter. If the formatter
 // initialization fails and the legacy formatter is used, nullptr is returned.
 inline std::shared_ptr<DateTimeFormatter> initializeFormatter(
     const std::string_view format,
     bool legacyFormatter,
-    bool isParsing = false) {
+    bool isParsing) {
   if (format.empty() && !legacyFormatter) {
     // Unlike Joda, Spark accepts an empty pattern, which formats datetimes to
     // empty strings and only parses empty strings.
@@ -180,7 +183,8 @@ struct UnixTimestampParseFunction {
         kDefaultFormat_,
         SparkQueryConfig{config}.legacyDateFormatter()
             ? DateTimeFormatterType::STRICT_SIMPLE
-            : DateTimeFormatterType::JODA);
+            : DateTimeFormatterType::JODA,
+        /*isParsing=*/true);
     VELOX_CHECK(!formatter.hasError(), "Default format should always be valid");
     format_ = formatter.value();
     setTimezone(config);
@@ -342,7 +346,7 @@ struct FromUnixtimeFunction {
     sessionTimeZone_ = getTimeZoneFromConfig(config);
     if (format != nullptr) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(*format), legacyFormatter_);
+          std::string_view(*format), legacyFormatter_, /*isParsing=*/false);
       if (formatter) {
         formatter_ = formatter;
         maxResultSize_ = formatter_->maxResultSize(sessionTimeZone_);
@@ -362,7 +366,7 @@ struct FromUnixtimeFunction {
     }
     if (!isConstantTimeFormat_) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(format), legacyFormatter_);
+          std::string_view(format), legacyFormatter_, /*isParsing=*/false);
       if (formatter) {
         formatter_ = formatter;
         maxResultSize_ = formatter_->maxResultSize(sessionTimeZone_);
@@ -1529,7 +1533,9 @@ struct DateFormatFunction {
     sessionTimeZone_ = getTimeZoneFromConfig(config);
     if (formatString != nullptr) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(*formatString), legacyFormatter_);
+          std::string_view(*formatString),
+          legacyFormatter_,
+          /*isParsing=*/false);
       if (formatter) {
         formatter_ = formatter;
         maxResultSize_ = formatter_->maxResultSize(sessionTimeZone_);
@@ -1549,7 +1555,9 @@ struct DateFormatFunction {
     }
     if (!isConstFormat_) {
       auto formatter = detail::initializeFormatter(
-          std::string_view(formatString), legacyFormatter_);
+          std::string_view(formatString),
+          legacyFormatter_,
+          /*isParsing=*/false);
       if (!formatter) {
         return false;
       }
