@@ -159,6 +159,12 @@ class CastHooks {
     return false;
   }
 
+  /// Returns whether a cast of NaN, Infinity or -Infinity to decimal returns
+  /// NULL, even when cast errors throw.
+  virtual bool nonFiniteToDecimalCastReturnsNull() const {
+    return false;
+  }
+
   virtual PolicyType getPolicy() const = 0;
 
   /// Returns true if TIMESTAMP_UTC casts are supported.

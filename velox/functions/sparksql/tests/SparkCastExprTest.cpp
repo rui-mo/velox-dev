@@ -1795,6 +1795,18 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
     testCast(
         makeConstant<double>(std::numeric_limits<double>::min(), 1),
         makeConstant<int128_t>(0, 1, DECIMAL(38, 2)));
+
+    // Non-finite inputs return NULL.
+    testCast<double, int64_t>(
+        DOUBLE(),
+        DECIMAL(10, 2),
+        {NAN, INFINITY, -INFINITY},
+        {std::nullopt, std::nullopt, std::nullopt});
+    testCast<double, int128_t>(
+        DOUBLE(),
+        DECIMAL(38, 2),
+        {NAN, INFINITY, -INFINITY},
+        {std::nullopt, std::nullopt, std::nullopt});
   }
 
   // Valid real-to-decimal cases. Results are identical regardless of ANSI
@@ -1872,6 +1884,18 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
     testCast(
         makeConstant<float>(std::numeric_limits<float>::min(), 1),
         makeConstant<int128_t>(0, 1, DECIMAL(38, 2)));
+
+    // Non-finite inputs return NULL.
+    testCast<float, int64_t>(
+        REAL(),
+        DECIMAL(10, 2),
+        {NAN, INFINITY, -INFINITY},
+        {std::nullopt, std::nullopt, std::nullopt});
+    testCast<float, int128_t>(
+        REAL(),
+        DECIMAL(38, 2),
+        {NAN, INFINITY, -INFINITY},
+        {std::nullopt, std::nullopt, std::nullopt});
   }
 
   // Valid string-to-real/double conversions produce identical results whether
@@ -4047,18 +4071,6 @@ TEST_F(SparkCastExprTestAnsiOn, doubleToDecimal) {
       DECIMAL(38, 2),
       {std::numeric_limits<double>::lowest()},
       "to DECIMAL(38, 2). Result overflows.");
-
-  // Under ANSI ON, non-finite inputs throw.
-  testThrow<double>(
-      DOUBLE(),
-      DECIMAL(38, 2),
-      {INFINITY},
-      "to DECIMAL(38, 2). The input value should be finite.");
-  testThrow<double>(
-      DOUBLE(),
-      DECIMAL(38, 2),
-      {NAN},
-      "to DECIMAL(38, 2). The input value should be finite.");
 }
 
 TEST_F(SparkCastExprTestAnsiOn, realToDecimal) {
@@ -4102,18 +4114,6 @@ TEST_F(SparkCastExprTestAnsiOn, realToDecimal) {
       DECIMAL(38, 2),
       {std::numeric_limits<float>::lowest()},
       "to DECIMAL(38, 2). Result overflows.");
-
-  // Under ANSI ON, non-finite inputs throw.
-  testThrow<float>(
-      REAL(),
-      DECIMAL(38, 2),
-      {INFINITY},
-      "to DECIMAL(38, 2). The input value should be finite.");
-  testThrow<float>(
-      REAL(),
-      DECIMAL(38, 2),
-      {NAN},
-      "to DECIMAL(38, 2). The input value should be finite.");
 }
 
 TEST_F(SparkCastExprTestAnsiOff, decimalToDecimal) {
@@ -4281,11 +4281,6 @@ TEST_F(SparkCastExprTestAnsiOff, doubleToDecimal) {
   testOverflowNull(DECIMAL(38, 2), std::numeric_limits<double>::lowest());
   testCast<double, int64_t>(
       DOUBLE(), DECIMAL(10, 2), {9999999999999999999999.99}, {std::nullopt});
-
-  // Under ANSI OFF, non-finite inputs return NULL.
-  testCast<double, int128_t>(
-      DOUBLE(), DECIMAL(38, 2), {INFINITY}, {std::nullopt});
-  testCast<double, int128_t>(DOUBLE(), DECIMAL(38, 2), {NAN}, {std::nullopt});
 }
 
 TEST_F(SparkCastExprTestAnsiOff, realToDecimal) {
@@ -4304,10 +4299,6 @@ TEST_F(SparkCastExprTestAnsiOff, realToDecimal) {
   testOverflowNull(DECIMAL(38, 2), std::numeric_limits<float>::lowest());
   testCast<float, int64_t>(
       REAL(), DECIMAL(10, 2), {9999999999999999999999.99}, {std::nullopt});
-
-  // Under ANSI OFF, non-finite inputs return NULL.
-  testCast<float, int128_t>(REAL(), DECIMAL(38, 2), {INFINITY}, {std::nullopt});
-  testCast<float, int128_t>(REAL(), DECIMAL(38, 2), {NAN}, {std::nullopt});
 }
 
 TEST_F(SparkCastExprTestAnsiOn, castNumericToIntegralOverflow) {

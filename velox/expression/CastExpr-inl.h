@@ -378,20 +378,20 @@ void CastExpr::applyFloatingPointToDecimalCastKernel(
   const auto toPrecisionScale = getDecimalPrecisionScale(*toType);
   const bool useShortestDigits =
       hooks_->floatingPointToDecimalUsesShortestDigits();
+  const bool nonFiniteReturnsNull = hooks_->nonFiniteToDecimalCastReturnsNull();
 
   applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
+    const auto value = floatingInput->valueAt(row);
+    if (nonFiniteReturnsNull && !std::isfinite(value)) {
+      result->setNull(row, true);
+      return;
+    }
     TOutput output;
     const auto status = useShortestDigits
         ? DecimalUtil::rescaleShortestDigits<TOutput>(
-              floatingInput->valueAt(row),
-              toPrecisionScale.first,
-              toPrecisionScale.second,
-              output)
+              value, toPrecisionScale.first, toPrecisionScale.second, output)
         : DecimalUtil::rescaleFloatingPoint<TInput, TOutput>(
-              floatingInput->valueAt(row),
-              toPrecisionScale.first,
-              toPrecisionScale.second,
-              output);
+              value, toPrecisionScale.first, toPrecisionScale.second, output);
     if (status.ok()) {
       rawResults[row] = output;
     } else {
