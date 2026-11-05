@@ -209,12 +209,26 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
             1727181032.0,
             -1727181032.0,
             std::numeric_limits<double>::min(),
+            // Spark computes the microseconds in double precision, which
+            // rounds the last digits of large values.
+            -800000000000.146728,
+            100000000000.123457,
+            12345678901.234567,
+            // The microseconds round to +/-2^63, which Spark clamps to the
+            // int64 range in every mode.
+            9223372036854.775,
+            -9223372036854.775,
         }),
         makeNullableFlatVector<Timestamp>({
             Timestamp(0, 0),
             Timestamp(1727181032, 0),
             Timestamp(-1727181032, 0),
             Timestamp(0, 0),
+            Timestamp::fromMicros(-800000000000146688),
+            Timestamp::fromMicros(100000000000123456),
+            Timestamp::fromMicros(12345678901234568),
+            Timestamp(9223372036854, 775'807'000),
+            Timestamp(-9223372036855, 224'192'000),
         }));
   }
 
@@ -2571,6 +2585,8 @@ TEST_F(SparkCastExprTestAnsiOn, doubleToTimestamp) {
       1.79769e+308,
       std::numeric_limits<double>::max(),
       -std::numeric_limits<double>::max(),
+      9223372036854.777,
+      -9223372036854.777,
   })});
   VELOX_ASSERT_THROW(
       evaluate("cast(c0 as timestamp)", overflowInput), "Cannot cast");
@@ -2593,6 +2609,8 @@ TEST_F(SparkCastExprTestAnsiOn, doubleToTimestamp) {
 
   assertEqualVectors(
       makeNullableFlatVector<Timestamp>({
+          std::nullopt,
+          std::nullopt,
           std::nullopt,
           std::nullopt,
           std::nullopt,

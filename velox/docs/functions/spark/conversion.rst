@@ -770,8 +770,10 @@ From floating-point types
 
 Casting from floating-point input to timestamp type is allowed.
 The input value is treated as the number of seconds since the epoch
-(``1970-01-01 00:00:00 UTC``) and converted to microseconds by truncating
-the fractional part.
+(``1970-01-01 00:00:00 UTC``). It is multiplied by 1,000,000 in double
+precision and the fractional part of the product is truncated, so the last
+microsecond digits of large values can differ from the input. A product of
+exactly ±2^63 returns the maximum or minimum timestamp in both modes.
 
 When ANSI mode is disabled:
 
@@ -792,6 +794,8 @@ Valid examples
   SELECT cast(0.0 as timestamp); -- 1970-01-01 00:00:00
   SELECT cast(1727181032.0 as timestamp); -- 2024-09-24 12:30:32
   SELECT cast(-1727181032.0 as timestamp); -- 1915-04-09 11:29:28
+  SELECT cast(cast(100000000000.123457 as double) as timestamp); -- 5138-11-16 09:46:40.123456
+  SELECT cast(cast(9223372036854.775 as double) as timestamp); -- 294247-01-10 04:00:54.775807
 
 Overflow examples
 

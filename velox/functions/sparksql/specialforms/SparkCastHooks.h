@@ -152,9 +152,8 @@ class SparkCastHooks : public exec::CastHooks {
   }
 
  private:
-  // Casts a number to a timestamp. The number is treated as the number of
-  // seconds since the epoch (1970-01-01 00:00:00 UTC).
-  // Supports integer and floating-point types.
+  // Casts an integral number of seconds since the epoch (1970-01-01 00:00:00
+  // UTC) to a timestamp.
   template <typename T>
   Expected<Timestamp> castNumberToTimestamp(T value, bool allowOverflow) const;
 

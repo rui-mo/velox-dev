@@ -385,27 +385,31 @@ Expected<int64_t> SparkCastHooks::castTimestampToBigint(
 
 Expected<std::optional<Timestamp>> SparkCastHooks::castDoubleToTimestamp(
     double value) const {
-  if (allowOverflow_) {
-    if (FOLLY_UNLIKELY(std::isnan(value) || std::isinf(value))) {
+  if (FOLLY_UNLIKELY(std::isnan(value) || std::isinf(value))) {
+    if (allowOverflow_) {
       return std::nullopt;
     }
-
-    auto result = castNumberToTimestamp(value, allowOverflow_);
-    VELOX_DCHECK(!result.hasError());
-    return result.value();
-  }
-
-  if (FOLLY_UNLIKELY(std::isnan(value) || std::isinf(value))) {
     return folly::makeUnexpected(
         Status::UserError(
             "The value cannot be cast to TIMESTAMP because it is malformed."));
   }
 
-  auto result = castNumberToTimestamp(value, allowOverflow_);
-  if (result.hasError()) {
-    return folly::makeUnexpected(result.error());
+  // Spark computes the microseconds in double precision, then converts them
+  // to int64. Its ANSI check compares against the int64 bounds converted to
+  // double, so a product of exactly +/-2^63 clamps instead of overflowing.
+  static constexpr double kTwoPow63 = 9223372036854775808.0;
+  const double micros = value * Timestamp::kMicrosecondsInSecond;
+  if (micros >= kTwoPow63 || micros <= -kTwoPow63) {
+    if (!allowOverflow_ && (micros > kTwoPow63 || micros < -kTwoPow63)) {
+      return folly::makeUnexpected(
+          Status::UserError(
+              "The value cannot be cast to TIMESTAMP due to an overflow."));
+    }
+    return Timestamp::fromMicrosNoError(
+        micros > 0 ? std::numeric_limits<int64_t>::max()
+                   : std::numeric_limits<int64_t>::min());
   }
-  return result.value();
+  return Timestamp::fromMicrosNoError(static_cast<int64_t>(micros));
 }
 
 Expected<Timestamp> SparkCastHooks::castBooleanToTimestamp(bool val) const {
