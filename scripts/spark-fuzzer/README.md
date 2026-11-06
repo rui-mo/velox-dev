@@ -35,6 +35,7 @@ scripts/spark-fuzzer/spark_fuzzer.py run --runs 10 --duration-sec 300
 | `env.sh` | Common settings, sourced by the shell scripts. |
 | `conf/` | Spark configs that `setup.sh` copies to `$SPARK_HOME/conf`. |
 | `REPORT.md` | The framework changes, function fixes, known differences and fuzzer runs so far. |
+| `ANSI.md` | The behaviors that depend on ANSI mode, the ANSI fixes and the ANSI cases that Velox doesn't support. |
 
 `$SPARK_FUZZER_HOME` contains:
 
@@ -120,7 +121,8 @@ Each seed has one of these results:
 `run --ansi on` sets the Velox config `spark.ansi_enabled` and the Spark config
 `spark.sql.ansi.enabled` to true. The fuzzers then verify the errors that
 functions raise in ANSI mode, e.g. for overflows, against Spark. `repro` and
-`recheck` use the ANSI mode of the run. `sql --ansi both` runs a query in both
+`recheck` use the ANSI mode of the run. [ANSI.md](ANSI.md) lists the functions
+and casts that depend on ANSI mode. `sql --ansi both` runs a query in both
 modes:
 
 ```bash

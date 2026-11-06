@@ -16,6 +16,8 @@ Read these before the first run in a session:
 - `scripts/spark-fuzzer/README.md`: the environment and the `spark_fuzzer.py`
   commands.
 - `scripts/spark-fuzzer/REPORT.md`: the fixes and known issues found so far.
+- `scripts/spark-fuzzer/ANSI.md`: the behaviors that depend on ANSI mode, the
+  ANSI fixes and the ANSI cases that Velox doesn't support.
 - `scripts/spark-fuzzer/known-issues.txt`: the functions that runs skip.
 - `.claude/CLAUDE.md` and `CODING_STYLE.md`: the coding and test rules.
 
@@ -213,7 +215,7 @@ run of the affected functions.
    prefix:
    - Function fix: `fix(<scope>): <Description> (#N)`, with the scope of the
      changed code, e.g. `sparksql`, `type` or `vector`. N is the next number
-     after the last function fix in `REPORT.md`.
+     after the last function fix in `REPORT.md` and `ANSI.md`.
    - Framework: `fix(fuzzer): <Description>` or `feat(fuzzer): <Description>`.
    - Titles have at most 67 characters.
 3. Lead the body with the Spark and Velox results of a reduced call, e.g.
@@ -233,7 +235,7 @@ run with new seeds. `recheck` reports the failures whose seeds generate other
 expressions with the current build as `not_reproduced`. Check them as in step
 3. At the end of a session, add the fixes and the new known issues to
 `REPORT.md` in a separate `docs(fuzzer)` commit, and summarize them for the
-user.
+user. Fixes and unsupported cases that depend on ANSI mode go to `ANSI.md`.
 
 ## Known differences
 
