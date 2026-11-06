@@ -33,6 +33,11 @@ Read these before the first run in a session:
   Other functions behave the same in both modes.
 - Fix one function per commit. Framework changes, i.e. to the fuzzer, the
   verifier, the Spark query runner or the scripts, go into separate commits.
+- Search the open and merged pull requests of facebookincubator/velox before
+  fixing an issue. If one already fixes it, use that pull request instead of a
+  new fix. Ask the user whether to cherry-pick it, and note it in `REPORT.md`,
+  or in "Upstream pull requests" of `ANSI.md` if the behavior depends on ANSI
+  mode.
 - Start every fix with a test that fails without it. Take the expected values
   from Spark with `spark_fuzzer.py sql`, never from Velox or from memory.
 - Fix at most the number of function issues the user asked for. Ask if they
