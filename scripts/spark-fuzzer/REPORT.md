@@ -28,7 +28,7 @@ describes the move to Spark 4.3.0.
   triages failures.
 - 92 function fixes, numbered 1 to 93 without 36, one commit each. Fixes 1 to
   61 are listed below, and [ANSI.md](ANSI.md#fixes) lists fixes 62 to 93.
-- 77 commits for the Spark query runner, the fuzzers, their argument
+- 79 commits for the Spark query runner, the fuzzers, their argument
   generators, the scripts, the `spark-fuzzer` skill and these documents,
   listed below.
 - 16 commits cherry-pick 15 Velox pull requests that the ANSI fixes build on.
@@ -226,6 +226,8 @@ reasons of a run.
 | 78a5b6b08 | `run --ansi on` runs the fuzzers with ANSI mode on, and `sql --ansi both` runs a query in both modes. |
 | 655738841 | `sql` prints short Spark errors. |
 | 78a8ec801 | `summary --coverage` counts the test cases of each function by outcome and ANSI mode. |
+| d9f815e32 | Add [ANSI.md](ANSI.md) and update this report for the ANSI work. |
+| 15e52d2ff | The skill searches Velox pull requests before fixing an issue, and uses one that already fixes it. |
 
 ## Function fixes
 
