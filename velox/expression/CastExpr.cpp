@@ -68,6 +68,20 @@ bool isDecimalReinterpretCast(const TypePtr& fromType, const TypePtr& toType) {
   return fromScale == toScale && toPrecision >= fromPrecision;
 }
 
+// Returns whether 'type' is BOOLEAN, an integral, a floating-point or a decimal
+// type. DATE, TIME and interval types share the physical types of some of
+// these, so 'type' is compared as a type rather than by kind.
+bool isBooleanOrNumeric(const TypePtr& type) {
+  if (type->isDecimal()) {
+    return true;
+  }
+  static const std::vector<TypePtr> kTypes{
+      BOOLEAN(), TINYINT(), SMALLINT(), INTEGER(), BIGINT(), REAL(), DOUBLE()};
+  return std::any_of(kTypes.begin(), kTypes.end(), [&](const TypePtr& other) {
+    return type->equivalent(*other);
+  });
+}
+
 template <typename T>
 VectorPtr relabelConstant(
     const SelectivityVector& rows,
@@ -223,6 +237,11 @@ VectorPtr CastExpr::castFromDate(
       return castResult;
     }
     default:
+      if (hooks_->dateToNumericCastReturnsNull() &&
+          isBooleanOrNumeric(toType)) {
+        castResult->addNulls(rows);
+        return castResult;
+      }
       VELOX_UNSUPPORTED(
           "Cast from DATE to {} is not supported", toType->toString());
   }

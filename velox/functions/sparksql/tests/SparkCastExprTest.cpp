@@ -740,6 +740,33 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
             {fromMicros(999999), fromMicros(-999999), fromMicros(0)}));
   }
 
+  // Casts from date to boolean, numeric and decimal types return NULL. Spark
+  // rejects these casts when ANSI mode is on, so Velox ignores ANSI mode.
+  void testDateToNumeric() {
+    const auto input =
+        makeNullableFlatVector<int32_t>({18262, 0, -1, std::nullopt}, DATE());
+    for (const auto& toType : std::vector<TypePtr>{
+             BOOLEAN(),
+             TINYINT(),
+             SMALLINT(),
+             INTEGER(),
+             BIGINT(),
+             REAL(),
+             DOUBLE(),
+             DECIMAL(10, 0),
+             DECIMAL(38, 10)}) {
+      auto expected = BaseVector::create(toType, input->size(), pool());
+      for (auto i = 0; i < input->size(); ++i) {
+        expected->setNull(i, true);
+      }
+      testCast(input, expected);
+    }
+    testCast(
+        makeArrayVectorFromJson<int32_t>(
+            {"[18262, null]", "[]"}, ARRAY(DATE())),
+        makeArrayVectorFromJson<int64_t>({"[null, null]", "[]"}));
+  }
+
   void testTimestampToString() {
     testCast<Timestamp, std::string>(
         "string",
@@ -2899,6 +2926,10 @@ TEST_F(SparkCastExprTestAnsiOn, decimalToTimestamp) {
   testDecimalToTimestamp();
 }
 
+TEST_F(SparkCastExprTestAnsiOn, dateToNumeric) {
+  testDateToNumeric();
+}
+
 TEST_F(SparkCastExprTestAnsiOn, timestampToString) {
   testTimestampToString();
 }
@@ -3831,6 +3862,10 @@ TEST_F(SparkCastExprTestAnsiOff, timestampToDecimal) {
 
 TEST_F(SparkCastExprTestAnsiOff, decimalToTimestamp) {
   testDecimalToTimestamp();
+}
+
+TEST_F(SparkCastExprTestAnsiOff, dateToNumeric) {
+  testDateToNumeric();
 }
 
 TEST_F(SparkCastExprTestAnsiOff, timestampToString) {
