@@ -68,7 +68,8 @@ struct Date {
   int32_t microsecond = 0;
   bool isAm = true; // AM -> true, PM -> false
   const tz::TimeZone* timezone = nullptr;
-  // Zone offset parsed by DateTimeFormatSpecifier::ISO_ZONE_OFFSET.
+  // Zone offset parsed by DateTimeFormatSpecifier::ISO_ZONE_OFFSET or
+  // ZONE_OFFSET.
   std::optional<int32_t> zoneOffsetSeconds;
 
   bool isClockHour = false; // Whether most recent hour specifier is clockhour
@@ -566,20 +567,41 @@ int64_t parseTimezoneOffset(const char* cur, const char* end, Date& date) {
   return -1;
 }
 
+// Returns the text of a zero offset for a pattern with ISO_ZONE_OFFSET or
+// ZONE_OFFSET, as java.time.format.DateTimeFormatter writes it for the pattern
+// letters 'X' or 'x'.
+std::string_view noOffsetText(const FormatPattern& pattern) {
+  if (pattern.specifier == DateTimeFormatSpecifier::ISO_ZONE_OFFSET) {
+    return "Z";
+  }
+  if (pattern.minRepresentDigits == 1) {
+    return "+00";
+  }
+  return pattern.minRepresentDigits % 2 == 0 ? "+0000" : "+00:00";
+}
+
 // Parses a zone offset like java.time.format.DateTimeFormatter does for 'count'
-// pattern letters 'X' in strict, case-insensitive mode. 'X' is "+HH" with
-// optional minutes "mm", 'XX' is "+HHMM", 'XXX' is "+HH:MM", 'XXXX' is "+HHMM"
-// with optional seconds "ss", 'XXXXX' is "+HH:MM" with optional seconds ":ss",
-// and "Z" is a zero offset. Returns the number of characters parsed, or -1 if
-// the input does not match or the offset is out of range.
-int64_t
-parseIsoZoneOffset(const char* cur, const char* end, size_t count, Date& date) {
+// pattern letters 'X' or 'x' in strict, case-insensitive mode. 'X' is "+HH"
+// with optional minutes "mm", 'XX' is "+HHMM", 'XXX' is "+HH:MM", 'XXXX' is
+// "+HHMM" with optional seconds "ss", and 'XXXXX' is "+HH:MM" with optional
+// seconds ":ss". 'zeroText' is a zero offset, and is matched first. Returns the
+// number of characters parsed, or -1 if the input does not match or the offset
+// is out of range.
+int64_t parseIsoZoneOffset(
+    const char* cur,
+    const char* end,
+    size_t count,
+    std::string_view zeroText,
+    Date& date) {
   if (cur >= end) {
     return -1;
   }
-  if (*cur == 'Z' || *cur == 'z') {
+  if (static_cast<size_t>(end - cur) >= zeroText.size() &&
+      std::equal(zeroText.begin(), zeroText.end(), cur, [](char zero, char c) {
+        return zero == std::toupper(static_cast<unsigned char>(c));
+      })) {
     date.zoneOffsetSeconds = 0;
-    return 1;
+    return zeroText.size();
   }
   if (*cur != '+' && *cur != '-') {
     return -1;
@@ -775,11 +797,15 @@ int32_t appendTimezoneOffset(int64_t offset, char* result, bool includeColon) {
 }
 
 // Appends a zone offset like java.time.format.DateTimeFormatter does for
-// 'count' pattern letters 'X'. 'X' omits zero minutes, 'XX' to 'XXXXX' output
-// minutes, 'XXXX' and 'XXXXX' also output non-zero seconds, and 'XXX' and
-// 'XXXXX' separate them with colons. An offset that would output only zeros is
-// "Z".
-int32_t appendIsoZoneOffset(int64_t offset, size_t count, char* result) {
+// 'count' pattern letters 'X' or 'x'. 'X' omits zero minutes, 'XX' to 'XXXXX'
+// output minutes, 'XXXX' and 'XXXXX' also output non-zero seconds, and 'XXX'
+// and 'XXXXX' separate them with colons. An offset that would output only zeros
+// is 'zeroText'.
+int32_t appendIsoZoneOffset(
+    int64_t offset,
+    size_t count,
+    std::string_view zeroText,
+    char* result) {
   const auto absOffset = std::abs(offset);
   const auto hours = absOffset / 3600;
   const auto minutes = absOffset / 60 % 60;
@@ -787,8 +813,8 @@ int32_t appendIsoZoneOffset(int64_t offset, size_t count, char* result) {
   const bool outputMinutes = count > 1 || minutes > 0;
   const bool outputSeconds = count >= 4 && seconds > 0;
   if (hours == 0 && minutes == 0 && !outputSeconds) {
-    result[0] = 'Z';
-    return 1;
+    std::memcpy(result, zeroText.data(), zeroText.size());
+    return zeroText.size();
   }
 
   const bool colon = count == 3 || count == 5;
@@ -868,6 +894,8 @@ std::string_view getSpecifierName(DateTimeFormatSpecifier specifier) {
       return "ISO_ZONE_OFFSET";
     case DateTimeFormatSpecifier::MODIFIED_JULIAN_DAY:
       return "MODIFIED_JULIAN_DAY";
+    case DateTimeFormatSpecifier::ZONE_OFFSET:
+      return "ZONE_OFFSET";
     default: {
       VELOX_UNREACHABLE("[Unexpected date format specifier]");
       return ""; // Make compiler happy.
@@ -947,9 +975,15 @@ int32_t parseFromPattern(
       return -1;
     }
     cur += size;
-  } else if (curPattern.specifier == DateTimeFormatSpecifier::ISO_ZONE_OFFSET) {
-    auto size =
-        parseIsoZoneOffset(cur, end, curPattern.minRepresentDigits, date);
+  } else if (
+      curPattern.specifier == DateTimeFormatSpecifier::ISO_ZONE_OFFSET ||
+      curPattern.specifier == DateTimeFormatSpecifier::ZONE_OFFSET) {
+    auto size = parseIsoZoneOffset(
+        cur,
+        end,
+        curPattern.minRepresentDigits,
+        noOffsetText(curPattern),
+        date);
     if (size == -1) {
       return -1;
     }
@@ -1527,6 +1561,7 @@ uint32_t DateTimeFormatter::maxResultSize(const tz::TimeZone* timezone) const {
         }
         break;
       case DateTimeFormatSpecifier::ISO_ZONE_OFFSET:
+      case DateTimeFormatSpecifier::ZONE_OFFSET:
         // The longest offset is "+HH:MM:ss".
         size += 9;
         break;
@@ -1817,8 +1852,12 @@ int32_t DateTimeFormatter::format(
           break;
         }
         case DateTimeFormatSpecifier::ISO_ZONE_OFFSET:
+        case DateTimeFormatSpecifier::ZONE_OFFSET:
           result += appendIsoZoneOffset(
-              offset, token.pattern.minRepresentDigits, result);
+              offset,
+              token.pattern.minRepresentDigits,
+              noOffsetText(token.pattern),
+              result);
           break;
         case DateTimeFormatSpecifier::WEEK_OF_WEEK_YEAR: {
           auto isoWeek = date::iso_week::year_weeknum_weekday{calDate};
@@ -2263,7 +2302,20 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildJodaDateTimeFormatter(
           builder.appendYearOfEra(count);
           break;
         case 'x':
-          builder.appendWeekYear(count);
+          // Java's DateTimeFormatter, which Spark uses, reads 'x' as a zone
+          // offset. Joda reads it as the week year.
+          if (allowIsoZoneOffset) {
+            if (count > 5) {
+              if (threadSkipErrorDetails()) {
+                return folly::makeUnexpected(Status::UserError());
+              }
+              return folly::makeUnexpected(
+                  Status::UserError("Too many pattern letters: x"));
+            }
+            builder.appendZoneOffset(count);
+          } else {
+            builder.appendWeekYear(count);
+          }
           break;
         case 'w':
           builder.appendWeekOfWeekYear(count);
