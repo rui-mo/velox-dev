@@ -697,6 +697,44 @@ VectorPtr CastExpr::applyDecimalToBooleanCast(
 }
 
 template <typename FromNativeType>
+VectorPtr CastExpr::applyDecimalToTimestampCast(
+    const SelectivityVector& rows,
+    const BaseVector& input,
+    exec::EvalCtx& context,
+    const TypePtr& fromType) {
+  static constexpr uint8_t kMicrosScale = 6;
+  VectorPtr result;
+  context.ensureWritable(rows, TIMESTAMP(), result);
+  (*result).clearNulls(rows);
+  auto rawResults =
+      result->asUnchecked<FlatVector<Timestamp>>()->mutableRawValues();
+  const auto simpleInput = input.as<SimpleVector<FromNativeType>>();
+  const auto scale = getDecimalPrecisionScale(*fromType).second;
+  // The decimal is the number of seconds. Converting the microseconds to
+  // uint64_t keeps their low 64 bits.
+  if (scale >= kMicrosScale) {
+    const auto divisor = static_cast<FromNativeType>(
+        DecimalUtil::kPowersOfTen[scale - kMicrosScale]);
+    applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
+      const FromNativeType micros = simpleInput->valueAt(row) / divisor;
+      rawResults[row] = Timestamp::fromMicrosNoError(
+          static_cast<int64_t>(static_cast<uint64_t>(micros)));
+    });
+  } else {
+    // The low 64 bits of a product depend only on those of its factors.
+    const auto multiplier =
+        static_cast<uint64_t>(DecimalUtil::kPowersOfTen[kMicrosScale - scale]);
+    applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
+      const auto micros =
+          static_cast<uint64_t>(simpleInput->valueAt(row)) * multiplier;
+      rawResults[row] =
+          Timestamp::fromMicrosNoError(static_cast<int64_t>(micros));
+    });
+  }
+  return result;
+}
+
+template <typename FromNativeType>
 VectorPtr CastExpr::applyDecimalToVarcharCast(
     const SelectivityVector& rows,
     const BaseVector& input,
@@ -775,6 +813,12 @@ VectorPtr CastExpr::applyDecimalToPrimitiveCast(
     case TypeKind::DOUBLE:
       return applyDecimalToFloatCast<FromNativeType, TypeKind::DOUBLE>(
           rows, input, context, fromType, toType);
+    case TypeKind::TIMESTAMP:
+      if (hooks_->supportsDecimalToTimestamp()) {
+        return applyDecimalToTimestampCast<FromNativeType>(
+            rows, input, context, fromType);
+      }
+      [[fallthrough]];
     default:
       VELOX_UNSUPPORTED(
           "Cast from {} to {} is not supported",

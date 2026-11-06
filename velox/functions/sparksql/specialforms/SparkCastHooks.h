@@ -147,6 +147,11 @@ class SparkCastHooks : public exec::CastHooks {
     return true;
   }
 
+  // Spark casts a decimal to timestamp as the seconds since the epoch.
+  bool supportsDecimalToTimestamp() const override {
+    return true;
+  }
+
   exec::PolicyType getPolicy() const override;
 
   // Spark supports TIMESTAMP_UTC casts.

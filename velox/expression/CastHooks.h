@@ -121,6 +121,13 @@ class CastHooks {
     return false;
   }
 
+  /// Returns whether casts from decimal to timestamp are supported. These
+  /// casts read the decimal as the seconds since the epoch, truncate it toward
+  /// zero to microseconds and keep the low 64 bits.
+  virtual bool supportsDecimalToTimestamp() const {
+    return false;
+  }
+
   virtual Expected<std::optional<Timestamp>> castDoubleToTimestamp(
       double seconds) const = 0;
 
