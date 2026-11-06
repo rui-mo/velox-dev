@@ -201,6 +201,13 @@ DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendIsoZoneOffset(
   return *this;
 }
 
+DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendZoneOffset(
+    size_t count) {
+  tokens_.emplace_back(
+      FormatPattern{DateTimeFormatSpecifier::ZONE_OFFSET, count});
+  return *this;
+}
+
 DateTimeFormatterBuilder& DateTimeFormatterBuilder::appendLiteral(
     const std::string_view& literal) {
   return appendLiteral(literal.data(), literal.size());

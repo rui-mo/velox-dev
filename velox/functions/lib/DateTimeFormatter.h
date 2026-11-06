@@ -125,7 +125,12 @@ enum class DateTimeFormatSpecifier : uint8_t {
   ISO_ZONE_OFFSET = 25,
 
   // Modified Julian day, the number of days since 1858-11-17, e.g: 52356
-  MODIFIED_JULIAN_DAY = 26
+  MODIFIED_JULIAN_DAY = 26,
+
+  // Zone offset like ISO_ZONE_OFFSET, with "+00", "+0000" or "+00:00" for zero
+  // instead of "Z". It is the pattern letter 'x' of
+  // java.time.format.DateTimeFormatter, which Spark supports.
+  ZONE_OFFSET = 27
 };
 
 struct FormatPattern {
@@ -243,7 +248,9 @@ Expected<std::shared_ptr<DateTimeFormatter>> buildMysqlDateTimeFormatter(
 
 /// Builds a formatter for a Joda pattern. If 'allowIsoZoneOffset' is true, the
 /// pattern can also use the letter 'X' (DateTimeFormatSpecifier::
-/// ISO_ZONE_OFFSET), which Spark supports and Joda does not.
+/// ISO_ZONE_OFFSET), which Spark supports and Joda does not. The letter 'x' is
+/// then a zone offset (DateTimeFormatSpecifier::ZONE_OFFSET), as in Java's
+/// DateTimeFormatter, and not Joda's week year.
 ///
 /// If 'splitOnQuotes' is true, the pattern is split on single quotes as Spark
 /// does for a parsing pattern with 'S': even parts hold pattern letters, odd

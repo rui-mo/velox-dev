@@ -281,6 +281,13 @@ class DateTimeFormatterBuilder {
   /// the format like java.time.format.DateTimeFormatter does.
   DateTimeFormatterBuilder& appendIsoZoneOffset(size_t count);
 
+  /// Appends a zone offset like appendIsoZoneOffset, with '+00', '+0000' or
+  /// '+00:00' for zero, to formatter builder.
+  ///
+  /// \param count the number of pattern letters 'x', from 1 to 5, which selects
+  /// the format like java.time.format.DateTimeFormatter does.
+  DateTimeFormatterBuilder& appendZoneOffset(size_t count);
+
   DateTimeFormatterBuilder& appendLiteral(const std::string_view& literal);
 
   DateTimeFormatterBuilder& appendLiteral(

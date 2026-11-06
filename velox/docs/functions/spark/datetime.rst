@@ -718,6 +718,16 @@ Under session timezone ``America/Los_Angeles``: ::
         SELECT unix_timestamp('2020-01-01 10:00:00Z', 'yyyy-MM-dd HH:mm:ssX'); -- 1577872800
         SELECT unix_timestamp('2020-01-01 10:00:00+01:30', 'yyyy-MM-dd HH:mm:ssX'); -- NULL
 
+The pattern letter ``x`` gives the same zone offsets, except that a zero offset gives ``+00`` for
+``x``, ``+0000`` for ``xx`` and ``xxxx``, and ``+00:00`` for ``xxx`` and ``xxxxx``. Parsing reads
+this text as zero before it tries the other styles, and rejects ``Z``. Under session timezone
+``America/Los_Angeles``: ::
+
+        SELECT date_format('2020-01-01 10:00:00', 'yyyy-MM-dd HH:mm:ssxxx'); -- '2020-01-01 10:00:00-08:00'
+        SELECT unix_timestamp('2020-01-01 10:00:00+00', 'yyyy-MM-dd HH:mm:ssx'); -- 1577872800
+        SELECT unix_timestamp('2020-01-01 10:00:00+0000', 'yyyy-MM-dd HH:mm:ssx'); -- NULL
+        SELECT unix_timestamp('2020-01-01 10:00:00Z', 'yyyy-MM-dd HH:mm:ssx'); -- NULL
+
 With the `Joda` date formatter, :spark:func:`get_timestamp`, :spark:func:`unix_timestamp` and
 :spark:func:`to_unix_timestamp` split a pattern that contains ``S`` on single quotes, as Spark
 does. Even parts hold pattern letters and odd parts are literals. Text after an unclosed quote is a

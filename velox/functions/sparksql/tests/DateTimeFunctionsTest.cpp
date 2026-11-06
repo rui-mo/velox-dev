@@ -1196,6 +1196,28 @@ TEST_F(DateTimeFunctionsTest, getTimestamp) {
   VELOX_ASSERT_THROW(
       getTimestamp("Z", "XXXXXX"), "Too many pattern letters: X");
 
+  // Pattern letter 'x' parses a zone offset like 'X', with "+00", "+0000" or
+  // "+00:00" for zero instead of 'Z'. The text for zero matches first.
+  EXPECT_EQ(
+      getTimestampWithOffset("+01", "x"),
+      parseTimestamp("2020-01-01 09:00:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+0130", "x"),
+      parseTimestamp("2020-01-01 08:30:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+00", "x"),
+      parseTimestamp("2020-01-01 10:00:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("+0000", "xx"),
+      parseTimestamp("2020-01-01 10:00:00"));
+  EXPECT_EQ(
+      getTimestampWithOffset("-08:00:30", "xxxxx"),
+      parseTimestamp("2020-01-01 18:00:30"));
+  EXPECT_EQ(getTimestampWithOffset("Z", "x"), std::nullopt);
+  EXPECT_EQ(getTimestampWithOffset("+0000", "x"), std::nullopt);
+  EXPECT_EQ(getTimestampWithOffset("+0030", "x"), std::nullopt);
+  EXPECT_EQ(getTimestampWithOffset("+00:00:30", "xxxxx"), std::nullopt);
+
   // Parsing error.
   EXPECT_EQ(
       getTimestamp("1970-01-01 06:10:59.019", "HH:mm:ss.SSS"), std::nullopt);
@@ -2911,6 +2933,19 @@ TEST_F(DateTimeFunctionsTest, dateFormat) {
   EXPECT_EQ("Z", dateFormat(offsetTimestamp, "XXXXX"));
   VELOX_ASSERT_THROW(
       dateFormat(offsetTimestamp, "XXXXXX"), "Too many pattern letters: X");
+
+  // Pattern letter 'x' formats the zone offset like 'X', with "+00", "+0000"
+  // or "+00:00" for zero.
+  EXPECT_EQ("+00", dateFormat(offsetTimestamp, "x"));
+  EXPECT_EQ("+0000", dateFormat(offsetTimestamp, "xx"));
+  EXPECT_EQ("+00:00", dateFormat(offsetTimestamp, "xxx"));
+  EXPECT_EQ("+0000", dateFormat(offsetTimestamp, "xxxx"));
+  EXPECT_EQ("+00:00", dateFormat(offsetTimestamp, "xxxxx"));
+  setQueryTimeZone("America/Los_Angeles");
+  EXPECT_EQ("-08", dateFormat(offsetTimestamp, "x"));
+  EXPECT_EQ("-08:00", dateFormat(offsetTimestamp, "xxx"));
+  EXPECT_EQ("-07:52:58", dateFormat(lmtTimestamp, "xxxxx"));
+  setQueryTimeZone("UTC");
 
   // Modified Julian day.
   EXPECT_EQ("52356", dateFormat(parseTimestamp("2002-03-23 15:29:43"), "g"));
