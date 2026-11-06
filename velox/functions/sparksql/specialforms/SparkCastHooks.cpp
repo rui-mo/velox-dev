@@ -431,6 +431,10 @@ bool SparkCastHooks::stringToDecimalCastRejectsZeroWithLargeExponent() const {
   return SparkQueryConfig{config_}.legacyDecimalZeroLargeExponent();
 }
 
+bool SparkCastHooks::timestampToDecimalCastUsesDouble() const {
+  return SparkQueryConfig{config_}.legacyTimestampToDecimalViaDouble();
+}
+
 bool SparkCastHooks::decimalToFloatHighPrecisionCastEnabled() const {
   return SparkQueryConfig{config_}.decimalToFloatHighPrecisionCastEnabled();
 }

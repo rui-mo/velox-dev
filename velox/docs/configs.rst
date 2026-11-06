@@ -1578,6 +1578,13 @@ Spark-specific Configuration
      - false
      - If true, Spark statistical aggregation functions including skewness, kurtosis, stddev, stddev_samp, variance,
        var_samp, covar_samp and corr will return NaN instead of NULL when dividing by zero during expression evaluation.
+   * - spark.legacy_timestamp_to_decimal_via_double
+     - bool
+     - false
+     - If true, casts from TIMESTAMP to DECIMAL convert the seconds since the epoch to DOUBLE before they round
+       them to the target scale, which keeps at most 17 significant digits, e.g. ``9999-12-31 23:59:59.999999``
+       UTC casts to ``253402300800.000000`` instead of ``253402300799.999999`` as DECIMAL(18, 6). This matches the
+       behavior of Spark before 4.1.
    * - spark.legacy_translate_nul_as_deletion
      - bool
      - false

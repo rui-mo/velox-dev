@@ -217,6 +217,16 @@ class SparkQueryConfig {
       false,
       "Return NaN instead of NULL for Spark statistical aggregation on divide-by-zero.")
 
+  /// If true, casts from timestamp to decimal convert the seconds since the
+  /// epoch to a double first, as in Spark 4.0 and earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyTimestampToDecimalViaDouble,
+      legacyTimestampToDecimalViaDouble,
+      "legacy_timestamp_to_decimal_via_double",
+      bool,
+      false,
+      "Cast Spark timestamps to decimals through double.")
+
   /// If true, translate deletes the characters whose replacement is the NUL
   /// character U+0000, as in Spark 4.2 and earlier.
   VELOX_SPARK_CONFIG(

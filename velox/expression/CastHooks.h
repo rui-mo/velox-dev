@@ -107,6 +107,20 @@ class CastHooks {
             "Conversion of Timestamp to Boolean is not supported"));
   }
 
+  /// Returns whether casts from timestamp to decimal cast the timestamp to
+  /// DOUBLE first, which keeps at most 17 significant digits of the seconds
+  /// since the epoch, and then cast the DOUBLE to decimal.
+  virtual bool timestampToDecimalCastUsesDouble() const {
+    return false;
+  }
+
+  /// Returns whether casts from timestamp to decimal are supported. These
+  /// casts round the seconds since the epoch half away from zero to the target
+  /// scale.
+  virtual bool supportsTimestampToDecimal() const {
+    return false;
+  }
+
   virtual Expected<std::optional<Timestamp>> castDoubleToTimestamp(
       double seconds) const = 0;
 

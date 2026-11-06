@@ -190,6 +190,9 @@ bool SparkCastCallToSpecialForm::isAnsiSupported(
     if (fromType->isBoolean()) {
       return true;
     }
+    if (fromType->isTimestamp()) {
+      return true;
+    }
   }
 
   // Numeric types (integral + floating point) to integral types support ANSI

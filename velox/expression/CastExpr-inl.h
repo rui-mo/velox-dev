@@ -436,6 +436,66 @@ void CastExpr::applyFloatingPointToDecimalCastKernel(
   });
 }
 
+template <typename TOutput>
+void CastExpr::applyTimestampToDecimalCastKernel(
+    const SelectivityVector& rows,
+    const BaseVector& input,
+    exec::EvalCtx& context,
+    const TypePtr& toType,
+    VectorPtr& result) {
+  // The microseconds since the epoch are the unscaled value of the seconds as
+  // a DECIMAL(19, 6).
+  static constexpr int kMicrosPrecision = 19;
+  static constexpr int kMicrosScale = 6;
+  const auto timestamps = input.as<SimpleVector<Timestamp>>();
+  auto rawResults =
+      result->asUnchecked<FlatVector<TOutput>>()->mutableRawValues();
+  const auto toPrecisionScale = getDecimalPrecisionScale(*toType);
+  const bool viaDouble = hooks_->timestampToDecimalCastUsesDouble();
+  const bool useShortestDigits =
+      hooks_->floatingPointToDecimalUsesShortestDigits();
+
+  applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
+    TOutput output;
+    Status status;
+    if (viaDouble) {
+      const auto seconds =
+          hooks_->castTimestampToDouble(timestamps->valueAt(row));
+      if (seconds.hasError()) {
+        status = seconds.error();
+      } else if (useShortestDigits) {
+        status = DecimalUtil::rescaleShortestDigits<TOutput>(
+            seconds.value(),
+            toPrecisionScale.first,
+            toPrecisionScale.second,
+            output);
+      } else {
+        status = DecimalUtil::rescaleFloatingPoint<double, TOutput>(
+            seconds.value(),
+            toPrecisionScale.first,
+            toPrecisionScale.second,
+            output);
+      }
+    } else {
+      status = DecimalUtil::rescaleWithRoundUp<int64_t, TOutput>(
+          timestamps->valueAt(row).toMicros(),
+          kMicrosPrecision,
+          kMicrosScale,
+          toPrecisionScale.first,
+          toPrecisionScale.second,
+          output);
+    }
+    if (status.ok()) {
+      rawResults[row] = output;
+    } else if (setNullInResultAtError()) {
+      result->setNull(row, true);
+    } else {
+      context.setVeloxExceptionError(
+          row, makeBadCastException(toType, input, row, "Result overflows."));
+    }
+  });
+}
+
 template <typename T>
 void CastExpr::applyVarcharToDecimalCastKernel(
     const SelectivityVector& rows,

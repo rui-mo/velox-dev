@@ -40,6 +40,7 @@ SparkQueryConfig::registeredProperties() {
     VELOX_REGISTER_SPARK_CONFIG(kLegacyModeNegativeZero);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyOverlayWrapPositions);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyStatisticalAggregate);
+    VELOX_REGISTER_SPARK_CONFIG(kLegacyTimestampToDecimalViaDouble);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyTranslateNulAsDeletion);
     VELOX_REGISTER_SPARK_CONFIG(kLegacyTruncateForEmptyRegexSplit);
     VELOX_REGISTER_SPARK_CONFIG(kJsonIgnoreNullFields);
