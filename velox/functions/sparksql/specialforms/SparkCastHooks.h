@@ -44,6 +44,10 @@ class SparkCastHooks : public exec::CastHooks {
   Expected<double> castTimestampToDouble(
       const Timestamp& timestamp) const override;
 
+  /// Returns false for the epoch (1970-01-01 00:00:00 UTC) and true otherwise.
+  Expected<bool> castTimestampToBoolean(
+      const Timestamp& timestamp) const override;
+
   /// When casting double as timestamp, the input is treated as
   /// the number of seconds since the epoch (1970-01-01 00:00:00 UTC).
   Expected<std::optional<Timestamp>> castDoubleToTimestamp(

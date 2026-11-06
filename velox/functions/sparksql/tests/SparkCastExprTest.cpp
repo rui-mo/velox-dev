@@ -605,6 +605,32 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
         }));
   }
 
+  // Casts from timestamp to boolean return false only for the epoch. Spark
+  // rejects this cast when ANSI mode is on, so Velox ignores ANSI mode.
+  void testTimestampToBoolean() {
+    testCast(
+        makeNullableFlatVector<Timestamp>({
+            Timestamp(0, 0),
+            Timestamp::fromMicros(1),
+            Timestamp::fromMicros(-1),
+            Timestamp::fromMicros(999),
+            Timestamp(1577836801, 500'000'000),
+            Timestamp::fromMicros(std::numeric_limits<int64_t>::max()),
+            Timestamp::fromMicrosNoError(std::numeric_limits<int64_t>::min()),
+            std::nullopt,
+        }),
+        makeNullableFlatVector<bool>({
+            false,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            std::nullopt,
+        }));
+  }
+
   void testTimestampToString() {
     testCast<Timestamp, std::string>(
         "string",
@@ -2690,6 +2716,10 @@ TEST_F(SparkCastExprTestAnsiOn, timestampToFloatingPoint) {
   testTimestampToFloatingPoint();
 }
 
+TEST_F(SparkCastExprTestAnsiOn, timestampToBoolean) {
+  testTimestampToBoolean();
+}
+
 TEST_F(SparkCastExprTestAnsiOn, timestampToString) {
   testTimestampToString();
 }
@@ -3594,6 +3624,10 @@ TEST_F(SparkCastExprTestAnsiOff, timestampToInt) {
 
 TEST_F(SparkCastExprTestAnsiOff, timestampToFloatingPoint) {
   testTimestampToFloatingPoint();
+}
+
+TEST_F(SparkCastExprTestAnsiOff, timestampToBoolean) {
+  testTimestampToBoolean();
 }
 
 TEST_F(SparkCastExprTestAnsiOff, timestampToString) {
