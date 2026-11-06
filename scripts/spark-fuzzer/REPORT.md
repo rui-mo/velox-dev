@@ -8,6 +8,9 @@ issues and the results of the fuzzer runs. The work starts at commit
 describes the move to Spark 4.3.0.
 
 - [README.md](README.md): how to set up the environment and run the fuzzers.
+- [ANSI.md](ANSI.md): the functions and casts whose behavior depends on ANSI
+  mode, the ANSI fixes, the Velox pull requests they build on and the ANSI
+  cases that Velox doesn't support.
 - [.claude/skills/spark-fuzzer/SKILL.md](../../.claude/skills/spark-fuzzer/SKILL.md):
   the workflow to run the fuzzers, triage failures and commit fixes, also used
   by the `spark-fuzzer` agent in `.github/agents/`.
@@ -23,9 +26,13 @@ describes the move to Spark 4.3.0.
 - `scripts/spark-fuzzer/` persists the environment: it installs Java 21 and
   Spark 4.3.0, runs the Spark Connect server, runs fuzzer campaigns and
   triages failures.
-- 60 function fixes, numbered 1 to 61 without 36, one commit each, and 59
-  commits for the Spark query runner, the fuzzers, their argument generators,
-  the scripts, the `spark-fuzzer` skill and this report, listed below.
+- 92 function fixes, numbered 1 to 93 without 36, one commit each. Fixes 1 to
+  61 are listed below, and [ANSI.md](ANSI.md#fixes) lists fixes 62 to 93.
+- 77 commits for the Spark query runner, the fuzzers, their argument
+  generators, the scripts, the `spark-fuzzer` skill and these documents,
+  listed below.
+- 16 commits cherry-pick 15 Velox pull requests that the ANSI fixes build on.
+  [ANSI.md](ANSI.md#upstream-pull-requests) lists them.
 - Against Spark 4.1.4, all 30 seeds of the first campaign failed. In the
   one-hour run of the expression fuzzer, 11 of the 12 seeds passed, and Spark
   verified 9333 of the 11169 test cases. The failed seed hit a known last-bit
@@ -41,6 +48,10 @@ describes the move to Spark 4.3.0.
   passed, and Spark verified 9232 of the 9277 iterations. These runs and the
   shorter runs after them led to fixes 55, 56 and 59 to 61. With them, all 3
   seeds of the last run over all expressions passed.
+- With ANSI mode off and on, the runs of casts, expressions and aggregations
+  against Spark 4.3.0 passed 59 of the 60 seeds. The failed seed hit the
+  pattern letter `x` of `date_format`, which fix 93 corrects.
+  [ANSI.md](ANSI.md#fuzzer-runs) lists the runs.
 
 ## Environment
 
@@ -48,7 +59,7 @@ describes the move to Spark 4.3.0.
 | --- | --- |
 | Spark | 4.3.0, `local-cluster[1,4,3072]`, Spark Connect on port 15002 |
 | Java | 21. Java 17 prints some floats and doubles with more digits (JDK-4511638). |
-| Session configs | ANSI mode off, time zone `America/Los_Angeles`, `mapKeyDedupPolicy=LAST_WIN`, `CORRECTED` Parquet datetime rebase |
+| Session configs | ANSI mode off, or on with `run --ansi on`, time zone `America/Los_Angeles`, `mapKeyDedupPolicy=LAST_WIN`, `CORRECTED` Parquet datetime rebase |
 | Evaluation | Interpreted: `spark.sql.codegen.wholeStage=false`, `spark.sql.codegen.factoryMode=NO_CODEGEN` |
 | Optimizer | Excludes `ConstantFolding`, `ReorderAssociativeOperator`, `SimplifyConditionals`, `NullPropagation`, `SimplifyBinaryComparison`, `SimplifyExtractValueOps` and `SimplifyCasts`, and disables subexpression elimination |
 | Executor | `spark.executor.killOnFatalError.depth 0`, so an `OutOfMemoryError` fails the task instead of killing the executor |
@@ -124,6 +135,9 @@ and 59 to 61 correct. Checks of decimal casts against Spark 4.3.0 led to fixes
 | 44ac99601 | Treat Spark's datetime upgrade errors as query failures. |
 | a65cd0137 | Keep executors alive on OutOfMemoryError. |
 | 758b4c4bb | Treat Spark's errors for invalid escapes in `LIKE` patterns as query failures. They are analysis errors that Spark raises while evaluating `LIKE`. |
+| a44464398 | Exclude `SimplifyCasts`, which drops the cast to REAL in `cast(cast(c0 AS float) AS double)`. |
+| b0231d6e7 | Translate `size(x, true)` to `IF(x IS NULL, -1, size(x))`, which returns -1 for null input in both ANSI modes. |
+| 8a253f486 | Accept decimal types with a literal precision and scale, e.g. `DECIMAL(6, 0)`, which the cast signatures use. |
 
 The translation in `velox/functions/sparksql/fuzzer/SparkSql.cpp` handles:
 
@@ -149,7 +163,7 @@ These are unsupported, so the fuzzer doesn't verify them:
 | Spark requires a constant | `IN` lists, `LIKE` escapes, `to_json` time zones, `timestampadd` and `timestampdiff` units, the legacy flags of `size` and `array_insert`, frame offsets |
 | Spark can't express it | NULL or empty `IN` lists, null map keys, structs without fields, timestamps with nanoseconds or out of Spark's range, k `RANGE` frames, aggregates with sorting keys |
 | Spark returns no comparable result | `to_json` of maps with binary keys, which Spark writes as Java object identities, e.g. `[B@14b6cefd` |
-| Spark rejects it during analysis | casts that Spark doesn't allow (`CAST_WITHOUT_SUGGESTION`), arguments of different types (`DATA_DIFF_TYPES`), `mode` with `DISTINCT` (`INVALID_WITHIN_GROUP_EXPRESSION`) |
+| Spark rejects it during analysis | casts that Spark doesn't allow (`CAST_WITHOUT_SUGGESTION`), and with ANSI mode on, casts that Spark allows only with ANSI mode off (`CAST_WITH_CONF_SUGGESTION`, `CAST_WITH_FUNC_SUGGESTION`), arguments of different types (`DATA_DIFF_TYPES`), `mode` with `DISTINCT` (`INVALID_WITHIN_GROUP_EXPRESSION`) |
 
 `spark_fuzzer.py summary <run> --unsupported 20` prints the most common
 reasons of a run.
@@ -175,6 +189,13 @@ reasons of a run.
 | 91e465cc4, 4652a175c, 72a7a70b5 | Translate `to_json` with a time zone, skip binary map keys, and generate valid time zones. |
 | ecb3eab72 | Generate `LIKE` patterns with wildcards and escape sequences, and single-character escapes. |
 | 189503ee0 | Add `--velox_fuzzer_orderable_map_keys`, which the Spark fuzzer turns on. It generates map keys only of orderable types, because Spark rejects map keys that are or contain maps. |
+| b12aa3c93 | Add `--ansi_enabled` to the expression and aggregation fuzzers. It turns on ANSI mode in Velox and Spark. |
+| dd302d2f0 | Add `--try_null_rows_to_verify`. When both engines throw for some rows, it verifies some of the rows that return null with try() one at a time. |
+| a48e930e6 | Generate edge values, e.g. 0, -1 and the minimum of the type, for `abs`, `unaryminus`, `divide`, `div`, `pmod` and `remainder`. |
+| 7865ec39f, 6c99062ad | Skip the variadic signature of `map`, which accepts arguments of any type, and `get` with a BIGINT index, which Spark casts to INTEGER. |
+| 2ead32996, def4c6b0c | Generate cast inputs that look like values of the target type, e.g. numbers and timestamps in Spark's formats, padded with whitespace and control characters. |
+| 8064a9bd3 | Generate the casts from TIMESTAMP, DATE and decimals that fixes 88 to 92 support. |
+| 887ce7458 | Cast decimals to the nearest double in both fuzzers, as Spark does. |
 
 ### Spark aggregation fuzzer
 
@@ -184,6 +205,7 @@ reasons of a run.
 | 1f3ec0b39 | Compare the results of functions with custom verification, e.g. `collect_list` and `first`, with Spark if an input column is DATE. The fuzzer skipped them because the Presto runner writes the input to DWRF files, which can't store DATE. |
 | 2fde421c4 | Generate positions in [0, 32768) for `bitmap_construct_agg` and 4096-byte bitmaps for `bitmap_or_agg`. Velox threw for random inputs in every iteration, so Spark never verified them. |
 | d11c448b7 | Generate no infinities for `covar_samp`. With them, its result depends on how the rows are split into partial aggregations, in both Velox and Spark. |
+| 24b769129 | Add `--compare_errors_with_reference`, which `spark_fuzzer.py` turns on. It also runs the Spark query when Velox throws, and fails the iteration if only one engine throws. |
 
 ### Scripts
 
@@ -200,6 +222,10 @@ reasons of a run.
 | 43172b25c | Add the `spark-fuzzer` skill and agent, which run the fuzzers, triage the failures and commit the fixes. |
 | 6946ee1f4 | The skill fixes functions that accept argument types that Spark rejects, by restricting their signatures. |
 | 6fc23bc11 | Add the one-hour runs and the fixes after them to this report. |
+| fb548680e | Update this report for Spark 4.3. |
+| 78a5b6b08 | `run --ansi on` runs the fuzzers with ANSI mode on, and `sql --ansi both` runs a query in both modes. |
+| 655738841 | `sql` prints short Spark errors. |
+| 78a8ec801 | `summary --coverage` counts the test cases of each function by outcome and ANSI mode. |
 
 ## Function fixes
 
@@ -270,6 +296,10 @@ from Spark 4.3.0.
 | 60 | 9c7635344 | `get_timestamp`, `unix_timestamp`, `to_unix_timestamp` | Split patterns with `S` on single quotes, so an unclosed quote starts a literal. |
 | 61 | b308692a4 | `cast` from string to timestamp | Return NULL for years of more than 6 digits and for timestamps out of the range of microseconds. |
 
+[ANSI.md](ANSI.md#fixes) lists fixes 62 to 93 of the ANSI work. 971a1dd14
+updates a `collect_set` test that expected nested nulls last, which fix 1
+orders first.
+
 ## Known differences
 
 These are not fixed. `known-issues.txt` skips the functions that fail in most
@@ -289,7 +319,6 @@ runs.
 | `json_array_length` | Spark returns NULL for numbers of more than 1000 characters, Jackson's limit. |
 | `to_json` | Spark writes binary map keys as Java object identities. The runner reports them as unsupported. |
 | `cast` from string to DATE | Spark returns NULL for years of more than 7 digits, leading zeros included, e.g. `'00002020-01-01'` and `'00020200'`. Velox returns 2020-01-01 and 20200-01-01. |
-| `cast` from DATE to string | Spark writes years after 9999 with a sign, e.g. `+10233-09-21`. Velox writes `10233-09-21`. The fuzzer generates dates from 1903 to 2036. |
 | `map`, `map_from_entries` | Spark replaces -0.0 keys with 0.0 (SPARK-47563), e.g. it returns `{0.0 -> 2}` for the keys -0.0 and 0.0 with the values 1 and 2. Velox keeps -0.0 and 0.0 as distinct keys, as `MapTest.topLevelSignedZeroKeysStayDistinct` expects. Keys that contain -0.0, e.g. arrays, are equal to those with 0.0 in both. |
 | `from_unixtime` | With the legacy formatter, `spark.legacy_date_formatter` in Velox and `spark.sql.legacy.timeParserPolicy=LEGACY` in Spark, `from_unixtime(0, '')` returns an empty string in Spark and NULL in Velox. |
 | decimal `abs`, `unaryminus` | Spark rounds the results to 34 significant digits. The fuzzer generates precisions up to 34. |
@@ -300,7 +329,7 @@ runs.
 
 | Function | Issue |
 | --- | --- |
-| `date_format` and other datetime functions | Velox accepts Joda pattern letters that Spark's `DateTimeFormatter` rejects or interprets differently, e.g. `Y`, `w`, `e`, `x` and `C`. Fix 59 adds `X`, but a pattern with `X` and `z` or `Z` can still resolve the zone differently from Spark. |
+| `date_format` and other datetime functions | Velox throws for the pattern letters `q`, `Q`, `L`, `F`, `v` and `O`, which Spark supports. Velox reads `Z` as Joda does: `ZZ` gives `-07:00`, and `ZZZ` to `ZZZZZ` give the zone ID. Spark gives `-0700`, `-0700`, `GMT-07:00` and `-07:00`. `GGGG` gives `AD`, and Spark gives `Anno Domini`. Fixes 59 and 93 add `X` and `x`, but a pattern with them and `z` or `Z` can still resolve the zone differently from Spark. Single letters and the 2 to 5 letter forms of the others match Spark. |
 | `array_union`, `sort_array` | A mismatch in campaign 3 with Spark's generated code didn't reproduce with interpreted evaluation. |
 
 ## Fuzzer runs
@@ -367,8 +396,9 @@ reject. The other `like` test cases have invalid escapes, and both Spark and
 Velox throw for them.
 
 The aggregation fuzzer ran all aggregate functions except where the table
-names them. It runs the Spark query only if Velox succeeds, so iterations in
-which Velox throws are neither verified nor unsupported.
+names them. These runs predate 24b769129, so the fuzzer ran the Spark query
+only if Velox succeeded. Iterations in which Velox threw are neither verified
+nor unsupported.
 
 | Run | Build | Functions | Seeds | Passed | Iterations | Verified | Unsupported |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -437,15 +467,17 @@ variance with fix 50. With fix 49, 3 of the failed iterations of `covar_samp`
 returned NaN or infinity depending on the partial aggregations, which
 d11c448b7 avoids. All unsupported iterations are `mode` with `DISTINCT`.
 
+### ANSI mode
+
+The runs above had ANSI mode off. [ANSI.md](ANSI.md#fuzzer-runs) lists the
+runs with ANSI mode off and on against Spark 4.3.0.
+
 ## Limitations and next steps
 
-- The aggregation fuzzer runs the Spark query only if Velox succeeds, so it
-  doesn't compare Velox's errors with Spark. For example, Velox throws for
-  `bitmap_or_agg` bitmaps that aren't 4096 bytes long, which Spark accepts.
-  For functions whose results depend on the order of the input rows, e.g.
-  `first`, `max_by` and `mode`, it compares only the number of result rows
-  with Spark. Spark rejects `mode` with `DISTINCT`, so these iterations are
-  unsupported.
+- For functions whose results depend on the order of the input rows, e.g.
+  `first`, `max_by` and `mode`, the aggregation fuzzer compares only the
+  number of result rows with Spark. Spark rejects `mode` with `DISTINCT`, so
+  these iterations are unsupported.
 - The runner translates window functions, which `SparkQueryRunnerTest`
   verifies against Spark, but no window fuzzer uses the Spark query runner.
 - Unsupported test cases dropped from 24% of all in campaign 6 to 12% in
@@ -463,10 +495,13 @@ d11c448b7 avoids. All unsupported iterations are `mode` with `DISTINCT`.
   Spark 4.3.0, 4.4% of the test cases are unsupported. The largest groups are
   `IN` with NULL, non-constant or empty lists (188), Spark errors that Velox
   suppresses (129), `to_json` of scalars (71) and casts that Spark doesn't
-  allow (65).
+  allow (65). The ANSI runs also had structs whose field names differ between
+  Velox and Spark, e.g. the results of `arrays_zip` and `map_entries`. Spark
+  rejects them in `CASE WHEN`, `coalesce` and `concat` with
+  `DATA_DIFF_TYPES` (22).
 - Velox's variadic `map` signature accepts any arguments after the first key
-  and value, e.g. an odd number of arguments or keys of different types. Both
-  Spark and Velox reject these calls, so these test cases are unsupported.
+  and value, e.g. an odd number of arguments or keys of different types. The
+  fuzzer skips it, so it doesn't test `map` with more than 10 key-value pairs.
 - Random strings only have characters of the Basic Multilingual Plane, so the
   fuzzer doesn't cover supplementary characters, e.g. emojis.
 - Where Spark 4.2 or 4.3 changed a behavior, Velox follows Spark 4.3.0, see
