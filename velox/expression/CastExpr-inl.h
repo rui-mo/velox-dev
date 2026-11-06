@@ -228,6 +228,14 @@ void CastExpr::applyCastKernel(
     }
 
     if constexpr (
+        FromKind == TypeKind::TIMESTAMP &&
+        (ToKind == TypeKind::REAL || ToKind == TypeKind::DOUBLE)) {
+      const auto castResult = hooks_->castTimestampToDouble(inputRowValue);
+      setResultOrStatus(castResult, row);
+      return;
+    }
+
+    if constexpr (
         (FromKind == TypeKind::DOUBLE || FromKind == TypeKind::REAL) &&
         ToKind == TypeKind::TIMESTAMP) {
       const auto castResult =

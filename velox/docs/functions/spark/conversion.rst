@@ -273,6 +273,23 @@ the same result.
   SELECT try_cast(-1e300D as real); -- -Infinity
   SELECT cast(1e-300D as real); -- 0.0
 
+From TIMESTAMP
+^^^^^^^^^^^^^^
+
+Casting a timestamp to ``DOUBLE`` returns the number of seconds since the epoch
+(1970-01-01 00:00:00 UTC), including the fraction of a second. Spark divides the
+microseconds by 1,000,000 in double precision, which can round the last digits
+of the result. Casting to ``REAL`` converts that double to the nearest float.
+The result is the same regardless of ANSI mode.
+
+::
+
+  SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as double); -- 0.0
+  SELECT cast(cast('2020-01-01 00:00:01.5' as timestamp) as double); -- 1.5778368015E9
+  SELECT cast(cast('1969-12-31 23:59:59.999999' as timestamp) as double); -- -1.0E-6
+  SELECT cast(cast('9999-12-31 23:59:59.999999' as timestamp) as double); -- 2.534023008E11
+  SELECT cast(cast('2020-01-01 00:00:01.5' as timestamp) as real); -- 1.5778368E9
+
 Cast to Boolean
 ---------------
 

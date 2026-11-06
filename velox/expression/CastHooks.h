@@ -90,6 +90,15 @@ class CastHooks {
     return value;
   }
 
+  /// Casts a timestamp to DOUBLE. Casts to REAL convert the result to float.
+  /// Not supported by default.
+  virtual Expected<double> castTimestampToDouble(
+      const Timestamp& /*timestamp*/) const {
+    return folly::makeUnexpected(
+        Status::UserError(
+            "Conversion of Timestamp to Real or Double is not supported"));
+  }
+
   virtual Expected<std::optional<Timestamp>> castDoubleToTimestamp(
       double seconds) const = 0;
 
