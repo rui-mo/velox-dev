@@ -41,12 +41,13 @@ bool castCannotFail(const TypePtr& fromType, const TypePtr& toType) {
   if (fromType->equivalent(*toType) || toType->isVarchar()) {
     return true;
   }
-  // Widening numeric casts, numeric to boolean (non-zero is true), and
-  // timestamp to floating point.
+  // Widening numeric casts, numeric to boolean (non-zero is true), timestamp
+  // to floating point and decimal to timestamp.
   return (isIntegralType(fromType) && isFloatingPointType(toType)) ||
       (fromType == REAL() && toType == DOUBLE()) ||
       (isNumericType(fromType) && toType->isBoolean()) ||
-      (fromType->isTimestamp() && isFloatingPointType(toType));
+      (fromType->isTimestamp() && isFloatingPointType(toType)) ||
+      (fromType->isDecimal() && toType == TIMESTAMP());
 }
 
 exec::ExprPtr makeSparkCastExpr(

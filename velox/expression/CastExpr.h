@@ -301,6 +301,13 @@ class CastExpr : public SpecialForm {
       exec::EvalCtx& context);
 
   template <typename FromNativeType>
+  VectorPtr applyDecimalToTimestampCast(
+      const SelectivityVector& rows,
+      const BaseVector& input,
+      exec::EvalCtx& context,
+      const TypePtr& fromType);
+
+  template <typename FromNativeType>
   VectorPtr applyDecimalToPrimitiveCast(
       const SelectivityVector& rows,
       const BaseVector& input,

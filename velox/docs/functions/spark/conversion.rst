@@ -870,6 +870,28 @@ Malformed examples
   SELECT cast(cast('inf' as double) as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast('nan' as double) as timestamp); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
+From decimal
+^^^^^^^^^^^^
+
+Casting a decimal to timestamp treats the value as the number of seconds since
+the epoch (1970-01-01 00:00:00 UTC). Digits below one microsecond are truncated
+toward zero. A value outside the timestamp range keeps the low 64 bits of its
+microseconds, so it wraps around. The result is the same regardless of ANSI
+mode.
+
+Spark's interpreted evaluation first rounds a decimal with more than 34
+significant digits to 34 digits. Velox keeps all digits, as Spark's generated
+code does. For example, Velox casts the ``DECIMAL(38, 38)`` value
+0.99999999999999999999999999999999999999 to 1970-01-01 00:00:00.999999, while
+Spark's interpreted evaluation returns 1970-01-01 00:00:01.
+
+::
+
+  SELECT cast(cast(1577836801.55 as decimal(12, 2)) as timestamp); -- 2020-01-01 00:00:01.55
+  SELECT cast(-1.0000015 as timestamp); -- 1969-12-31 23:59:58.999999
+  SELECT cast(cast(9223372036854.775807 as decimal(19, 6)) as timestamp); -- 294247-01-10 04:00:54.775807
+  SELECT cast(cast(9223372036854.775808 as decimal(19, 6)) as timestamp); -- -290308-12-21 19:59:05.224192
+
 From strings
 ^^^^^^^^^^^^
 

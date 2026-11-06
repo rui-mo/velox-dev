@@ -681,6 +681,65 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
     testValue(-500000, DECIMAL(1, 0), int64_t{-1});
   }
 
+  // Casts from decimal to timestamp read the decimal as the seconds since the
+  // epoch. They truncate it toward zero to microseconds and keep the low 64
+  // bits, as Java's BigDecimal.longValue() does. Results are identical
+  // regardless of ANSI mode. Velox matches Spark's generated code. Spark's
+  // interpreted evaluation first rounds decimals to 34 significant digits,
+  // e.g. it casts 38 nines with scale 38 to 1000000 microseconds.
+  void testDecimalToTimestamp() {
+    const auto fromMicros = [](int64_t micros) {
+      return Timestamp::fromMicrosNoError(micros);
+    };
+    testCast(
+        makeNullableFlatVector<int64_t>(
+            {-5, -10000015, 19, std::nullopt}, DECIMAL(8, 7)),
+        makeNullableFlatVector<Timestamp>(
+            {fromMicros(0),
+             fromMicros(-1000001),
+             fromMicros(1),
+             std::nullopt}));
+    testCast(
+        makeFlatVector<int64_t>({157783680155, -1, 0}, DECIMAL(12, 2)),
+        makeFlatVector<Timestamp>(
+            {fromMicros(1577836801550000), fromMicros(-10000), fromMicros(0)}));
+
+    // Microseconds that overflow BIGINT keep the low 64 bits.
+    testCast(
+        makeFlatVector<int64_t>(
+            {999999999999999999, -999999999999999999}, DECIMAL(18, 0)),
+        makeFlatVector<Timestamp>(
+            {fromMicros(2003764205205896640),
+             fromMicros(-2003764205205896640)}));
+    constexpr int128_t kMax = std::numeric_limits<int64_t>::max();
+    testCast(
+        makeFlatVector<int128_t>({kMax, kMax + 1, -kMax - 2}, DECIMAL(19, 6)),
+        makeFlatVector<Timestamp>(
+            {fromMicros(std::numeric_limits<int64_t>::max()),
+             fromMicros(std::numeric_limits<int64_t>::min()),
+             fromMicros(std::numeric_limits<int64_t>::max())}));
+    testCast(
+        makeFlatVector<int128_t>(
+            {DecimalUtil::kPowersOfTen[25]}, DECIMAL(30, 5)),
+        makeFlatVector<Timestamp>({fromMicros(-2537764290115403776)}));
+    testCast(
+        makeFlatVector<int128_t>(
+            {HugeInt::parse("12345678901234567890123456789012345678")},
+            DECIMAL(38, 2)),
+        makeFlatVector<Timestamp>({fromMicros(8761004206977980128)}));
+
+    // Decimals with more than 34 significant digits.
+    const auto k38Nines = DecimalUtil::kPowersOfTen[38] - 1;
+    testCast(
+        makeFlatVector<int128_t>({k38Nines, -k38Nines}, DECIMAL(38, 0)),
+        makeFlatVector<Timestamp>(
+            {fromMicros(80237960547581376), fromMicros(-80237960547581376)}));
+    testCast(
+        makeFlatVector<int128_t>({k38Nines, -k38Nines, 1}, DECIMAL(38, 38)),
+        makeFlatVector<Timestamp>(
+            {fromMicros(999999), fromMicros(-999999), fromMicros(0)}));
+  }
+
   void testTimestampToString() {
     testCast<Timestamp, std::string>(
         "string",
@@ -2794,6 +2853,10 @@ TEST_F(SparkCastExprTestAnsiOn, timestampToDecimal) {
       std::numeric_limits<int64_t>::min(), DECIMAL(38, 26));
 }
 
+TEST_F(SparkCastExprTestAnsiOn, decimalToTimestamp) {
+  testDecimalToTimestamp();
+}
+
 TEST_F(SparkCastExprTestAnsiOn, timestampToString) {
   testTimestampToString();
 }
@@ -3520,6 +3583,9 @@ TEST_F(SparkCastExprTest, isAnsiSupportedComplexTypes) {
   EXPECT_TRUE(
       SparkCastCallToSpecialForm::isAnsiSupported(
           ROW({TIMESTAMP(), VARCHAR()}), ROW({DOUBLE(), BIGINT()})));
+  EXPECT_TRUE(
+      SparkCastCallToSpecialForm::isAnsiSupported(
+          ROW({DECIMAL(38, 2), VARCHAR()}), ROW({TIMESTAMP(), BIGINT()})));
 
   // A nested cast that is neither ANSI-supported nor known to never fail.
   EXPECT_FALSE(
@@ -3719,6 +3785,10 @@ TEST_F(SparkCastExprTestAnsiOff, timestampToDecimal) {
   testOverflow.operator()<int128_t>(1577836801500000, DECIMAL(38, 30));
   testOverflow.operator()<int128_t>(
       std::numeric_limits<int64_t>::min(), DECIMAL(38, 26));
+}
+
+TEST_F(SparkCastExprTestAnsiOff, decimalToTimestamp) {
+  testDecimalToTimestamp();
 }
 
 TEST_F(SparkCastExprTestAnsiOff, timestampToString) {
