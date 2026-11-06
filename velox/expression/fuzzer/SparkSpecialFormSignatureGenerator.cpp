@@ -42,6 +42,38 @@ SparkSpecialFormSignatureGenerator::getSignaturesForCast() const {
     signatures.push_back(makeCastSignature(fromType, "timestamp"));
   }
 
+  // Spark casts a timestamp to floating-point, boolean and decimal types.
+  for (auto toType : {"real", "double", "boolean"}) {
+    addCastFromTimestampSignature(toType, signatures);
+  }
+  for (const auto& toType : kDecimalTypes_) {
+    addCastFromTimestampSignature(toType, signatures);
+  }
+
+  // Spark casts a date to boolean and numeric types as NULL. 'kIntegralTypes_'
+  // includes boolean.
+  for (const auto& toType : kIntegralTypes_) {
+    addCastFromDateSignature(toType, signatures);
+  }
+  for (const auto& toType : kFloatingPointTypes_) {
+    addCastFromDateSignature(toType, signatures);
+  }
+  for (const auto& toType : kDecimalTypes_) {
+    addCastFromDateSignature(toType, signatures);
+  }
+
+  // Spark's interpreted evaluation rounds a decimal with more than 34
+  // significant digits before casting it to timestamp. Velox keeps every digit,
+  // as Spark's generated code does, so the precision is limited to 34.
+  for (auto fromType :
+       {"DECIMAL(6, 0)",
+        "DECIMAL(18, 6)",
+        "DECIMAL(34, 2)",
+        "DECIMAL(34, 18)",
+        "DECIMAL(34, 34)"}) {
+    signatures.push_back(makeCastSignature(fromType, "timestamp"));
+  }
+
   // For each supported translation pair T --> U, add signatures of array(T) -->
   // array(U), map(varchar, T) --> map(varchar, U), row(T) --> row(U).
   auto size = signatures.size();
