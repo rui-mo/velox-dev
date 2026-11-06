@@ -383,6 +383,12 @@ Expected<int64_t> SparkCastHooks::castTimestampToBigint(
   return micros / Timestamp::kMicrosecondsInSecond;
 }
 
+Expected<double> SparkCastHooks::castTimestampToDouble(
+    const Timestamp& timestamp) const {
+  return static_cast<double>(timestamp.toMicros()) /
+      Timestamp::kMicrosecondsInSecond;
+}
+
 Expected<std::optional<Timestamp>> SparkCastHooks::castDoubleToTimestamp(
     double value) const {
   if (FOLLY_UNLIKELY(std::isnan(value) || std::isinf(value))) {

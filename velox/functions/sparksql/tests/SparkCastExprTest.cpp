@@ -559,6 +559,52 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
     testTimestampToIntegralCast<int32_t>();
   }
 
+  // Casts from timestamp to DOUBLE return the seconds since the epoch. Casts to
+  // REAL round that double to float. Results are identical regardless of ANSI
+  // mode.
+  void testTimestampToFloatingPoint() {
+    const auto input = makeNullableFlatVector<Timestamp>({
+        Timestamp(0, 0),
+        Timestamp(1577836801, 500'000'000),
+        Timestamp::fromMicros(-1),
+        Timestamp::fromMicros(1),
+        Timestamp::fromMicros(123456789),
+        Timestamp::fromMicros(253402300799999999),
+        Timestamp::fromMicros(-62135596799999999),
+        Timestamp::fromMicros(std::numeric_limits<int64_t>::max()),
+        Timestamp::fromMicrosNoError(std::numeric_limits<int64_t>::min()),
+        std::nullopt,
+    });
+    testCast(
+        input,
+        makeNullableFlatVector<double>({
+            0.0,
+            1577836801.5,
+            -1e-06,
+            1e-06,
+            123.456789,
+            253402300800.0,
+            -62135596800.0,
+            9223372036854.775,
+            -9223372036854.775,
+            std::nullopt,
+        }));
+    testCast(
+        input,
+        makeNullableFlatVector<float>({
+            0.0f,
+            1577836800.0f,
+            -1e-06f,
+            1e-06f,
+            123.456789f,
+            253402300416.0f,
+            -62135595008.0f,
+            9223372013568.0f,
+            -9223372013568.0f,
+            std::nullopt,
+        }));
+  }
+
   void testTimestampToString() {
     testCast<Timestamp, std::string>(
         "string",
@@ -2640,6 +2686,10 @@ TEST_F(SparkCastExprTestAnsiOn, timestampToIntOverflow) {
   testOverflowThrows("integer", Timestamp(-9223372036855, 224'192'000));
 }
 
+TEST_F(SparkCastExprTestAnsiOn, timestampToFloatingPoint) {
+  testTimestampToFloatingPoint();
+}
+
 TEST_F(SparkCastExprTestAnsiOn, timestampToString) {
   testTimestampToString();
 }
@@ -3363,6 +3413,9 @@ TEST_F(SparkCastExprTest, isAnsiSupportedComplexTypes) {
   EXPECT_TRUE(
       SparkCastCallToSpecialForm::isAnsiSupported(
           ROW({VARCHAR(), REAL()}), ROW({BIGINT(), BOOLEAN()})));
+  EXPECT_TRUE(
+      SparkCastCallToSpecialForm::isAnsiSupported(
+          ROW({TIMESTAMP(), VARCHAR()}), ROW({DOUBLE(), BIGINT()})));
 
   // A nested cast that is neither ANSI-supported nor known to never fail.
   EXPECT_FALSE(
@@ -3537,6 +3590,10 @@ TEST_F(SparkCastExprTestAnsiOff, timestampToInt) {
       std::nullopt,
       std::nullopt,
   });
+}
+
+TEST_F(SparkCastExprTestAnsiOff, timestampToFloatingPoint) {
+  testTimestampToFloatingPoint();
 }
 
 TEST_F(SparkCastExprTestAnsiOff, timestampToString) {
