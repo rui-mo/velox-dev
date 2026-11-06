@@ -24,6 +24,7 @@
 #include "arrow/ipc/api.h"
 #include "arrow/result.h"
 #include "arrow/status.h"
+#include "grpc++/support/channel_arguments.h" // @manual
 #include "grpc/grpc.h" // @manual
 #include "velox/common/base/Fs.h"
 #include "velox/common/testutil/TempFilePath.h"
@@ -99,6 +100,16 @@ std::vector<std::pair<std::string, std::string>> toSparkSessionConfigs(
   };
 }
 
+// Spark Connect may send result batches larger than the 4 MiB gRPC default
+// receive limit. Use 128 MiB, the limit of Spark Connect clients.
+std::shared_ptr<grpc::Channel> createChannel(
+    const std::string& coordinatorUri) {
+  grpc::ChannelArguments args;
+  args.SetMaxReceiveMessageSize(128 << 20);
+  return grpc::CreateCustomChannel(
+      coordinatorUri, grpc::InsecureChannelCredentials(), args);
+}
+
 } // namespace
 
 SparkQueryRunner::SparkQueryRunner(
@@ -112,11 +123,7 @@ SparkQueryRunner::SparkQueryRunner(
       userName_(userName),
       sessionId_(generateUUID()),
       sessionConfigs_(toSparkSessionConfigs(queryConfigs)),
-      stub_(
-          SparkConnectService::NewStub(
-              grpc::CreateChannel(
-                  coordinatorUri,
-                  grpc::InsecureChannelCredentials()))) {
+      stub_(SparkConnectService::NewStub(createChannel(coordinatorUri))) {
   pool_ = aggregatePool()->addLeafChild("leaf");
   copyPool_ = aggregatePool()->addLeafChild("copy");
 }
