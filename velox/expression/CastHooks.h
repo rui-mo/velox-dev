@@ -99,6 +99,14 @@ class CastHooks {
             "Conversion of Timestamp to Real or Double is not supported"));
   }
 
+  /// Casts a timestamp to BOOLEAN. Not supported by default.
+  virtual Expected<bool> castTimestampToBoolean(
+      const Timestamp& /*timestamp*/) const {
+    return folly::makeUnexpected(
+        Status::UserError(
+            "Conversion of Timestamp to Boolean is not supported"));
+  }
+
   virtual Expected<std::optional<Timestamp>> castDoubleToTimestamp(
       double seconds) const = 0;
 

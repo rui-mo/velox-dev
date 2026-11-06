@@ -345,6 +345,19 @@ otherwise, including for ``NaN``, regardless of ANSI mode.
   SELECT cast(cast('NaN' as double) as boolean); -- true
   SELECT cast(cast('Infinity' as real) as boolean); -- true
 
+From TIMESTAMP
+^^^^^^^^^^^^^^
+
+Casting a timestamp to boolean returns false for the epoch
+(1970-01-01 00:00:00 UTC) and true otherwise. Spark rejects this cast when
+ANSI mode is enabled. Velox returns the same result regardless of ANSI mode.
+
+::
+
+  SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as boolean); -- false
+  SELECT cast(cast('1970-01-01 00:00:00.000001' as timestamp) as boolean); -- true
+  SELECT cast(cast('1969-12-31 23:59:59.999999' as timestamp) as boolean); -- true
+
 Cast to String
 --------------
 From floating-point types

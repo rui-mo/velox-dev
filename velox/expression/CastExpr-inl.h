@@ -236,6 +236,13 @@ void CastExpr::applyCastKernel(
     }
 
     if constexpr (
+        FromKind == TypeKind::TIMESTAMP && ToKind == TypeKind::BOOLEAN) {
+      const auto castResult = hooks_->castTimestampToBoolean(inputRowValue);
+      setResultOrStatus(castResult, row);
+      return;
+    }
+
+    if constexpr (
         (FromKind == TypeKind::DOUBLE || FromKind == TypeKind::REAL) &&
         ToKind == TypeKind::TIMESTAMP) {
       const auto castResult =
