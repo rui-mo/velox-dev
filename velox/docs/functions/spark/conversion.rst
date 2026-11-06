@@ -212,6 +212,16 @@ Invalid examples
   SELECT cast(cast('2025-02-25 08:00:26.88' as timestamp) as smallint); -- NULL (ANSI OFF) / ERROR (ANSI ON)
   SELECT cast(cast('2025-02-25 08:00:26.88' as timestamp) as tinyint); -- NULL (ANSI OFF) / ERROR (ANSI ON)
 
+From DATE
+^^^^^^^^^
+
+Casting a date to an integral type returns NULL. Spark rejects this cast when
+ANSI mode is enabled. Velox returns NULL regardless of ANSI mode.
+
+::
+
+  SELECT cast(date'2020-01-01' as int); -- NULL
+
 Cast to Floating-Point Types
 ----------------------------
 
@@ -290,6 +300,16 @@ The result is the same regardless of ANSI mode.
   SELECT cast(cast('9999-12-31 23:59:59.999999' as timestamp) as double); -- 2.534023008E11
   SELECT cast(cast('2020-01-01 00:00:01.5' as timestamp) as real); -- 1.5778368E9
 
+From DATE
+^^^^^^^^^
+
+Casting a date to a floating-point type returns NULL. Spark rejects this cast
+when ANSI mode is enabled. Velox returns NULL regardless of ANSI mode.
+
+::
+
+  SELECT cast(date'2020-01-01' as double); -- NULL
+
 Cast to Boolean
 ---------------
 
@@ -357,6 +377,16 @@ ANSI mode is enabled. Velox returns the same result regardless of ANSI mode.
   SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as boolean); -- false
   SELECT cast(cast('1970-01-01 00:00:00.000001' as timestamp) as boolean); -- true
   SELECT cast(cast('1969-12-31 23:59:59.999999' as timestamp) as boolean); -- true
+
+From DATE
+^^^^^^^^^
+
+Casting a date to boolean returns NULL. Spark rejects this cast when ANSI mode
+is enabled. Velox returns NULL regardless of ANSI mode.
+
+::
+
+  SELECT cast(date'2020-01-01' as boolean); -- NULL
 
 Cast to String
 --------------
@@ -782,6 +812,16 @@ Invalid examples
 
   SELECT cast(cast('2020-01-01 00:00:01.5' as timestamp) as decimal(9, 0)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
   SELECT cast(cast('1970-01-01 00:00:01' as timestamp) as decimal(1, 1)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
+
+From DATE
+^^^^^^^^^
+
+Casting a date to decimal returns NULL. Spark rejects this cast when ANSI mode
+is enabled. Velox returns NULL regardless of ANSI mode.
+
+::
+
+  SELECT cast(date'2020-01-01' as decimal(10, 0)); -- NULL
 
 Cast to Varbinary
 -----------------

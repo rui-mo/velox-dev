@@ -207,6 +207,12 @@ class CastHooks {
     return false;
   }
 
+  /// Returns whether casts from date to boolean, integral, floating-point and
+  /// decimal types return NULL.
+  virtual bool dateToNumericCastReturnsNull() const {
+    return false;
+  }
+
   /// Returns whether a cast of a long decimal to TINYINT, SMALLINT or INTEGER
   /// that checks for overflow truncates the nearest double of the decimal.
   virtual bool longDecimalToIntegralCastUsesDouble() const {

@@ -130,6 +130,11 @@ class SparkCastHooks : public exec::CastHooks {
     return true;
   }
 
+  // Spark casts a date to boolean or a numeric type as NULL.
+  bool dateToNumericCastReturnsNull() const override {
+    return true;
+  }
+
   // Spark's Decimal.roundToInt truncates the nearest double of a decimal
   // backed by a Java BigDecimal, which holds precision above 18.
   bool longDecimalToIntegralCastUsesDouble() const override {
