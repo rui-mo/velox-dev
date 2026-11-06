@@ -956,6 +956,13 @@ VectorPtr CastExpr::applyDecimal(
       applyVarcharToDecimalCastKernel<toDecimalType>(
           rows, input, context, toType, castResult);
       break;
+    case TypeKind::TIMESTAMP:
+      if (hooks_->supportsTimestampToDecimal()) {
+        applyTimestampToDecimalCastKernel<toDecimalType>(
+            rows, input, context, toType, castResult);
+        break;
+      }
+      [[fallthrough]];
     default:
       VELOX_UNSUPPORTED(
           "Cast from {} to {} is not supported",

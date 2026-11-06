@@ -755,6 +755,34 @@ Invalid examples
   SELECT cast(true as decimal(1, 1)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
   SELECT cast(true as decimal(38, 38)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
 
+From TIMESTAMP
+^^^^^^^^^^^^^^
+
+*(ANSI compliant)*
+
+Casting a timestamp to a decimal returns the number of seconds since the epoch
+(1970-01-01 00:00:00 UTC) with 6 fractional digits, rounded half away from zero
+to the target scale.
+
+When ANSI mode is enabled, casting a value that overflows the target precision
+and scale throws an error. Otherwise, such casts return NULL.
+
+Valid examples
+
+::
+
+  SELECT cast(cast('2020-01-01 00:00:01.555' as timestamp) as decimal(12, 2)); -- 1577836801.56
+  SELECT cast(cast('2020-01-01 00:00:01.5' as timestamp) as decimal(10, 0)); -- 1577836802
+  SELECT cast(cast('1969-12-31 23:59:59.995' as timestamp) as decimal(5, 2)); -- -0.01
+  SELECT cast(cast('1970-01-01 00:00:00.000001' as timestamp) as decimal(38, 38)); -- 0.00000100000000000000000000000000000000
+
+Invalid examples
+
+::
+
+  SELECT cast(cast('2020-01-01 00:00:01.5' as timestamp) as decimal(9, 0)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
+  SELECT cast(cast('1970-01-01 00:00:01' as timestamp) as decimal(1, 1)); -- NULL (ANSI OFF) / ERROR (ANSI ON) // Value too large
+
 Cast to Varbinary
 -----------------
 

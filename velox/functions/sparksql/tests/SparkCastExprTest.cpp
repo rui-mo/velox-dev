@@ -631,6 +631,56 @@ class SparkCastExprTest : public functions::test::CastBaseTest {
         }));
   }
 
+  // Casts from timestamp to decimal round the seconds since the epoch, which
+  // have 6 fractional digits, half away from zero to the target scale. Results
+  // are identical regardless of ANSI mode.
+  void testTimestampToDecimal() {
+    testCast(
+        makeNullableFlatVector<Timestamp>({
+            Timestamp::fromMicros(1577836801555000),
+            Timestamp::fromMicros(-5000),
+            Timestamp::fromMicros(-4999),
+            Timestamp::fromMicros(-5001),
+            Timestamp::fromMicros(5000),
+            Timestamp::fromMicros(4999),
+            std::nullopt,
+        }),
+        makeNullableFlatVector<int64_t>(
+            {157783680156, -1, 0, -1, 1, 0, std::nullopt}, DECIMAL(12, 2)));
+
+    const auto testValue =
+        [&]<typename T>(int64_t micros, const TypePtr& toType, T expected) {
+          testCast(
+              makeFlatVector<Timestamp>({Timestamp::fromMicrosNoError(micros)}),
+              makeFlatVector<T>({expected}, toType));
+        };
+    constexpr auto kMax = std::numeric_limits<int64_t>::max();
+    constexpr auto kMin = std::numeric_limits<int64_t>::min();
+    testValue(1577836801555000, DECIMAL(20, 2), int128_t{157783680156});
+    testValue(1577836801500000, DECIMAL(10, 0), int64_t{1577836802});
+    testValue(
+        1577836801500000,
+        DECIMAL(38, 28),
+        int128_t{15778368015} * DecimalUtil::kPowersOfTen[27]);
+    testValue(
+        253402300799999999,
+        DECIMAL(38, 10),
+        int128_t{253402300799999999} * 10'000);
+    testValue(-62135596800000000, DECIMAL(11, 0), int64_t{-62135596800});
+    testValue(kMax, DECIMAL(19, 6), int128_t{kMax});
+    testValue(kMin, DECIMAL(19, 6), int128_t{kMin});
+    testValue(kMax, DECIMAL(18, 5), int64_t{922337203685477581});
+    testValue(kMin, DECIMAL(13, 0), int64_t{-9223372036855});
+    testValue(
+        kMin, DECIMAL(38, 25), int128_t{kMin} * DecimalUtil::kPowersOfTen[19]);
+    testValue(0, DECIMAL(1, 1), int64_t{0});
+    testValue(1, DECIMAL(38, 38), DecimalUtil::kPowersOfTen[32]);
+    testValue(-1, DECIMAL(38, 38), -DecimalUtil::kPowersOfTen[32]);
+    testValue(499999, DECIMAL(1, 0), int64_t{0});
+    testValue(500000, DECIMAL(1, 0), int64_t{1});
+    testValue(-500000, DECIMAL(1, 0), int64_t{-1});
+  }
+
   void testTimestampToString() {
     testCast<Timestamp, std::string>(
         "string",
@@ -2720,6 +2770,30 @@ TEST_F(SparkCastExprTestAnsiOn, timestampToBoolean) {
   testTimestampToBoolean();
 }
 
+TEST_F(SparkCastExprTestAnsiOn, timestampToDecimal) {
+  testTimestampToDecimal();
+
+  // Under ANSI ON, values that overflow the target precision throw. try_cast
+  // returns NULL.
+  const auto testOverflow = [&]<typename T>(
+                                int64_t micros, const TypePtr& toType) {
+    const auto input =
+        makeFlatVector<Timestamp>({Timestamp::fromMicrosNoError(micros)});
+    VELOX_ASSERT_THROW(
+        evaluateCast(TIMESTAMP(), toType, makeRowVector({input})),
+        fmt::format("to {}. Result overflows.", toType->toString()));
+    testCast(
+        input,
+        makeNullableFlatVector<T>({std::nullopt}, toType),
+        /*isTryCast=*/true);
+  };
+  testOverflow.operator()<int64_t>(1577836801500000, DECIMAL(9, 0));
+  testOverflow.operator()<int64_t>(1'000'000, DECIMAL(1, 1));
+  testOverflow.operator()<int128_t>(1577836801500000, DECIMAL(38, 30));
+  testOverflow.operator()<int128_t>(
+      std::numeric_limits<int64_t>::min(), DECIMAL(38, 26));
+}
+
 TEST_F(SparkCastExprTestAnsiOn, timestampToString) {
   testTimestampToString();
 }
@@ -3628,6 +3702,23 @@ TEST_F(SparkCastExprTestAnsiOff, timestampToFloatingPoint) {
 
 TEST_F(SparkCastExprTestAnsiOff, timestampToBoolean) {
   testTimestampToBoolean();
+}
+
+TEST_F(SparkCastExprTestAnsiOff, timestampToDecimal) {
+  testTimestampToDecimal();
+
+  // Under ANSI OFF, values that overflow the target precision return NULL.
+  const auto testOverflow = [&]<typename T>(
+                                int64_t micros, const TypePtr& toType) {
+    testCast(
+        makeFlatVector<Timestamp>({Timestamp::fromMicrosNoError(micros)}),
+        makeNullableFlatVector<T>({std::nullopt}, toType));
+  };
+  testOverflow.operator()<int64_t>(1577836801500000, DECIMAL(9, 0));
+  testOverflow.operator()<int64_t>(1'000'000, DECIMAL(1, 1));
+  testOverflow.operator()<int128_t>(1577836801500000, DECIMAL(38, 30));
+  testOverflow.operator()<int128_t>(
+      std::numeric_limits<int64_t>::min(), DECIMAL(38, 26));
 }
 
 TEST_F(SparkCastExprTestAnsiOff, timestampToString) {
