@@ -125,6 +125,17 @@ class SparkQueryConfig {
       0,
       "Current Spark partition id for the running task. Defaults to 0.")
 
+  /// If true, ceil and floor of a floating-point value outside the BIGINT range
+  /// saturate to the BIGINT limits in ANSI mode too, as in Spark 4.2 and
+  /// earlier.
+  VELOX_SPARK_CONFIG(
+      kLegacyCeilFloorSaturate,
+      legacyCeilFloorSaturate,
+      "legacy_ceil_floor_saturate",
+      bool,
+      false,
+      "Saturate Spark ceil and floor results outside the BIGINT range in ANSI mode.")
+
   /// If true, collect_set keeps every floating-point NaN as a separate element
   /// and returns the first zero that it reads, -0.0 or 0.0, as is, as in Spark
   /// 4.1 and earlier.

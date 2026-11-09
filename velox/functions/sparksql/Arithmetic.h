@@ -282,7 +282,9 @@ struct CeilFunction {
       const std::vector<TypePtr>& /*inputTypes*/,
       const core::QueryConfig& config,
       const TInput* /*value*/) {
-    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
+    const SparkQueryConfig sparkConfig{config};
+    ansiEnabled_ =
+        sparkConfig.ansiEnabled() && !sparkConfig.legacyCeilFloorSaturate();
   }
 
   template <typename TInput>
@@ -307,7 +309,9 @@ struct FloorFunction {
       const std::vector<TypePtr>& /*inputTypes*/,
       const core::QueryConfig& config,
       const TInput* /*value*/) {
-    ansiEnabled_ = SparkQueryConfig{config}.ansiEnabled();
+    const SparkQueryConfig sparkConfig{config};
+    ansiEnabled_ =
+        sparkConfig.ansiEnabled() && !sparkConfig.legacyCeilFloorSaturate();
   }
 
   template <typename TInput>

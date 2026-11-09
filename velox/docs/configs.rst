@@ -1524,6 +1524,12 @@ Spark-specific Configuration
      - integer
      -
      - The current task's Spark partition ID. It's set by the query engine (Spark) prior to task execution.
+   * - spark.legacy_ceil_floor_saturate
+     - bool
+     - false
+     - If true, :spark:func:`ceil` and :spark:func:`floor` of a floating-point value outside the BIGINT range
+       return the BIGINT limits also when ``spark.ansi_enabled`` is true, instead of throwing an error. This matches
+       the behavior of Spark before 4.3.
    * - spark.legacy_collect_set_distinct_nans
      - bool
      - false

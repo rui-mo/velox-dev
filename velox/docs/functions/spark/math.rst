@@ -85,6 +85,8 @@ Mathematical Functions
     BIGINT range saturates to the BIGINT limits, or is an error when Spark ANSI mode
     is enabled (``spark.ansi_enabled``).
     The error matches Spark 4.3 and later; Spark 3.5 to 4.2 saturate in both modes.
+    If ``spark.legacy_ceil_floor_saturate`` is true, the result saturates in ANSI
+    mode too, as in Spark before 4.3.
 
 .. spark:function:: checked_add(x, y) -> [same as x]
    :noindex:
@@ -300,6 +302,8 @@ Mathematical Functions
     BIGINT range saturates to the BIGINT limits, or is an error when Spark ANSI mode
     is enabled (``spark.ansi_enabled``).
     The error matches Spark 4.3 and later; Spark 3.5 to 4.2 saturate in both modes.
+    If ``spark.legacy_ceil_floor_saturate`` is true, the result saturates in ANSI
+    mode too, as in Spark before 4.3.
 
 .. spark:function:: hex(x) -> varchar
 

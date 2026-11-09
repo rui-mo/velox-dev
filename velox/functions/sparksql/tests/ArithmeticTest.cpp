@@ -758,6 +758,25 @@ TEST_F(CeilFloorTest, ansiOverflow) {
       evaluateOnce<int64_t>("try(floor(c0))", std::optional<double>(-1e30)));
 }
 
+TEST_F(CeilFloorTest, legacySaturate) {
+  queryCtx_->testingOverrideConfigUnsafe({
+      {SparkQueryConfig::qualify(SparkQueryConfig::kAnsiEnabled), "true"},
+      {SparkQueryConfig::qualify(SparkQueryConfig::kLegacyCeilFloorSaturate),
+       "true"},
+  });
+  constexpr auto kInt64Max = std::numeric_limits<int64_t>::max();
+  constexpr auto kInt64Min = std::numeric_limits<int64_t>::min();
+  constexpr auto kInfinity = std::numeric_limits<double>::infinity();
+
+  // Values outside the BIGINT range saturate in ANSI mode too.
+  EXPECT_EQ(3, ceil<double>(2.878));
+  EXPECT_EQ(-3, floor<double>(-2.878));
+  EXPECT_EQ(kInt64Max, ceil<double>(1e20));
+  EXPECT_EQ(kInt64Min, floor<double>(-1e20));
+  EXPECT_EQ(kInt64Max, ceil<double>(kInfinity));
+  EXPECT_EQ(kInt64Min, floor<double>(-kInfinity));
+}
+
 TEST_F(ArithmeticTest, sinh) {
   const auto sinh = [&](std::optional<double> a) {
     return evaluateOnce<double>("sinh(c0)", a);
