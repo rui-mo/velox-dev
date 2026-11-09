@@ -15,8 +15,15 @@ Spark's `spark.sql.ansi.enabled`. A Velox function reads it only if Spark's
 behavior depends on `spark.sql.ansi.enabled`. Functions that behave the same in
 both modes ignore it, including those that always throw, e.g. `url_decode`.
 
-`spark_fuzzer.py run --ansi on` sets both configs to true. The examples below
-are results of Spark 4.3.0 with the UTC session time zone.
+If `spark.legacy_ceil_floor_saturate` is true, `ceil` and `floor` ignore
+`spark.ansi_enabled` too, and return the BIGINT limits for doubles out of the
+range of BIGINT, as Spark 4.2.1 and earlier do. It is false by default.
+[REPORT.md](REPORT.md#spark-351) lists the other configs that restore the
+behaviors of earlier Spark releases.
+
+`spark_fuzzer.py run --ansi on` sets `spark.ansi_enabled` and
+`spark.sql.ansi.enabled` to true. The examples below are results of Spark 4.3.0
+with the UTC session time zone.
 
 ## Functions
 
@@ -54,7 +61,7 @@ parameters as arguments:
 
 - `size(NULL)` returns -1 if `spark.sql.legacy.sizeOfNull` is true and ANSI
   mode is off, and NULL otherwise. Spark's `Size` takes the result of this rule
-  as a parameter, and Velox's `size` as its second argument. b0231d6e7
+  as a parameter, and Velox's `size` as its second argument. ea2387135
   translates `size(x, true)` to Spark SQL that returns -1 for NULL in both
   modes.
 - Spark's `MakeDecimal` returns NULL on overflow with ANSI mode off and throws
@@ -153,38 +160,38 @@ on ANSI mode, and some of the fixes correct them.
 
 | # | Commit | Function | Fix |
 | --- | --- | --- | --- |
-| 62 | 1b0b9d8cb | `div` | Divide INTEGER -2147483648 by -1 as BIGINT instead of crashing. |
-| 63 | 112616091 | `/` of doubles | Throw for a zero divisor in ANSI mode. |
-| 64 | fb6b43de6 | `div` | Throw for a zero divisor and overflow in ANSI mode. |
-| 65 | df7e1aaa7 | `div` of decimals | Return the quotient when rescaling exceeds 128 bits. |
-| 66 | a381aae8b | `+` | Throw on overflow in ANSI mode. |
-| 67 | e04728f26 | `-` | Throw on overflow in ANSI mode. |
-| 68 | 56a301dab | `*` | Throw on overflow in ANSI mode. |
-| 69 | bfaa77ac8 | `cast` from decimals to integers | Throw on overflow in ANSI mode. |
-| 70 | 20e0212ac | `avg` of decimals | Return NULL when the sum exceeds the precision of the sum type. |
-| 71 | ae0e5dc1d | `try_cast` from DOUBLE to REAL | Return infinity out of the range of REAL. |
-| 72 | 2145026ef | `cast` to BOOLEAN | Cast NaN to true. |
-| 73 | 9958d699c | `cast` from string to TIMESTAMP | Follow Spark's timestamp syntax, e.g. `'2020-01-01 10'`. |
-| 74 | 451821927 | `cast` from string to TIMESTAMP | Resolve zone IDs as Spark does, e.g. `-18:00`. |
-| 75 | bfd477896 | `cast` from string to TIMESTAMP | Move local times in DST gaps forward. |
-| 76 | d8a854663 | `cast` from DATE to string | Add `+` to years after 9999. |
-| 77 | 7e99c591c | datetime functions | Support the pattern letter `g`, the modified Julian day. |
-| 78 | 538d879ca | datetime functions | Reject the patterns that Spark rejects. |
-| 79 | d0b44cae8 | datetime functions | Support optional sections in patterns. |
-| 80 | 879408ee6 | `cast` from DATE to TIMESTAMP | Throw on overflow in both modes. |
-| 81 | 188a0f40a | `cast` from REAL and DOUBLE to integers | Saturate 2^63 and 2^31 with ANSI mode off. |
-| 82 | 0440e2aaa | `cast` from REAL and DOUBLE to decimals | Use the digits of Java's `Double.toString`. |
-| 83 | 947ff2b29 | `cast` from REAL and DOUBLE to decimals | Return NULL for NaN and infinity in ANSI mode. |
-| 84 | eeff86191 | `cast` from decimals to integers | Truncate the nearest double of decimals with precision above 18 in ANSI mode and `try_cast`. |
-| 85 | 81b3d5301 | `try` | Return NULL for casts from DATE to TIMESTAMP that overflow. |
-| 86 | 5790cc6a0 | `cast` from string to decimals | Accept the digits of other scripts. |
-| 87 | f731f8041 | `cast` from DOUBLE to TIMESTAMP | Multiply in double precision. |
-| 88 | 0a941fae1 | `cast` from TIMESTAMP to DOUBLE and REAL | Support it. |
-| 89 | b5070e73f | `cast` from TIMESTAMP to BOOLEAN | Support it. |
-| 90 | a2519271c | `cast` from TIMESTAMP to decimals | Support it. |
-| 91 | 43d25f003 | `cast` from decimals to TIMESTAMP | Support it. |
-| 92 | 3f81deeaf | `cast` from DATE to numbers and BOOLEAN | Return NULL. |
-| 93 | 3840dda59 | datetime functions | Read the pattern letter `x` as a zone offset. |
+| 62 | 11637dd33 | `div` | Divide INTEGER -2147483648 by -1 as BIGINT instead of crashing. |
+| 63 | 451f76191 | `/` of doubles | Throw for a zero divisor in ANSI mode. |
+| 64 | f0ef96b6b | `div` | Throw for a zero divisor and overflow in ANSI mode. |
+| 65 | 881755ea3 | `div` of decimals | Return the quotient when rescaling exceeds 128 bits. |
+| 66 | 68a6b494d | `+` | Throw on overflow in ANSI mode. |
+| 67 | 81d72cf66 | `-` | Throw on overflow in ANSI mode. |
+| 68 | 6793b986f | `*` | Throw on overflow in ANSI mode. |
+| 69 | 337255965 | `cast` from decimals to integers | Throw on overflow in ANSI mode. |
+| 70 | 4ffe1590b | `avg` of decimals | Return NULL when the sum exceeds the precision of the sum type. |
+| 71 | 47b4f39f8 | `try_cast` from DOUBLE to REAL | Return infinity out of the range of REAL. |
+| 72 | 435024efa | `cast` to BOOLEAN | Cast NaN to true. |
+| 73 | 9e4e8d5f1 | `cast` from string to TIMESTAMP | Follow Spark's timestamp syntax, e.g. `'2020-01-01 10'`. |
+| 74 | c5b249bb3 | `cast` from string to TIMESTAMP | Resolve zone IDs as Spark does, e.g. `-18:00`. |
+| 75 | 3dbf66091 | `cast` from string to TIMESTAMP | Move local times in DST gaps forward. |
+| 76 | 8496dfb42 | `cast` from DATE to string | Add `+` to years after 9999. |
+| 77 | e330f7fbc | datetime functions | Support the pattern letter `g`, the modified Julian day. |
+| 78 | b937de890 | datetime functions | Reject the patterns that Spark rejects. |
+| 79 | 24e37dd23 | datetime functions | Support optional sections in patterns. |
+| 80 | 3d9785152 | `cast` from DATE to TIMESTAMP | Throw on overflow in both modes. |
+| 81 | da0eddc10 | `cast` from REAL and DOUBLE to integers | Saturate 2^63 and 2^31 with ANSI mode off. |
+| 82 | 978d811a1 | `cast` from REAL and DOUBLE to decimals | Use the digits of Java's `Double.toString`. |
+| 83 | 14966b139 | `cast` from REAL and DOUBLE to decimals | Return NULL for NaN and infinity in ANSI mode. |
+| 84 | 4148500da | `cast` from decimals to integers | Truncate the nearest double of decimals with precision above 18 in ANSI mode and `try_cast`. |
+| 85 | bc4c8d679 | `try` | Return NULL for casts from DATE to TIMESTAMP that overflow. |
+| 86 | 019e9c881 | `cast` from string to decimals | Accept the digits of other scripts. |
+| 87 | 1a24dc720 | `cast` from DOUBLE to TIMESTAMP | Multiply in double precision. |
+| 88 | 05323cfb4 | `cast` from TIMESTAMP to DOUBLE and REAL | Support it. |
+| 89 | d65132386 | `cast` from TIMESTAMP to BOOLEAN | Support it. |
+| 90 | d90904f26 | `cast` from TIMESTAMP to decimals | Support it. `spark.legacy_timestamp_to_decimal_via_double` converts through DOUBLE, as Spark 4.0 and earlier do. |
+| 91 | de41f0704 | `cast` from decimals to TIMESTAMP | Support it. |
+| 92 | 0c7b3f093 | `cast` from DATE to numbers and BOOLEAN | Return NULL. |
+| 93 | 4d67fbd16 | datetime functions | Read the pattern letter `x` as a zone offset. |
 
 ## Upstream pull requests
 
@@ -193,21 +200,21 @@ They make Velox functions follow ANSI mode or Spark's casts.
 
 | Pull request | Commits | Change |
 | --- | --- | --- |
-| facebookincubator/velox#19141 | 622c915ab | Correct shared decimal rounding and overflow. |
-| facebookincubator/velox#18821 | ba6ba6e51 | Trim strings in casts as Spark does. |
-| facebookincubator/velox#17647 | 7235477ea | Cast decimals to strings without scientific notation. |
-| facebookincubator/velox#19311 | 39638b8c8 | Apply ANSI mode to casts of arrays, maps and structs. |
-| facebookincubator/velox#20058 | c612eece7, 3908719e7 | Throw on `ceil` and `floor` overflow in ANSI mode. |
-| facebookincubator/velox#19231 | fe3e660ad | Correct `pmod`, and throw for a zero divisor in ANSI mode. |
-| facebookincubator/velox#19332 | 105b10a7b | Throw on `element_at` of arrays out of bounds in ANSI mode. |
-| facebookincubator/velox#19334 | 4f161a874 | Throw for an invalid `next_day` day of the week in ANSI mode. |
-| facebookincubator/velox#19331 | e2eecfcbf | Throw on `conv` overflow in ANSI mode. |
-| facebookincubator/velox#18764 | 97633b0d8 | Throw for invalid `make_date` fields in ANSI mode. |
-| facebookincubator/velox#20028 | 2d8fec0bb | Throw on `sum` overflow in ANSI mode. |
-| facebookincubator/velox#19333 | cf98268ed | Throw for `get_timestamp` parse errors in ANSI mode. |
-| facebookincubator/velox#19290 | d4297dbb3 | Throw for decimal `/` overflow and zero divisors in ANSI mode. |
-| facebookincubator/velox#17937 | a2a41bfa8 | Throw on decimal `avg` overflow in ANSI mode. |
-| facebookincubator/velox#19480 | 66cfd8f9d | Add `round` of integers, which throws on overflow in ANSI mode. |
+| facebookincubator/velox#19141 | 2071dfbeb | Correct shared decimal rounding and overflow. |
+| facebookincubator/velox#18821 | 38b4836b8 | Trim strings in casts as Spark does. |
+| facebookincubator/velox#17647 | e9f3c02fd | Cast decimals to strings without scientific notation. |
+| facebookincubator/velox#19311 | 39453519e | Apply ANSI mode to casts of arrays, maps and structs. |
+| facebookincubator/velox#20058 | e0347c5c5, 69ef19921 | Throw on `ceil` and `floor` overflow in ANSI mode. 2c12993e7 adds `spark.legacy_ceil_floor_saturate`, which restores the saturation. |
+| facebookincubator/velox#19231 | 95cbf91a7 | Correct `pmod`, and throw for a zero divisor in ANSI mode. |
+| facebookincubator/velox#19332 | 132165590 | Throw on `element_at` of arrays out of bounds in ANSI mode. |
+| facebookincubator/velox#19334 | 82c369b81 | Throw for an invalid `next_day` day of the week in ANSI mode. |
+| facebookincubator/velox#19331 | f040f88e1 | Throw on `conv` overflow in ANSI mode. |
+| facebookincubator/velox#18764 | ecbf3e0c3 | Throw for invalid `make_date` fields in ANSI mode. |
+| facebookincubator/velox#20028 | 12977b358 | Throw on `sum` overflow in ANSI mode. |
+| facebookincubator/velox#19333 | e61f2ff08 | Throw for `get_timestamp` parse errors in ANSI mode. |
+| facebookincubator/velox#19290 | d8b421e2a | Throw for decimal `/` overflow and zero divisors in ANSI mode. |
+| facebookincubator/velox#17937 | fd99a0db9 | Throw on decimal `avg` overflow in ANSI mode. |
+| facebookincubator/velox#19480 | d219628fc | Add `round` of integers, which throws on overflow in ANSI mode. |
 
 The ANSI work started on Spark 4.1.4. Its version of these fixes was dropped
 because a pull request does the same:
@@ -234,7 +241,7 @@ sum type, and facebookincubator/velox#17937 makes the overflow throw. `ceil`,
 `floor` and `round` needed no fix, because facebookincubator/velox#20058 and
 facebookincubator/velox#19480 cover them.
 
-## Spark 4.1.4 and 4.3.0
+## Earlier Spark releases
 
 The ANSI fixes were first written against Spark 4.1.4. The examples of their
 commit messages and 134 other queries return the same results in Spark 4.1.4
@@ -242,13 +249,21 @@ and 4.3.0, with one exception: with ANSI mode on, Spark 4.3 throws
 `ARITHMETIC_OVERFLOW` for `ceil` and `floor` of doubles out of the range of
 BIGINT, which facebookincubator/velox#20058 follows. Of the Spark expressions
 that Velox has, only `ceil` and `floor` read ANSI mode in Spark 4.3.0 and not
-in Spark 4.1.4.
+in Spark 4.1.4. `spark.legacy_ceil_floor_saturate` restores the behavior of
+Spark 4.1.4.
+
+In Spark 3.5.1, the ANSI fixes and the cherry-picked pull requests return the
+same results as in Spark 4.3.0 on the same Java version, in both modes, except
+`ceil` and `floor`, and the casts from TIMESTAMP to decimals of fix 90, which
+`spark.legacy_timestamp_to_decimal_via_double` restores.
+[REPORT.md](REPORT.md#spark-351) lists the configs and the other differences
+from Spark 3.5.1.
 
 ## Fuzzer runs
 
 These runs used Spark 4.3.0, with 10 seeds of 3 minutes each. A seed stops at
-the first failure. The cast and expression runs used the build of 8064a9bd3,
-and the aggregation runs the build of 3840dda59.
+the first failure. The cast and expression runs used the build of a50b33353,
+and the aggregation runs the build of 4d67fbd16.
 [REPORT.md](REPORT.md#fuzzer-runs) describes the counts.
 
 | Run | Functions | ANSI | Seeds | Passed | Test cases | Verified | Unsupported |

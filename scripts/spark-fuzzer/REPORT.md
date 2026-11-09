@@ -28,11 +28,13 @@ describes the move to Spark 4.3.0.
   triages failures.
 - 92 function fixes, numbered 1 to 93 without 36, one commit each. Fixes 1 to
   61 are listed below, and [ANSI.md](ANSI.md#fixes) lists fixes 62 to 93.
-- 80 commits for the Spark query runner, the fuzzers, their argument
+- 81 commits for the Spark query runner, the fuzzers, their argument
   generators, the scripts, the `spark-fuzzer` skill and these documents,
   listed below.
-- 16 commits cherry-pick 15 Velox pull requests that the ANSI fixes build on.
-  [ANSI.md](ANSI.md#upstream-pull-requests) lists them.
+- 16 commits cherry-pick 15 Velox pull requests that the ANSI fixes build on,
+  and one commit adds `spark.legacy_ceil_floor_saturate` to
+  facebookincubator/velox#20058. [ANSI.md](ANSI.md#upstream-pull-requests)
+  lists them.
 - Against Spark 4.1.4, all 30 seeds of the first campaign failed. In the
   one-hour run of the expression fuzzer, 11 of the 12 seeds passed, and Spark
   verified 9333 of the 11169 test cases. The failed seed hit a known last-bit
@@ -138,26 +140,37 @@ are false by default, and `velox/docs/configs.rst` describes them.
 | 53 | `collect_set` | `spark.legacy_collect_set_distinct_nans` | Returns every NaN input, and -0.0 as is. | 4.1.4 and earlier |
 | 54 | `mode` | `spark.legacy_mode_negative_zero` | Returns -0.0 as is. | 4.1.4 and earlier |
 | 57 | `cast` from string to decimal | `spark.legacy_decimal_zero_large_exponent` | Treats zeros with more than 38 integral digits as too large, e.g. `'0e38'`. | 4.1.3 and earlier, and 4.2.0 |
+| 90 | `cast` from TIMESTAMP to decimal | `spark.legacy_timestamp_to_decimal_via_double` | Converts the seconds since the epoch to DOUBLE before rounding them, which keeps at most 17 significant digits. | 4.0 and earlier |
+| facebookincubator/velox#20058 | `ceil`, `floor` | `spark.legacy_ceil_floor_saturate` | Returns the BIGINT limits for doubles out of the range of BIGINT with ANSI mode on, instead of `ARITHMETIC_OVERFLOW`. | 4.2.1 and earlier |
 
 The Spark releases are those that behave like the config, according to their
 sources. The tests of the configs expect the results of Spark 3.5.1, which ran
 the queries on Java 17 through Spark Connect. The other fixes return the same
 results in Spark 3.5.1 and 4.3.0, or need no config:
 
-- Fixes 5 and 24 throw for the same inputs in Spark 3.5.1, but with Java
-  exceptions instead of Spark's error classes, e.g. an `ArithmeticException`
-  instead of `DATETIME_OVERFLOW` for `timestamp_seconds`.
+- Spark 3.5.1 throws for the same inputs of fixes 5, 24, 77, 78, 83, 89, 90,
+  92 and 93 as Spark 4.3.0, but some of the errors have other error classes or
+  are Java exceptions, e.g. an `ArithmeticException` instead of
+  `DATETIME_OVERFLOW` for `timestamp_seconds`.
 - Fix 9: Spark 3.5.1 throws an `ArithmeticException` for `lpad` and `rpad`
   with a non-empty pad and a size below INT32_MIN plus the number of
   characters, e.g. `lpad('text', -2147483648)`. Spark 4.0.5, 4.1.4, 4.2.1 and
   4.3.0 return an empty string (SPARK-58708). Both return an empty string for
   the other negative sizes.
-- Fix 12: Spark casts doubles to strings with Java's `Double.toString`, whose
-  digits depend on the Java version, not on the Spark release.
+- Fixes 12 and 82: Spark casts REAL and DOUBLE to strings and decimals with
+  the digits of Java's `Float.toString` and `Double.toString`, which depend on
+  the Java version, not on the Spark release. Spark 3.5.1 supports Java 8, 11
+  and 17, which sometimes print more digits (JDK-4511638), e.g.
+  `CAST(2.0E23D AS DECIMAL(38,0))` returns 199999999999999980000000 on Java 17
+  and 200000000000000000000000 on Java 21. Velox follows Java 19 and later,
+  also with `spark.legacy_timestamp_to_decimal_via_double`.
 - Fix 32: Spark 3.5.1 casts the quantity of `timestampadd` to INT. Spark 4.0
   and later accept BIGINT quantities (SPARK-50669).
 - Fix 51: Spark 3.5.1 throws a `NegativeArraySizeException` for an INT32_MIN
   count of `substring_index`.
+- The cherry-picked pull requests return the same results in Spark 3.5.1,
+  except facebookincubator/velox#20058. Some of their errors have other error
+  classes, e.g. `DIVIDE_BY_ZERO` instead of `REMAINDER_BY_ZERO` for `pmod`.
 
 These differences from Spark 3.5.1 remain:
 
@@ -205,9 +218,9 @@ These differences from Spark 3.5.1 remain:
 | 4e35336aa | Treat Spark's datetime upgrade errors as query failures. |
 | 6d7f28195 | Keep executors alive on OutOfMemoryError. |
 | 7007d31fc | Treat Spark's errors for invalid escapes in `LIKE` patterns as query failures. They are analysis errors that Spark raises while evaluating `LIKE`. |
-| a44464398 | Exclude `SimplifyCasts`, which drops the cast to REAL in `cast(cast(c0 AS float) AS double)`. |
-| b0231d6e7 | Translate `size(x, true)` to `IF(x IS NULL, -1, size(x))`, which returns -1 for null input in both ANSI modes. |
-| 8a253f486 | Accept decimal types with a literal precision and scale, e.g. `DECIMAL(6, 0)`, which the cast signatures use. |
+| 69d859a2b | Exclude `SimplifyCasts`, which drops the cast to REAL in `cast(cast(c0 AS float) AS double)`. |
+| ea2387135 | Translate `size(x, true)` to `IF(x IS NULL, -1, size(x))`, which returns -1 for null input in both ANSI modes. |
+| 24dcb48b1 | Accept decimal types with a literal precision and scale, e.g. `DECIMAL(6, 0)`, which the cast signatures use. |
 
 The translation in `velox/functions/sparksql/fuzzer/SparkSql.cpp` handles:
 
@@ -259,13 +272,13 @@ reasons of a run.
 | 4339d45b2, fdc5079bd, df5609bf0 | Translate `to_json` with a time zone, skip binary map keys, and generate valid time zones. |
 | cbdd6f248 | Generate `LIKE` patterns with wildcards and escape sequences, and single-character escapes. |
 | 8a840784d | Add `--velox_fuzzer_orderable_map_keys`, which the Spark fuzzer turns on. It generates map keys only of orderable types, because Spark rejects map keys that are or contain maps. |
-| b12aa3c93 | Add `--ansi_enabled` to the expression and aggregation fuzzers. It turns on ANSI mode in Velox and Spark. |
-| dd302d2f0 | Add `--try_null_rows_to_verify`. When both engines throw for some rows, it verifies some of the rows that return null with try() one at a time. |
-| a48e930e6 | Generate edge values, e.g. 0, -1 and the minimum of the type, for `abs`, `unaryminus`, `divide`, `div`, `pmod` and `remainder`. |
-| 7865ec39f, 6c99062ad | Skip the variadic signature of `map`, which accepts arguments of any type, and `get` with a BIGINT index, which Spark casts to INTEGER. |
-| 2ead32996, def4c6b0c | Generate cast inputs that look like values of the target type, e.g. numbers and timestamps in Spark's formats, padded with whitespace and control characters. |
-| 8064a9bd3 | Generate the casts from TIMESTAMP, DATE and decimals that fixes 88 to 92 support. |
-| 887ce7458 | Cast decimals to the nearest double in both fuzzers, as Spark does. |
+| 595322cb2 | Add `--ansi_enabled` to the expression and aggregation fuzzers. It turns on ANSI mode in Velox and Spark. |
+| 2e051fa40 | Add `--try_null_rows_to_verify`. When both engines throw for some rows, it verifies some of the rows that return null with try() one at a time. |
+| 49c40c151 | Generate edge values, e.g. 0, -1 and the minimum of the type, for `abs`, `unaryminus`, `divide`, `div`, `pmod` and `remainder`. |
+| b0da2d195, 55cb7eff8 | Skip the variadic signature of `map`, which accepts arguments of any type, and `get` with a BIGINT index, which Spark casts to INTEGER. |
+| 29fd342a2, 58d7d608f | Generate cast inputs that look like values of the target type, e.g. numbers and timestamps in Spark's formats, padded with whitespace and control characters. |
+| a50b33353 | Generate the casts from TIMESTAMP, DATE and decimals that fixes 88 to 92 support. |
+| 66ae9a1cd | Cast decimals to the nearest double in both fuzzers, as Spark does. |
 
 ### Spark aggregation fuzzer
 
@@ -275,7 +288,7 @@ reasons of a run.
 | 7fcd009a9 | Compare the results of functions with custom verification, e.g. `collect_list` and `first`, with Spark if an input column is DATE. The fuzzer skipped them because the Presto runner writes the input to DWRF files, which can't store DATE. |
 | b786c50c5 | Generate positions in [0, 32768) for `bitmap_construct_agg` and 4096-byte bitmaps for `bitmap_or_agg`. Velox threw for random inputs in every iteration, so Spark never verified them. |
 | 9eaf2218e | Generate no infinities for `covar_samp`. With them, its result depends on how the rows are split into partial aggregations, in both Velox and Spark. |
-| 24b769129 | Add `--compare_errors_with_reference`, which `spark_fuzzer.py` turns on. It also runs the Spark query when Velox throws, and fails the iteration if only one engine throws. |
+| cff513f4e | Add `--compare_errors_with_reference`, which `spark_fuzzer.py` turns on. It also runs the Spark query when Velox throws, and fails the iteration if only one engine throws. |
 
 ### Scripts
 
@@ -293,11 +306,13 @@ reasons of a run.
 | 3c1e14dc7 | The skill fixes functions that accept argument types that Spark rejects, by restricting their signatures. |
 | a78c85b9d | Add the one-hour runs and the fixes after them to this report. |
 | 06184461b | Update this report for Spark 4.3. |
-| 78a5b6b08 | `run --ansi on` runs the fuzzers with ANSI mode on, and `sql --ansi both` runs a query in both modes. |
-| 655738841 | `sql` prints short Spark errors. |
-| 78a8ec801 | `summary --coverage` counts the test cases of each function by outcome and ANSI mode. |
-| d9f815e32 | Add [ANSI.md](ANSI.md) and update this report for the ANSI work. |
-| 15e52d2ff | The skill searches Velox pull requests before fixing an issue, and uses one that already fixes it. |
+| 2acc3e64b | Add the configs for Spark 3.5.1 to this report. |
+| a6a4b37a2 | `run --ansi on` runs the fuzzers with ANSI mode on, and `sql --ansi both` runs a query in both modes. |
+| cd252cff3 | `sql` prints short Spark errors. |
+| 36fe7c1f1 | `summary --coverage` counts the test cases of each function by outcome and ANSI mode. |
+| a0d5586c0 | Add [ANSI.md](ANSI.md) and update this report for the ANSI work. |
+| 47ea73987 | The skill searches Velox pull requests before fixing an issue, and uses one that already fixes it. |
+| 62010ce74 | List the docs commits of the ANSI work in this report. |
 
 ## Function fixes
 
@@ -368,7 +383,7 @@ from Spark 4.3.0.
 | 60 | d1ea8f24b | `get_timestamp`, `unix_timestamp`, `to_unix_timestamp` | Split patterns with `S` on single quotes, so an unclosed quote starts a literal. |
 | 61 | 0f4dbf339 | `cast` from string to timestamp | Return NULL for years of more than 6 digits and for timestamps out of the range of microseconds. |
 
-[ANSI.md](ANSI.md#fixes) lists fixes 62 to 93 of the ANSI work. 971a1dd14
+[ANSI.md](ANSI.md#fixes) lists fixes 62 to 93 of the ANSI work. 12b962235
 updates a `collect_set` test that expected nested nulls last, which fix 1
 orders first.
 
@@ -468,7 +483,7 @@ reject. The other `like` test cases have invalid escapes, and both Spark and
 Velox throw for them.
 
 The aggregation fuzzer ran all aggregate functions except where the table
-names them. These runs predate 24b769129, so the fuzzer ran the Spark query
+names them. These runs predate cff513f4e, so the fuzzer ran the Spark query
 only if Velox succeeded. Iterations in which Velox threw are neither verified
 nor unsupported.
 
