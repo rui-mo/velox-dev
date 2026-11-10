@@ -960,15 +960,16 @@ void PageReader::makeDecoder() {
       break;
     case Encoding::DELTA_BYTE_ARRAY: {
       // Decimals are supported as FIXED_LEN_BYTE_ARRAY only. Other types are
-      // read as strings and are supported as BYTE_ARRAY only.
-      // TODO: Support FIXED_LEN_BYTE_ARRAY strings, and BYTE_ARRAY decimals,
-      // which also need PLAIN and dictionary page support.
-      const auto supportedType = type_->type()->isDecimal()
-          ? thrift::Type::FIXED_LEN_BYTE_ARRAY
-          : thrift::Type::BYTE_ARRAY;
-      if (parquetType != supportedType) {
+      // read as strings from BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY.
+      // TODO: Support BYTE_ARRAY decimals, which also need PLAIN and
+      // dictionary page support.
+      const bool isSupported =
+          parquetType == thrift::Type::FIXED_LEN_BYTE_ARRAY ||
+          (parquetType == thrift::Type::BYTE_ARRAY &&
+           !type_->type()->isDecimal());
+      if (!isSupported) {
         VELOX_UNSUPPORTED(
-            "DELTA_BYTE_ARRAY encoding is supported only for FIXED_LEN_BYTE_ARRAY decimals and BYTE_ARRAY non-decimals. Parquet type: {}, Velox type: {}",
+            "DELTA_BYTE_ARRAY encoding is supported only for FIXED_LEN_BYTE_ARRAY columns and non-decimal BYTE_ARRAY columns. Parquet type: {}, Velox type: {}",
             parquetType,
             type_->type());
       }

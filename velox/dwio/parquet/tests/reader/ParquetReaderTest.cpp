@@ -15,6 +15,7 @@
  */
 
 #include <arrow/io/file.h>
+#include <arrow/io/memory.h>
 #include <gmock/gmock.h>
 #include <numeric>
 
@@ -2118,6 +2119,146 @@ TEST_F(ParquetReaderTest, readDictFLBAStringBinary) {
             {"apple", berry, "apple", berry}, VARBINARY())});
     assertReadWithFilters(
         filename, ROW("value", VARBINARY()), std::move(filters), expected);
+  }
+}
+
+namespace {
+
+// Returns a Parquet file with an optional FIXED_LEN_BYTE_ARRAY('typeLength')
+// column named 'value' that holds 'values' in DELTA_BYTE_ARRAY pages. The
+// Velox writer cannot produce this file because it writes strings as
+// BYTE_ARRAY.
+std::string writeDeltaByteArrayFLBA(
+    int32_t typeLength,
+    const std::vector<std::optional<std::string>>& values) {
+  namespace parquet_arrow = facebook::velox::parquet::arrow;
+  using parquet_arrow::Repetition;
+  using parquet_arrow::schema::GroupNode;
+  using parquet_arrow::schema::PrimitiveNode;
+
+  auto schema = std::static_pointer_cast<GroupNode>(GroupNode::make(
+      "schema",
+      Repetition::kRequired,
+      {PrimitiveNode::make(
+          "value",
+          Repetition::kOptional,
+          parquet_arrow::Type::kFixedLenByteArray,
+          parquet_arrow::ConvertedType::kNone,
+          typeLength)}));
+  auto properties = parquet_arrow::WriterProperties::Builder()
+                        .disableDictionary()
+                        ->encoding(parquet_arrow::Encoding::kDeltaByteArray)
+                        ->build();
+  auto sink = parquet_arrow::createOutputStream();
+  auto fileWriter =
+      parquet_arrow::ParquetFileWriter::open(sink, schema, properties);
+
+  std::vector<int16_t> definitionLevels;
+  std::vector<parquet_arrow::FLBA> nonNullValues;
+  for (const auto& value : values) {
+    definitionLevels.push_back(value.has_value() ? 1 : 0);
+    if (value.has_value()) {
+      VELOX_CHECK_EQ(value->size(), static_cast<size_t>(typeLength));
+      nonNullValues.emplace_back(
+          reinterpret_cast<const uint8_t*>(value->data()));
+    }
+  }
+  static_cast<parquet_arrow::FixedLenByteArrayWriter*>(
+      fileWriter->appendRowGroup()->nextColumn())
+      ->writeBatch(
+          values.size(),
+          definitionLevels.data(),
+          /*repLevels=*/nullptr,
+          nonNullValues.data());
+  fileWriter->close();
+  PARQUET_ASSIGN_OR_THROW(auto buffer, sink->Finish());
+  return buffer->ToString();
+}
+
+} // namespace
+
+// Reads FIXED_LEN_BYTE_ARRAY strings from DELTA_BYTE_ARRAY pages, which
+// parquet-mr writes with v2 pages when dictionary encoding is disabled or falls
+// back.
+TEST_F(ParquetReaderTest, readDeltaByteArrayFLBAStringBinary) {
+  const std::string berry("b\0rry", 5);
+  const std::vector<std::optional<std::string>> values = {
+      "apple",
+      std::nullopt,
+      berry,
+      "cider",
+      "apple",
+      std::nullopt,
+      "cider",
+      berry,
+  };
+  const auto file = writeDeltaByteArrayFLBA(/*typeLength=*/5, values);
+
+  // Without a file schema, the unannotated column reads as VARBINARY.
+  {
+    const auto rowType = ROW("value", VARBINARY());
+    auto reader = createReaderFromBytes(file, makeDefaultReaderOptions());
+    EXPECT_THAT(
+        reader->fileMetaData().rowGroup(0).columnChunk(0).encodings(),
+        testing::Contains(thrift::Encoding::DELTA_BYTE_ARRAY));
+    auto column = std::static_pointer_cast<const ParquetTypeWithId>(
+        reader->typeWithId()->childAt(0));
+    EXPECT_EQ(column->parquetType_, thrift::Type::FIXED_LEN_BYTE_ARRAY);
+    EXPECT_EQ(*column->type(), *VARBINARY());
+
+    auto rowReader = createRowReaderFromReader(*reader, rowType);
+    auto expected = makeRowVector(
+        {"value"}, {makeNullableFlatVector<std::string>(values, VARBINARY())});
+    assertReadWithReaderAndExpected(rowType, *rowReader, expected, *leafPool_);
+  }
+
+  // A VARCHAR file schema reads the same bytes as VARCHAR.
+  {
+    const auto rowType = ROW("value", VARCHAR());
+    auto readerOptions = makeDefaultReaderOptions();
+    readerOptions.setFileSchema(rowType);
+    auto reader = createReaderFromBytes(file, readerOptions);
+    EXPECT_EQ(*reader->typeWithId()->childAt(0)->type(), *VARCHAR());
+
+    auto rowReader = createRowReaderFromReader(*reader, rowType);
+    auto expected = makeRowVector(
+        {"value"}, {makeNullableFlatVector<std::string>(values, VARCHAR())});
+    assertReadWithReaderAndExpected(rowType, *rowReader, expected, *leafPool_);
+  }
+
+  // A BytesValues filter selects rows by value and drops nulls.
+  {
+    auto reader = createReaderFromBytes(file, makeDefaultReaderOptions());
+    FilterMap filters;
+    filters.insert(
+        {"value",
+         std::make_unique<common::BytesValues>(
+             std::vector<std::string>{"apple", berry},
+             /*nullAllowed=*/false)});
+    auto expected = makeRowVector(
+        {"value"},
+        {makeFlatVector<std::string>(
+            {"apple", berry, "apple", berry}, VARBINARY())});
+    assertReadWithReaderAndFilters(
+        *reader, ROW("value", VARBINARY()), std::move(filters), expected);
+  }
+
+  // Values must be as long as the type length of the column.
+  {
+    const auto rowType = ROW("value", VARBINARY());
+    auto reader = createReaderFromBytes(
+        overrideTypeLength(file, /*schemaIndex=*/1, /*typeLength=*/6),
+        makeDefaultReaderOptions());
+    auto rowReader = createRowReaderFromReader(*reader, rowType);
+    const auto read = [&]() {
+      VectorPtr result = BaseVector::create(rowType, 0, leafPool_.get());
+      rowReader->next(values.size(), result);
+      // Top-level columns are loaded lazily.
+      result->loadedVector();
+    };
+    VELOX_ASSERT_THROW(
+        read(),
+        "(5 vs. 6) DELTA_BYTE_ARRAY value length must equal the FIXED_LEN_BYTE_ARRAY type length");
   }
 }
 
