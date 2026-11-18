@@ -230,6 +230,14 @@ bool isLeftNullAwareJoinWithFilter(
 bool isLeftNullAwareJoinWithFilter(
     const std::shared_ptr<const core::HashJoinNode>& joinNode);
 
+/// Returns true if the hash table for 'joinNode' needs only one row per join
+/// key. This holds when 'joinNode' can drop duplicates. It also holds for anti,
+/// left semi filter and left semi project joins that are not null-aware and
+/// whose filter is deterministic and reads only probe side columns. Such a
+/// filter gives the same result for every build row with the same key.
+bool canDropDuplicateBuildRows(
+    const std::shared_ptr<const core::HashJoinNode>& joinNode);
+
 class HashJoinMemoryReclaimer final : public MemoryReclaimer {
  public:
   static std::unique_ptr<memory::MemoryReclaimer> create(

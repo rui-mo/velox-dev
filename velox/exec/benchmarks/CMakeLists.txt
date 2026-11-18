@@ -150,6 +150,16 @@ target_link_libraries(
   Folly::follybenchmark
 )
 
+add_executable(velox_hash_join_semi_anti_filter_benchmark HashJoinSemiAntiFilterBenchmark.cpp)
+
+target_link_libraries(
+  velox_hash_join_semi_anti_filter_benchmark
+  velox_exec
+  velox_exec_test_lib
+  velox_vector_test_lib
+  Folly::follybenchmark
+)
+
 add_executable(velox_hash_join_prepare_join_table_benchmark HashJoinPrepareJoinTableBenchmark.cpp)
 
 target_link_libraries(

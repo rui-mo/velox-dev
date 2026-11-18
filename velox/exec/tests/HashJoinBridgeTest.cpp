@@ -19,6 +19,9 @@
 #include "velox/common/testutil/TempDirectoryPath.h"
 #include "velox/exec/HashTable.h"
 #include "velox/exec/Spill.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/functions/prestosql/registration/RegistrationFunctions.h"
+#include "velox/parse/TypeResolver.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -805,6 +808,74 @@ TEST(HashJoinBridgeTest, hashJoinTableSpillType) {
         hashJoinTableSpillType(tableType, testData.joinType);
     ASSERT_TRUE(spillType->equivalent(*testData.expectedTableSpillType));
     ASSERT_EQ(spillType->names(), testData.expectedTableSpillType->names());
+  }
+}
+
+TEST(HashJoinBridgeTest, canDropDuplicateBuildRows) {
+  functions::prestosql::registerAllScalarFunctions();
+  parse::registerTypeResolver();
+  auto pool = memory::memoryManager()->addLeafPool();
+  const auto probeType =
+      ROW({"t0", "t1", "t2"}, {BIGINT(), BIGINT(), ARRAY(BIGINT())});
+  const auto buildType = ROW({"u0", "u1"}, {BIGINT(), BIGINT()});
+
+  struct {
+    core::JoinType joinType;
+    bool nullAware;
+    std::string filter;
+    bool expected;
+
+    std::string debugString() const {
+      return fmt::format(
+          "joinType: {}, nullAware: {}, filter: '{}'",
+          core::JoinTypeName::toName(joinType),
+          nullAware,
+          filter);
+    }
+  } testSettings[] = {
+      {core::JoinType::kAnti, false, "", true},
+      {core::JoinType::kAnti, false, "t1 > 5", true},
+      {core::JoinType::kLeftSemiFilter, false, "t1 > 5", true},
+      {core::JoinType::kLeftSemiProject, false, "t1 > 5 OR t1 IS NULL", true},
+      {core::JoinType::kAnti, false, "any_match(t2, x -> x > t1)", true},
+      // The filter reads a build column.
+      {core::JoinType::kAnti, false, "t1 > u1", false},
+      {core::JoinType::kLeftSemiFilter, false, "u0 > 5", false},
+      {core::JoinType::kLeftSemiProject,
+       false,
+       "any_match(t2, x -> x > u1)",
+       false},
+      // The filter is not deterministic.
+      {core::JoinType::kLeftSemiFilter, false, "rand() < 0.5", false},
+      // Null-aware joins and other join types need all build rows.
+      {core::JoinType::kAnti, true, "t1 > 5", false},
+      {core::JoinType::kInner, false, "t1 > 5", false},
+  };
+
+  for (const auto& testData : testSettings) {
+    SCOPED_TRACE(testData.debugString());
+    std::vector<std::string> outputLayout{"t0", "t1"};
+    if (testData.joinType == core::JoinType::kLeftSemiProject) {
+      outputLayout.emplace_back("match");
+    }
+    auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+    const auto joinNode = std::dynamic_pointer_cast<const core::HashJoinNode>(
+        PlanBuilder(planNodeIdGenerator, pool.get())
+            .values({BaseVector::create<RowVector>(probeType, 0, pool.get())})
+            .hashJoin(
+                {"t0"},
+                {"u0"},
+                PlanBuilder(planNodeIdGenerator, pool.get())
+                    .values({BaseVector::create<RowVector>(
+                        buildType, 0, pool.get())})
+                    .planNode(),
+                testData.filter,
+                outputLayout,
+                testData.joinType,
+                testData.nullAware)
+            .planNode());
+    ASSERT_NE(joinNode, nullptr);
+    ASSERT_EQ(canDropDuplicateBuildRows(joinNode), testData.expected);
   }
 }
 } // namespace

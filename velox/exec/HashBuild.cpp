@@ -67,7 +67,7 @@ HashBuild::HashBuild(
       nullAware_{joinNode_->isNullAware()},
       nullAsValue_{joinNode_->isNullAsValue()},
       needProbedFlagSpill_{needRightSideJoin(joinType_)},
-      dropDuplicates_(joinNode_->canDropDuplicates()),
+      dropDuplicates_(canDropDuplicateBuildRows(joinNode_)),
       vectorHasherMaxNumDistinct_(
           driverCtx->queryConfig().joinBuildVectorHasherMaxNumDistinct()),
       abandonHashBuildDedupMinRows_(

@@ -16,11 +16,67 @@
 
 #include "velox/exec/HashJoinBridge.h"
 #include "velox/exec/HashBuild.h"
+#include "velox/expression/SimpleFunctionRegistry.h"
+#include "velox/expression/SpecialFormRegistry.h"
+#include "velox/expression/VectorFunction.h"
 
 namespace facebook::velox::exec {
 namespace {
 static const char* kSpillProbedFlagColumnName = "__probedFlag";
+
+// Returns true if 'name' is a special form or if all functions registered
+// under 'name' are deterministic. Returns false for an unknown name.
+// functions::isDeterministic() does the same for functions, but velox_exec
+// does not depend on its library.
+bool isDeterministicFunction(const std::string& name) {
+  if (specialFormRegistry().getSpecialForm(name) != nullptr) {
+    return true;
+  }
+  const auto vectorFunctionMetadata = getVectorFunctionMetadata(name);
+  const auto simpleFunctionMetadata =
+      simpleFunctions().getFunctionSignaturesAndMetadata(name);
+  if (!vectorFunctionMetadata.has_value() && simpleFunctionMetadata.empty()) {
+    return false;
+  }
+  if (vectorFunctionMetadata.has_value() &&
+      !vectorFunctionMetadata->deterministic) {
+    return false;
+  }
+  for (const auto& [metadata, _] : simpleFunctionMetadata) {
+    if (!metadata.deterministic) {
+      return false;
+    }
+  }
+  return true;
 }
+
+// Returns true if 'expr' is deterministic and reads no column of 'buildType'.
+// A lambda parameter with the name of a build column counts as a build column.
+bool isDeterministicWithoutBuildColumns(
+    const core::ITypedExpr& expr,
+    const RowType& buildType) {
+  if (expr.isFieldAccessKind()) {
+    const auto* field = expr.asUnchecked<core::FieldAccessTypedExpr>();
+    if (field->isInputColumn() && buildType.containsChild(field->name())) {
+      return false;
+    }
+  } else if (expr.isCallKind()) {
+    if (!isDeterministicFunction(
+            expr.asUnchecked<core::CallTypedExpr>()->name())) {
+      return false;
+    }
+  } else if (expr.isLambdaKind()) {
+    return isDeterministicWithoutBuildColumns(
+        *expr.asUnchecked<core::LambdaTypedExpr>()->body(), buildType);
+  }
+  for (const auto& input : expr.inputs()) {
+    if (!isDeterministicWithoutBuildColumns(*input, buildType)) {
+      return false;
+    }
+  }
+  return true;
+}
+} // namespace
 
 RowTypePtr hashJoinTableType(
     const std::vector<core::FieldAccessTypedExprPtr>& joinKeys,
@@ -44,8 +100,8 @@ RowTypePtr hashJoinTableType(
   }
 
   if (dropDuplicates) {
-    // For left semi and anti join with no extra filter, hash table does not
-    // store dependent columns.
+    // A hash table that keeps one row per key does not store dependent
+    // columns.
     return ROW(std::move(names), std::move(types));
   }
 
@@ -62,7 +118,7 @@ RowTypePtr hashJoinTableType(
     const std::shared_ptr<const core::HashJoinNode>& joinNode) {
   const auto inputType = joinNode->sources()[1]->outputType();
   return hashJoinTableType(
-      joinNode->rightKeys(), inputType, joinNode->canDropDuplicates());
+      joinNode->rightKeys(), inputType, canDropDuplicateBuildRows(joinNode));
 }
 
 void HashJoinBridge::start() {
@@ -424,6 +480,21 @@ bool isLeftNullAwareJoinWithFilter(
       joinNode->joinType(),
       joinNode->isNullAware(),
       joinNode->filter() != nullptr);
+}
+
+bool canDropDuplicateBuildRows(
+    const std::shared_ptr<const core::HashJoinNode>& joinNode) {
+  if (joinNode->canDropDuplicates()) {
+    return true;
+  }
+  const auto joinType = joinNode->joinType();
+  if (joinNode->filter() == nullptr || joinNode->isNullAware() ||
+      !(isAntiJoin(joinType) || isLeftSemiFilterJoin(joinType) ||
+        isLeftSemiProjectJoin(joinType))) {
+    return false;
+  }
+  return isDeterministicWithoutBuildColumns(
+      *joinNode->filter(), *joinNode->sources()[1]->outputType());
 }
 
 uint64_t HashJoinMemoryReclaimer::reclaim(

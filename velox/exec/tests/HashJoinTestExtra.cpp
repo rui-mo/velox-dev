@@ -4218,6 +4218,110 @@ TEST_P(HashJoinTest, semiJoinDeduplicateResetCapacity) {
       .run();
 }
 
+TEST_P(HashJoinTest, dropDuplicateBuildRowsWithProbeOnlyFilter) {
+  // The build side has 855 rows with non-null keys and 10 distinct keys.
+  const auto buildVectors = makeBatches(5, [&](int32_t /*unused*/) {
+    return makeRowVector(
+        {"u0", "u1"},
+        {
+            makeFlatVector<int32_t>(
+                200, [](auto row) { return row % 10; }, nullEvery(7)),
+            makeFlatVector<int32_t>(200, [](auto row) { return row; }),
+        });
+  });
+  const auto probeVectors = makeBatches(5, [&](int32_t batch) {
+    return makeRowVector(
+        {"t0", "t1"},
+        {
+            makeFlatVector<int32_t>(
+                100, [](auto row) { return row % 20; }, nullEvery(11)),
+            makeFlatVector<int32_t>(
+                100, [batch](auto row) { return batch * 100 + row; }),
+        });
+  });
+  createDuckDbTable("t", probeVectors);
+  createDuckDbTable("u", buildVectors);
+
+  struct {
+    core::JoinType joinType;
+    std::string filter;
+    bool dropDuplicates;
+    std::string referenceQuery;
+
+    std::string debugString() const {
+      return fmt::format(
+          "joinType: {}, filter: '{}'",
+          core::JoinTypeName::toName(joinType),
+          filter);
+    }
+  } testSettings[] = {
+      {core::JoinType::kAnti,
+       "t1 % 3 <> 0",
+       true,
+       "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0)"},
+      {core::JoinType::kLeftSemiFilter,
+       "t1 % 3 <> 0",
+       true,
+       "SELECT t.* FROM t WHERE EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0)"},
+      {core::JoinType::kLeftSemiProject,
+       "t1 % 3 <> 0",
+       true,
+       "SELECT t.*, EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0) FROM t"},
+      {core::JoinType::kLeftSemiProject,
+       "t1 % 3 <> u1 % 3",
+       false,
+       "SELECT t.*, EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> u1 % 3) FROM t"},
+  };
+
+  for (const auto& testData : testSettings) {
+    // HashBuild drops duplicate keys while adding input only if
+    // 'kAbandonDedupHashMapMinPct' is not 0. Otherwise, it drops them when it
+    // builds the hash table.
+    for (const std::string minPct : {"0", "50"}) {
+      SCOPED_TRACE(
+          fmt::format("{}, minPct: {}", testData.debugString(), minPct));
+      std::vector<std::string> outputLayout{"t0", "t1"};
+      if (testData.joinType == core::JoinType::kLeftSemiProject) {
+        outputLayout.emplace_back("match");
+      }
+      auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+      core::PlanNodeId joinId;
+      auto plan = PlanBuilder(planNodeIdGenerator)
+                      .values(probeVectors)
+                      .hashJoin(
+                          {"t0"},
+                          {"u0"},
+                          PlanBuilder(planNodeIdGenerator)
+                              .values(buildVectors)
+                              .planNode(),
+                          testData.filter,
+                          outputLayout,
+                          testData.joinType)
+                      .capturePlanNodeId(joinId)
+                      .planNode();
+
+      HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+          .config(core::QueryConfig::kAbandonDedupHashMapMinPct, minPct)
+          .numDrivers(1)
+          .planNode(plan)
+          .referenceQuery(testData.referenceQuery)
+          .verifier([&](const std::shared_ptr<Task>& task, bool hasSpill) {
+            if (hasSpill || minPct == "0") {
+              return;
+            }
+            // 'kNumDistinct' is the number of rows HashBuild kept.
+            const auto numRows =
+                toPlanStats(task->taskStats())
+                    .at(joinId)
+                    .customStats.at(std::string(BaseHashTable::kNumDistinct))
+                    .sum;
+            ASSERT_EQ(numRows, testData.dropDuplicates ? 10 : 855);
+          })
+          .run();
+    }
+  }
+}
+
 DEBUG_ONLY_TEST_P(
     HashJoinTest,
     failedToReclaimFromHashJoinBuildersInNonReclaimableSection) {
