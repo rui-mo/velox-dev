@@ -130,10 +130,10 @@ target_link_libraries(
   Folly::follybenchmark
 )
 
-add_executable(velox_hash_join_right_semi_benchmark HashJoinRightSemiBenchmark.cpp)
+add_executable(velox_hash_join_semi_anti_benchmark HashJoinSemiAntiBenchmark.cpp)
 
 target_link_libraries(
-  velox_hash_join_right_semi_benchmark
+  velox_hash_join_semi_anti_benchmark
   velox_exec
   velox_exec_test_lib
   velox_vector_test_lib

@@ -67,7 +67,6 @@ HashBuild::HashBuild(
       nullAware_{joinNode_->isNullAware()},
       nullAsValue_{joinNode_->isNullAsValue()},
       needProbedFlagSpill_{needRightSideJoin(joinType_)},
-      dropDuplicates_(joinNode_->canDropDuplicates()),
       vectorHasherMaxNumDistinct_(
           driverCtx->queryConfig().joinBuildVectorHasherMaxNumDistinct()),
       abandonHashBuildDedupMinRows_(
@@ -96,33 +95,51 @@ HashBuild::HashBuild(
   }
 
   // Identify the non-key build side columns and make a decoder for each.
+  // initialize() clears them if the hash table stores only the keys.
   const int32_t numDependents = inputType->size() - numKeys;
-  if (!dropDuplicates_) {
-    if (numDependents > 0) {
-      // Number of join keys (numKeys) may be less then number of input columns
-      // (inputType->size()). In this case numDependents is negative and cannot
-      // be used to call 'reserve'. This happens when we join different probe
-      // side keys with the same build side key: SELECT * FROM t LEFT JOIN u ON
-      // t.k1 = u.k AND t.k2 = u.k.
-      dependentChannels_.reserve(numDependents);
-      decoders_.reserve(numDependents);
-    }
-
-    for (auto i = 0; i < inputType->size(); ++i) {
-      if (keyChannelMap_.find(i) == keyChannelMap_.end()) {
-        dependentChannels_.emplace_back(i);
-        decoders_.emplace_back(std::make_unique<DecodedVector>());
-      }
-    }
+  if (numDependents > 0) {
+    // Number of join keys (numKeys) may be less then number of input columns
+    // (inputType->size()). In this case numDependents is negative and cannot
+    // be used to call 'reserve'. This happens when we join different probe
+    // side keys with the same build side key: SELECT * FROM t LEFT JOIN u ON
+    // t.k1 = u.k AND t.k2 = u.k.
+    dependentChannels_.reserve(numDependents);
+    decoders_.reserve(numDependents);
   }
 
-  tableType_ = hashJoinTableType(joinNode_);
+  for (auto i = 0; i < inputType->size(); ++i) {
+    if (keyChannelMap_.find(i) == keyChannelMap_.end()) {
+      dependentChannels_.emplace_back(i);
+      decoders_.emplace_back(std::make_unique<DecodedVector>());
+    }
+  }
 
   stateCleared_ = false;
 }
 
 void HashBuild::initialize() {
   Operator::initialize();
+
+  // The compiled filter decides whether the table can drop duplicate keys.
+  // Compiling may allocate memory, which the constructor must not do.
+  std::unique_ptr<ExprSet> filter;
+  if (joinNode_->filter() != nullptr && isProbeOnlyJoin(joinType_)) {
+    filter = std::make_unique<ExprSet>(
+        std::vector<core::TypedExprPtr>{joinNode_->filter()},
+        operatorCtx_->execCtx());
+  }
+
+  dropDuplicates_ =
+      canDropDuplicates(filter != nullptr ? filter->expr(0).get() : nullptr);
+  if (dropDuplicates_) {
+    // The hash table stores only the keys.
+    dependentChannels_.clear();
+    decoders_.clear();
+  }
+  tableType_ = hashJoinTableType(
+      joinNode_->rightKeys(),
+      joinNode_->sources()[1]->outputType(),
+      dropDuplicates_);
 
   if (setupCachedHashTable()) {
     return;
@@ -133,9 +150,35 @@ void HashBuild::initialize() {
   setupTable();
   setupSpiller();
 
-  if (isAntiJoin(joinType_) && joinNode_->filter()) {
-    setupFilterForAntiJoins(keyChannelMap_);
+  if (isAntiJoin(joinType_) && filter != nullptr) {
+    setupFilterForAntiJoins(*filter->expr(0), keyChannelMap_);
   }
+}
+
+bool HashBuild::canDropDuplicates(const Expr* filter) const {
+  // Counting joins fold duplicates into a per-key count.
+  if (isCountingJoin(joinType_)) {
+    return true;
+  }
+  // Other probe-only joins only need to know whether a probe row has a match.
+  if (!isProbeOnlyJoin(joinType_)) {
+    return false;
+  }
+  if (filter == nullptr) {
+    return true;
+  }
+  if (nullAware_ || !filter->isDeterministic()) {
+    return false;
+  }
+  // A filter that reads no build column gives the same result for every build
+  // row with the same key.
+  const auto& buildType = joinNode_->sources()[1]->outputType();
+  for (const auto* field : filter->distinctFields()) {
+    if (buildType->containsChild(field->field())) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool HashBuild::setupCachedHashTable() {
@@ -388,17 +431,15 @@ RowTypePtr HashBuild::inputType() const {
 }
 
 void HashBuild::setupFilterForAntiJoins(
+    const Expr& filter,
     const folly::F14FastMap<column_index_t, column_index_t>& keyChannelMap) {
   VELOX_DCHECK(
       std::is_sorted(dependentChannels_.begin(), dependentChannels_.end()));
 
-  ExprSet exprs({joinNode_->filter()}, operatorCtx_->execCtx());
-  VELOX_DCHECK_EQ(exprs.exprs().size(), 1);
-  const auto& expr = exprs.expr(0);
-  filterPropagatesNulls_ = expr->propagatesNulls();
+  filterPropagatesNulls_ = filter.propagatesNulls();
   if (filterPropagatesNulls_) {
     const auto inputType = joinNode_->sources()[1]->outputType();
-    for (const auto& field : expr->distinctFields()) {
+    for (const auto& field : filter.distinctFields()) {
       const auto index = inputType->getChildIdxIfExists(field->field());
       if (!index.has_value()) {
         continue;

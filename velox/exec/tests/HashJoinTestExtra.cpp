@@ -4218,6 +4218,160 @@ TEST_P(HashJoinTest, semiJoinDeduplicateResetCapacity) {
       .run();
 }
 
+TEST_P(HashJoinTest, dropDuplicateBuildRowsWithProbeOnlyFilter) {
+  // The build side has 1,000 rows and 10 distinct keys.
+  const auto buildVectors = makeBatches(5, [&](int32_t /*unused*/) {
+    return makeRowVector(
+        {"u0", "u1"},
+        {
+            makeFlatVector<int32_t>(200, [](auto row) { return row % 10; }),
+            makeFlatVector<int32_t>(200, [](auto row) { return row; }),
+        });
+  });
+  const auto probeVectors = makeBatches(5, [&](int32_t batch) {
+    return makeRowVector(
+        {"t0", "t1"},
+        {
+            makeFlatVector<int32_t>(
+                100, [](auto row) { return row % 20; }, nullEvery(11)),
+            makeFlatVector<int32_t>(
+                100, [batch](auto row) { return batch * 100 + row; }),
+        });
+  });
+  createDuckDbTable("t", probeVectors);
+  createDuckDbTable("u", buildVectors);
+
+  struct {
+    core::JoinType joinType;
+    bool nullAware;
+    std::string filter;
+    bool dropDuplicates;
+    std::string referenceQuery;
+
+    std::string debugString() const {
+      return fmt::format(
+          "joinType: {}, nullAware: {}, filter: '{}'",
+          core::JoinTypeName::toName(joinType),
+          nullAware,
+          filter);
+    }
+  } testSettings[] = {
+      {core::JoinType::kAnti,
+       false,
+       "t1 % 3 <> 0",
+       true,
+       "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0)"},
+      {core::JoinType::kLeftSemiFilter,
+       false,
+       "t1 % 3 <> 0",
+       true,
+       "SELECT t.* FROM t WHERE EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0)"},
+      {core::JoinType::kLeftSemiProject,
+       false,
+       "t1 % 3 <> 0",
+       true,
+       "SELECT t.*, EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0) FROM t"},
+      // A lambda that captures a probe column.
+      {core::JoinType::kAnti,
+       false,
+       "any_match(array[1, 2], x -> x = t1 % 3)",
+       true,
+       "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0)"},
+      // The filter reads a build column.
+      {core::JoinType::kLeftSemiProject,
+       false,
+       "t1 % 3 <> u1 % 3",
+       false,
+       "SELECT t.*, EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> u1 % 3) FROM t"},
+      // A lambda that captures a build column.
+      {core::JoinType::kAnti,
+       false,
+       "any_match(array[1, 2], x -> x = u1 % 3)",
+       false,
+       "SELECT t.* FROM t WHERE NOT EXISTS (SELECT * FROM u WHERE t0 = u0 AND u1 % 3 <> 0)"},
+      // The filter is not deterministic.
+      {core::JoinType::kLeftSemiFilter,
+       false,
+       "t1 % 3 <> 0 AND rand() < 2.0",
+       false,
+       "SELECT t.* FROM t WHERE EXISTS (SELECT * FROM u WHERE t0 = u0 AND t1 % 3 <> 0)"},
+      {core::JoinType::kAnti,
+       true,
+       "t1 % 3 <> 0",
+       false,
+       "SELECT t.* FROM t WHERE t0 NOT IN (SELECT u0 FROM u WHERE t1 % 3 <> 0)"},
+      {core::JoinType::kInner,
+       false,
+       "t1 % 3 <> 0",
+       false,
+       "SELECT t0, t1 FROM t, u WHERE t0 = u0 AND t1 % 3 <> 0"},
+  };
+
+  for (const auto& testData : testSettings) {
+    // HashBuild drops duplicate keys while adding input only if
+    // 'kAbandonDedupHashMapMinPct' is not 0. Otherwise, it drops them when it
+    // builds the hash table.
+    for (const std::string minPct : {"0", "50"}) {
+      SCOPED_TRACE(
+          fmt::format("{}, minPct: {}", testData.debugString(), minPct));
+      std::vector<std::string> outputLayout{"t0", "t1"};
+      if (testData.joinType == core::JoinType::kLeftSemiProject) {
+        outputLayout.emplace_back("match");
+      }
+      core::PlanNodeId joinId;
+      PlanBuilder plan(pool_.get());
+      plan.values(probeVectors)
+          .hashJoin(
+              {"t0"},
+              {"u0"},
+              plan.newPlan().values(buildVectors).planNode(),
+              testData.filter,
+              outputLayout,
+              testData.joinType,
+              testData.nullAware)
+          .capturePlanNodeId(joinId);
+
+      HashJoinBuilder(*pool_, duckDbQueryRunner_, driverExecutor_.get())
+          .config(core::QueryConfig::kAbandonDedupHashMapMinPct, minPct)
+          .numDrivers(1)
+          .planNode(plan.planNode())
+          .referenceQuery(testData.referenceQuery)
+          // A null-aware anti join with a filter does not spill.
+          .checkSpillStats(!testData.nullAware)
+          .verifier([&](const std::shared_ptr<Task>& task, bool hasSpill) {
+            if (hasSpill || minPct == "0") {
+              return;
+            }
+            // 'kNumDistinct' is the number of rows HashBuild kept.
+            const auto numRows =
+                toPlanStats(task->taskStats())
+                    .at(joinId)
+                    .customStats.at(std::string(BaseHashTable::kNumDistinct))
+                    .sum;
+            ASSERT_EQ(numRows, testData.dropDuplicates ? 10 : 1'000);
+          })
+          .run();
+
+      if (testData.nullAware) {
+        continue;
+      }
+      // HashProbe spills the hash table while it still has input.
+      const auto spillDirectory = TempDirectoryPath::create();
+      TestScopedSpillInjection scopedSpillInjection(100, ".*HashProbe.*");
+      const auto task =
+          AssertQueryBuilder(plan.planNode(), duckDbQueryRunner_)
+              .spillDirectory(spillDirectory->getPath())
+              .config(core::QueryConfig::kSpillEnabled, "true")
+              .config(core::QueryConfig::kJoinSpillEnabled, "true")
+              .config(core::QueryConfig::kAbandonDedupHashMapMinPct, minPct)
+              .assertResults(testData.referenceQuery);
+      const auto [buildStats, probeStats] = taskSpilledStats(*task);
+      ASSERT_EQ(buildStats.spilledBytes, 0);
+      ASSERT_GT(probeStats.spilledBytes, 0);
+    }
+  }
+}
+
 DEBUG_ONLY_TEST_P(
     HashJoinTest,
     failedToReclaimFromHashJoinBuildersInNonReclaimableSection) {
