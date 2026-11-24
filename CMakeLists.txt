@@ -738,7 +738,7 @@ if(
 endif()
 
 velox_set_source(simdjson)
-velox_resolve_dependency(simdjson 4.3.0)
+velox_resolve_dependency(simdjson 5.3.0)
 
 # libxml2 backs the Spark XPath functions and is only needed when Spark
 # functions are enabled.

@@ -49,6 +49,7 @@ TEST_F(GetJsonObjectTest, basic) {
   EXPECT_EQ(
       getJsonObject(R"({"name": "Alice", "age": 5, "id": "001"})", "$  "),
       R"({"name":"Alice","age":5,"id":"001"})");
+  EXPECT_EQ(getJsonObject(R"({"a": 1}})", "$$"), std::nullopt);
   EXPECT_EQ(
       getJsonObject(R"({"name": "Alice", "age": 5, "id": "001"})", "$.age"),
       "5");
@@ -82,6 +83,15 @@ TEST_F(GetJsonObjectTest, basic) {
   EXPECT_EQ(getJsonObject(R"({"a": {"a b": 1}})", "$.a['a b']"), "1");
   EXPECT_EQ(
       getJsonObject(R"({"a": {" a b": 1}})", "$.a[' a b']"), std::nullopt);
+  // Quotes in a field name in brackets are part of the name.
+  EXPECT_EQ(getJsonObject(R"({"a": 1})", R"($["a"])"), std::nullopt);
+  EXPECT_EQ(getJsonObject(R"({"a": 1})", R"($['"a"'])"), std::nullopt);
+  EXPECT_EQ(getJsonObject(R"({"a": 1})", "$[''a'']"), std::nullopt);
+  EXPECT_EQ(getJsonObject(R"({"'a": 1})", "$[''a']"), "1");
+  EXPECT_EQ(getJsonObject("[[1]]", R"($[0]["0"])"), std::nullopt);
+  // '/' and '~' in a field name are literal.
+  EXPECT_EQ(getJsonObject(R"({"a/b": 1, "a~0": 2})", "$['a/b']"), "1");
+  EXPECT_EQ(getJsonObject(R"({"a/b": 1, "a~0": 2})", "$.a~0"), "2");
   EXPECT_EQ(
       getJsonObject(R"({"two spaces": "1"})", "$.  two spaces "), std::nullopt);
   EXPECT_EQ(getJsonObject(R"({"a": "1"})", "$ .a"), std::nullopt);
@@ -120,6 +130,8 @@ TEST_F(GetJsonObjectTest, basic) {
           R"([{"my": {"info": {"name": "Alice"}}}, {"other": ["v1", "v2"]}])",
           "$[1].other[1]"),
       "v2");
+  // An index beyond the BIGINT range returns NULL.
+  EXPECT_EQ(getJsonObject("[1, 2]", "$[18446744073709551616]"), std::nullopt);
 
   // Valid escape sequences: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX.
   EXPECT_EQ(getJsonObject(R"({"hello": "a\"b"})", "$.hello"), R"(a"b)");
@@ -301,6 +313,19 @@ TEST_F(GetJsonObjectTest, rootValueOnly) {
   EXPECT_EQ(getJsonObject("123x", "$"), std::nullopt);
   EXPECT_EQ(getJsonObject("123,", "$"), std::nullopt);
   EXPECT_EQ(getJsonObject("   ", "$"), std::nullopt);
+}
+
+TEST_F(GetJsonObjectTest, unclosedString) {
+  // Results must not depend on a shorter JSON parsed before.
+  EXPECT_EQ(getJsonObject("{}", "$"), "{}");
+  // Spark does not read the unclosed string after the root value.
+  EXPECT_EQ(getJsonObject(R"({"a":{"b":1},"c":2} ")", "$.c"), "2");
+  EXPECT_EQ(getJsonObject(R"({"a":{"b":"x\"y"},"c":2} "z)", "$.c"), "2");
+  EXPECT_EQ(getJsonObject(R"({"a":{"b":"x\\"},"c":2} "z)", "$.c"), "2");
+  EXPECT_EQ(getJsonObject(R"([[1],2] "x)", "$[1]"), "2");
+  // An unclosed string in the root value makes it malformed.
+  EXPECT_EQ(getJsonObject(R"({"a":{"b":1},"c":"x)", "$.a"), std::nullopt);
+  EXPECT_EQ(getJsonObject(R"("x)", "$"), std::nullopt);
 }
 
 TEST_F(GetJsonObjectTest, singleQuotes) {

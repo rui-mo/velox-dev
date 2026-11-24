@@ -390,4 +390,30 @@ bool isValidJsonNumber(std::string_view input) {
   return position == input.size();
 }
 
+bool toJsonPointer(std::string_view path, std::string& pointer) {
+  pointer.clear();
+  if (path.starts_with('$')) {
+    path.remove_prefix(1);
+  }
+  if (path.empty() || (path[0] != '.' && path[0] != '[')) {
+    return false;
+  }
+  bool inBrackets = false;
+  for (const char character : path) {
+    if (inBrackets && character == ']') {
+      inBrackets = false;
+    } else if (!inBrackets && (character == '.' || character == '[')) {
+      pointer.push_back('/');
+      inBrackets = character == '[';
+    } else if (character == '~') {
+      pointer.append("~0");
+    } else if (character == '/') {
+      pointer.append("~1");
+    } else {
+      pointer.push_back(character);
+    }
+  }
+  return !inBrackets;
+}
+
 } // namespace facebook::velox::functions::sparksql::detail

@@ -121,9 +121,8 @@ class JsonPathNormalizer {
 
  private:
   // Spark's json path requires field name surrounded by single quotes if it is
-  // specified in "[]". But simdjson lib requires not. This method just removes
-  // such single quotes to adapt to simdjson lib, e.g., converts "['a']['b']" to
-  // "[a][b]".
+  // specified in "[]". This method removes such single quotes for
+  // toJsonPointer, e.g., converts "['a']['b']" to "[a][b]".
   std::string removeSingleQuotes(StringView jsonPath) {
     std::string result(jsonPath.data(), jsonPath.size());
     size_t pairEnd = 0;
@@ -170,6 +169,13 @@ class JsonPathNormalizer {
 
   State state_{State::kAfterDollar};
 };
+
+// Writes to `pointer` the JSON pointer (RFC 6901) for `path`, a path returned
+// by JsonPathNormalizer, and returns false if `path` is invalid. A leading '$',
+// which remains for a path such as "$$.a", is skipped. Each '.' or '[' starts a
+// field, and a field in brackets runs up to the next ']'. Quotes in a field are
+// part of its name.
+bool toJsonPointer(std::string_view path, std::string& pointer);
 
 // Appends the raw JSON object/array slice `raw` to `out`, rewriting characters
 // in the Unicode supplementary planes (code points >= U+10000, encoded as
@@ -287,8 +293,11 @@ struct GetJsonObjectFunction {
         }
         return extractStringResult(std::move(root), result);
       }
+      if (!detail::toJsonPointer(formattedJsonPath, jsonPointer_)) {
+        return false;
+      }
       // Can return error result or throw exception possibly.
-      auto rawResult = jsonDoc.at_path(formattedJsonPath);
+      auto rawResult = jsonDoc.at_pointer(jsonPointer_);
       if (rawResult.error()) {
         return false;
       }
@@ -500,6 +509,7 @@ struct GetJsonObjectFunction {
   std::string minified_;
   std::string escapedJson_;
   std::string normalizedJson_;
+  std::string jsonPointer_;
   size_t unconsumedSize_{0};
 };
 

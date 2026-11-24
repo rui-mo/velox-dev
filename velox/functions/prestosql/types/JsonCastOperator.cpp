@@ -1412,6 +1412,10 @@ void JsonCastOperator::castFromJson(
         }
         auto& input = inputVector->valueAt(row);
         memcpy(paddedInput_.data(), input.data(), input.size());
+        // simdjson reads the first padding byte when validating a root array
+        // or object, so clear what a longer prior row left there.
+        memset(
+            paddedInput_.data() + input.size(), 0, simdjson::SIMDJSON_PADDING);
         jsonCastInputRange().end = paddedInput_.data() + input.size();
         simdjson::padded_string_view paddedInput(
             paddedInput_.data(), input.size(), paddedInput_.size());

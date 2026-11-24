@@ -1126,6 +1126,12 @@ TEST_F(JsonCastTest, toDouble) {
       DOUBLE(),
       {"null"_sv, std::nullopt},
       {std::nullopt, std::nullopt});
+  // Exponent digits may have leading zeros.
+  testCast<JsonNativeType, double>(
+      JSON(),
+      DOUBLE(),
+      {"1e00000000000000000001"_sv, "1.5e-00000000000000000000005"_sv},
+      {10.0, 1.5e-5});
 
   testThrow<JsonNativeType>(
       JSON(),
@@ -1770,6 +1776,22 @@ TEST_F(JsonCastTest, tryCastTypeMismatchBatch) {
   auto expected =
       makeNullableFlatVector<int64_t>({1, std::nullopt, 2, std::nullopt, 3});
   evaluateAndVerify(JSON(), BIGINT(), makeRowVector({data}), expected, true);
+}
+
+TEST_F(JsonCastTest, trailingContentAfterLongerRow) {
+  // The result of a row with trailing content must not depend on longer rows
+  // before it.
+  auto data = makeFlatVector<JsonNativeType>(
+      {"[1,2]"_sv, "[1]]"_sv, "[1,2,3]"_sv, "[1]]"_sv}, JSON());
+  auto expected = makeArrayVector<int64_t>({{1, 2}, {1}, {1, 2, 3}, {1}});
+  evaluateAndVerify(JSON(), ARRAY(BIGINT()), makeRowVector({data}), expected);
+
+  data = makeFlatVector<JsonNativeType>(
+      {R"({"a":123,"b":2})"_sv, R"({"a":1}})"_sv}, JSON());
+  auto expectedMap = makeMapVector<StringView, int64_t>(
+      {{{"a"_sv, 123}, {"b"_sv, 2}}, {{"a"_sv, 1}}});
+  evaluateAndVerify(
+      JSON(), MAP(VARCHAR(), BIGINT()), makeRowVector({data}), expectedMap);
 }
 
 TEST_F(JsonCastTest, castFromJsonWithEscaping) {
